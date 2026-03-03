@@ -18,6 +18,7 @@ package com.hivemq.license.gradle
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.Input
@@ -43,6 +44,9 @@ abstract class UpdateThirdPartyLicensesTask : DefaultTask() {
     @get:Input
     abstract val allowedArtifacts: SetProperty<String>
 
+    @get:Input
+    abstract val overriddenLicenses: MapProperty<String, String>
+
     @get:OutputDirectory
     abstract val outputDirectory: DirectoryProperty
 
@@ -64,6 +68,7 @@ abstract class UpdateThirdPartyLicensesTask : DefaultTask() {
             dependencyLicenseFile = dependencyLicense.get().asFile.absoluteFile,
             ignoredGroupPrefixes = ignoredGroupPrefixes.get(),
             allowedArtifacts = allowedArtifacts.get(),
+            overriddenLicenses = overriddenLicenses.get(),
         )
 
         val licensePlaintext = StringBuilder()

@@ -16,6 +16,7 @@
 package com.hivemq.license.gradle
 
 import org.gradle.api.model.ObjectFactory
+import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
 import javax.inject.Inject
@@ -28,4 +29,6 @@ abstract class HivemqLicenseExtensionImpl @Inject constructor(
         .convention(setOf("com.hivemq"))
     override val allowedArtifacts: SetProperty<String> = objectFactory.setProperty(String::class.java)
         .convention(setOf("com.hivemq:hivemq-mqtt-client"))
+    override val overriddenLicenses: MapProperty<String, String> =
+        objectFactory.mapProperty(String::class.java, String::class.java).convention(emptyMap())
 }

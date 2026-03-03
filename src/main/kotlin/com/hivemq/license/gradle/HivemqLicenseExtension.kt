@@ -15,6 +15,7 @@
  */
 package com.hivemq.license.gradle
 
+import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
 
@@ -22,4 +23,5 @@ interface HivemqLicenseExtension {
     val projectName: Property<String>
     val ignoredGroupPrefixes: SetProperty<String>
     val allowedArtifacts: SetProperty<String>
+    val overriddenLicenses: MapProperty<String, String>
 }

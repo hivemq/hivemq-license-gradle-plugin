@@ -262,6 +262,93 @@ class LicenseResolverResolveLicensesTest {
     }
 
     @Test
+    fun `override applies when component has no licenses in BOM`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "javax.annotation",
+                  "name": "javax.annotation-api",
+                  "version": "1.3.2",
+                  "licenses": []
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            overriddenLicenses = mapOf("javax.annotation:javax.annotation-api" to "CDDL-1.1"),
+        )
+
+        assertThat(result).hasSize(1)
+        assertThat(result["javax.annotation:javax.annotation-api"]!!.license).isEqualTo(KnownLicense.CDDL_1_1)
+    }
+
+    @Test
+    fun `override applies even when component has licenses`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "javax.annotation",
+                  "name": "javax.annotation-api",
+                  "version": "1.3.2",
+                  "licenses": [
+                    { "license": { "id": "Apache-2.0" } }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            overriddenLicenses = mapOf("javax.annotation:javax.annotation-api" to "CDDL-1.1"),
+        )
+
+        assertThat(result).hasSize(1)
+        assertThat(result["javax.annotation:javax.annotation-api"]!!.license).isEqualTo(KnownLicense.CDDL_1_1)
+    }
+
+    @Test
+    fun `override with unknown SPDX ID fails with clear error`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "javax.annotation",
+                  "name": "javax.annotation-api",
+                  "version": "1.3.2",
+                  "licenses": []
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(
+                bom,
+                defaultIgnoredPrefixes,
+                defaultAllowedArtifacts,
+                overriddenLicenses = mapOf("javax.annotation:javax.annotation-api" to "UNKNOWN-LICENSE"),
+            )
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("Overridden license 'UNKNOWN-LICENSE'")
+            .hasMessageContaining("is not a known SPDX license ID")
+    }
+
+    @Test
     fun `resolves name-based license matching`() {
         val bom = writeBom(
             """

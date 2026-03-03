@@ -110,6 +110,7 @@ object LicenseResolver {
         dependencyLicenseFile: File,
         ignoredGroupPrefixes: Set<String>,
         allowedArtifacts: Set<String>,
+        overriddenLicenses: Map<String, String> = emptyMap(),
     ): TreeMap<String, ResolvedDependency> {
         val objectMapper = ObjectMapper()
         val bom = objectMapper.readValue(dependencyLicenseFile, DependencyReport.Bom::class.java)
@@ -118,6 +119,14 @@ object LicenseResolver {
             val group = component.group ?: continue
             val coordinates = Coordinates(group, component.name, component.version)
             if (shouldIgnore(coordinates, ignoredGroupPrefixes, allowedArtifacts)) continue
+            val overriddenSpdxId = overriddenLicenses[coordinates.moduleId]
+            if (overriddenSpdxId != null) {
+                val knownLicense = checkNotNull(SPDX_ID_MAP[overriddenSpdxId]) {
+                    "Overridden license '$overriddenSpdxId' for '$coordinates' is not a known SPDX license ID"
+                }
+                entries[coordinates.moduleId] = ResolvedDependency(coordinates, knownLicense)
+                continue
+            }
             val licenses = (component.licenses ?: emptyList())
                 .mapNotNull { it.license }
                 .map { convertLicense(it, coordinates) }

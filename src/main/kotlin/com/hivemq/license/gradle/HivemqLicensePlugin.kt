@@ -43,6 +43,7 @@ class HivemqLicensePlugin : Plugin<Project> {
             dependencyLicense.set(cyclonedxJsonOutput)
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
             allowedArtifacts.set(extension.allowedArtifacts)
+            overriddenLicenses.set(extension.overriddenLicenses)
         }
 
         project.tasks.register("updateThirdPartyLicenses", UpdateThirdPartyLicensesTask::class.java).configure {
@@ -52,6 +53,7 @@ class HivemqLicensePlugin : Plugin<Project> {
             dependencyLicense.set(cyclonedxJsonOutput)
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
             allowedArtifacts.set(extension.allowedArtifacts)
+            overriddenLicenses.set(extension.overriddenLicenses)
             outputDirectory.set(project.layout.buildDirectory.dir("tmp/third-party-licenses"))
         }
     }
