@@ -54,7 +54,7 @@ class HivemqLicensePlugin : Plugin<Project> {
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
             allowedArtifacts.set(extension.allowedArtifacts)
             overriddenLicenses.set(extension.overriddenLicenses)
-            outputDirectory.set(project.layout.buildDirectory.dir("tmp/third-party-licenses"))
+            outputDirectory.set(extension.thirdPartyLicenseDirectory)
         }
     }
 }

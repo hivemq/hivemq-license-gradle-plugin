@@ -15,6 +15,7 @@
  */
 package com.hivemq.license.gradle
 
+import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.model.ObjectFactory
 import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
@@ -31,4 +32,5 @@ abstract class HivemqLicenseExtensionImpl @Inject constructor(
         .convention(setOf("com.hivemq:hivemq-mqtt-client"))
     override val overriddenLicenses: MapProperty<String, String> =
         objectFactory.mapProperty(String::class.java, String::class.java).convention(emptyMap())
+    override val thirdPartyLicenseDirectory: DirectoryProperty = objectFactory.directoryProperty()
 }

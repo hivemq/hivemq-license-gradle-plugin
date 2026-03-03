@@ -237,6 +237,9 @@ class HivemqLicensePluginTest {
                 java
                 id("com.hivemq.license")
             }
+            hivemqLicense {
+                thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+            }
             tasks.named<com.hivemq.license.gradle.UpdateThirdPartyLicensesTask>("updateThirdPartyLicenses") {
                 dependencyLicense.set(file("build/reports/cyclonedx/bom.json"))
             }

@@ -38,6 +38,9 @@ class HivemqLicensePluginIntegrationTest {
                 java
                 id("com.hivemq.license")
             }
+            hivemqLicense {
+                thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+            }
             repositories {
                 mavenCentral()
             }
