@@ -13,10 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.hivemq.license.gradle
+package com.hivemq.tools.license.gradle
 
-data class Coordinates(val group: String, val name: String, val version: String) {
-    val moduleId get() = "$group:$name"
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
 
-    override fun toString() = "$group:$name:$version"
+class CoordinatesTest {
+
+    @Test
+    fun moduleId() {
+        val coordinates = Coordinates("com.example", "my-library", "1.0.0")
+        assertThat(coordinates.moduleId).isEqualTo("com.example:my-library")
+    }
+
+    @Test
+    fun toStringFormat() {
+        val coordinates = Coordinates("com.example", "my-library", "1.0.0")
+        assertThat(coordinates.toString()).isEqualTo("com.example:my-library:1.0.0")
+    }
 }

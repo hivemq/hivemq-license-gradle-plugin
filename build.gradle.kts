@@ -7,7 +7,7 @@ plugins {
     alias(libs.plugins.spotless)
 }
 
-group = "com.hivemq"
+group = "com.hivemq.tools"
 
 metadata {
     readableName = "HiveMQ License Gradle Plugin"

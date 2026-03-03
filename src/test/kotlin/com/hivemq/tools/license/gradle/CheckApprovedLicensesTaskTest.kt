@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.hivemq.license.gradle
+package com.hivemq.tools.license.gradle
 
 import org.assertj.core.api.Assertions.assertThat
 import org.gradle.testkit.runner.GradleRunner
@@ -42,9 +42,9 @@ class CheckApprovedLicensesTaskTest {
             """
             plugins {
                 java
-                id("com.hivemq.license")
+                id("com.hivemq.tools.license")
             }
-            tasks.named<com.hivemq.license.gradle.CheckApprovedLicensesTask>("checkApprovedLicenses") {
+            tasks.named<com.hivemq.tools.license.gradle.CheckApprovedLicensesTask>("checkApprovedLicenses") {
                 dependencyLicense.set(file("build/reports/cyclonedx/bom.json"))
             }
             $extra
@@ -260,12 +260,12 @@ class CheckApprovedLicensesTaskTest {
             """
             plugins {
                 java
-                id("com.hivemq.license")
+                id("com.hivemq.tools.license")
             }
             hivemqLicense {
                 ignoredGroupPrefixes.set(setOf("org.internal"))
             }
-            tasks.named<com.hivemq.license.gradle.CheckApprovedLicensesTask>("checkApprovedLicenses") {
+            tasks.named<com.hivemq.tools.license.gradle.CheckApprovedLicensesTask>("checkApprovedLicenses") {
                 dependencyLicense.set(file("build/reports/cyclonedx/bom.json"))
             }
             """.trimIndent()
@@ -300,13 +300,13 @@ class CheckApprovedLicensesTaskTest {
             """
             plugins {
                 java
-                id("com.hivemq.license")
+                id("com.hivemq.tools.license")
             }
             hivemqLicense {
                 ignoredGroupPrefixes.set(setOf("org.internal"))
                 allowedArtifacts.set(setOf("org.internal:public-api"))
             }
-            tasks.named<com.hivemq.license.gradle.CheckApprovedLicensesTask>("checkApprovedLicenses") {
+            tasks.named<com.hivemq.tools.license.gradle.CheckApprovedLicensesTask>("checkApprovedLicenses") {
                 dependencyLicense.set(file("build/reports/cyclonedx/bom.json"))
             }
             """.trimIndent()

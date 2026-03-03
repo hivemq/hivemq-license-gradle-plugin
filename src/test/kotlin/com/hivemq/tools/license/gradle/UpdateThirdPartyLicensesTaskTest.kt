@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.hivemq.license.gradle
+package com.hivemq.tools.license.gradle
 
 import org.assertj.core.api.Assertions.assertThat
 import org.gradle.testkit.runner.GradleRunner
@@ -33,7 +33,7 @@ class UpdateThirdPartyLicensesTaskTest {
             """
             plugins {
                 java
-                id("com.hivemq.license")
+                id("com.hivemq.tools.license")
             }
             $buildExtra
             """.trimIndent()
@@ -51,12 +51,12 @@ class UpdateThirdPartyLicensesTaskTest {
             """
             plugins {
                 java
-                id("com.hivemq.license")
+                id("com.hivemq.tools.license")
             }
             hivemqLicense {
                 thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
             }
-            tasks.named<com.hivemq.license.gradle.UpdateThirdPartyLicensesTask>("updateThirdPartyLicenses") {
+            tasks.named<com.hivemq.tools.license.gradle.UpdateThirdPartyLicensesTask>("updateThirdPartyLicenses") {
                 dependencyLicense.set(file("build/reports/cyclonedx/bom.json"))
             }
             """.trimIndent()
@@ -347,13 +347,13 @@ class UpdateThirdPartyLicensesTaskTest {
             """
             plugins {
                 java
-                id("com.hivemq.license")
+                id("com.hivemq.tools.license")
             }
             hivemqLicense {
                 projectName.set("My Custom Product")
                 thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
             }
-            tasks.named<com.hivemq.license.gradle.UpdateThirdPartyLicensesTask>("updateThirdPartyLicenses") {
+            tasks.named<com.hivemq.tools.license.gradle.UpdateThirdPartyLicensesTask>("updateThirdPartyLicenses") {
                 dependencyLicense.set(file("build/reports/cyclonedx/bom.json"))
             }
             """.trimIndent()
@@ -550,13 +550,13 @@ class UpdateThirdPartyLicensesTaskTest {
             """
             plugins {
                 java
-                id("com.hivemq.license")
+                id("com.hivemq.tools.license")
             }
             hivemqLicense {
                 ignoredGroupPrefixes.set(setOf("org.internal"))
                 thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
             }
-            tasks.named<com.hivemq.license.gradle.UpdateThirdPartyLicensesTask>("updateThirdPartyLicenses") {
+            tasks.named<com.hivemq.tools.license.gradle.UpdateThirdPartyLicensesTask>("updateThirdPartyLicenses") {
                 dependencyLicense.set(file("build/reports/cyclonedx/bom.json"))
             }
             """.trimIndent()

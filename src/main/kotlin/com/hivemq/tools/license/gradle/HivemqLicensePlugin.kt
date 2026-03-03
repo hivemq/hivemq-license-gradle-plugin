@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.hivemq.license.gradle
+package com.hivemq.tools.license.gradle
 
 import org.cyclonedx.gradle.CyclonedxDirectTask
 import org.cyclonedx.gradle.CyclonedxPlugin
