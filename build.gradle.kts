@@ -30,6 +30,10 @@ java {
     }
 }
 
+kotlin {
+    jvmToolchain(21)
+}
+
 tasks.compileJava {
     javaCompiler = javaToolchains.compilerFor {
         languageVersion = JavaLanguageVersion.of(11)
@@ -37,9 +41,9 @@ tasks.compileJava {
 }
 
 tasks.compileKotlin {
-    compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11
-    }
+    kotlinJavaToolchain.toolchain.use(javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(11)
+    })
 }
 
 repositories {
