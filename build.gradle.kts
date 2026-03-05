@@ -20,6 +20,7 @@ metadata {
         apache2()
     }
     github {
+        org = "hivemq"
         issues()
     }
 }
@@ -56,7 +57,6 @@ gradlePlugin {
             id = "$group.$name"
             implementationClass = "$group.$name.gradle.HivemqLicensePlugin"
             tags = listOf("hivemq", "license")
-            vcsUrl = "https://github.com/hivemq/hivemq-license-gradle-plugin"
         }
     }
 }
