@@ -27,9 +27,6 @@ class HivemqLicensePluginIntegrationTest {
     @TempDir
     lateinit var projectDir: File
 
-    private val pluginTestInitScript: String =
-        System.getProperty("pluginTestInitScript") ?: error("pluginTestInitScript system property not set")
-
     private fun setup() {
         projectDir.resolve("settings.gradle.kts").writeText("""rootProject.name = "test-project"""")
         projectDir.resolve("build.gradle.kts").writeText(
@@ -54,7 +51,8 @@ class HivemqLicensePluginIntegrationTest {
 
     private fun gradleRunner(vararg args: String) = GradleRunner.create()
         .withProjectDir(projectDir)
-        .withArguments("--init-script", pluginTestInitScript, *args)
+        .withPluginClasspath()
+        .withArguments(*args)
 
     @Test
     fun `checkApprovedLicenses succeeds with real dependencies`() {
