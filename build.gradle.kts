@@ -11,7 +11,7 @@ group = "com.hivemq.tools"
 
 metadata {
     readableName = "HiveMQ License Gradle Plugin"
-    description = "A Gradle plugin to generate and validate third-party license reports from CycloneDX BOMs"
+    description = "A Gradle plugin to validate third-party licenses and generate license reports from CycloneDX BOMs"
     organization {
         name = "HiveMQ"
         url = "https://www.hivemq.com/"
@@ -62,6 +62,7 @@ gradlePlugin {
             id = "$group.$name"
             implementationClass = "$group.$name.gradle.HivemqLicensePlugin"
             tags = listOf("hivemq", "license")
+            vcsUrl = "https://github.com/hivemq/hivemq-license-gradle-plugin"
         }
     }
 }
