@@ -48,6 +48,7 @@ enum class KnownLicense(val id: String, override val fullName: String, override 
     MIT("MIT", "MIT License", "https://spdx.org/licenses/MIT.html"),
     MIT_0("MIT-0", "MIT No Attribution", "https://spdx.org/licenses/MIT-0.html"),
     PUBLIC_DOMAIN("Public Domain", "Public Domain", ""),
+    W3C("W3C", "W3C Software Notice and License (2002-12-31)", "https://spdx.org/licenses/W3C.html"),
     W3C_19980720(
         "W3C-19980720",
         "W3C Software Notice and License (1998-07-20)",

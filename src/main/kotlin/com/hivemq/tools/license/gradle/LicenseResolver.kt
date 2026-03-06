@@ -34,6 +34,7 @@ object LicenseResolver {
         KnownLicense.GO,
         KnownLicense.CC0_1_0,
         KnownLicense.PUBLIC_DOMAIN,
+        KnownLicense.W3C,
         KnownLicense.W3C_19980720,
         KnownLicense.EDL_1_0,
         KnownLicense.EPL_2_0,

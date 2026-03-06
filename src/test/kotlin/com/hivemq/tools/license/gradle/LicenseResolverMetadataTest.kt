@@ -59,6 +59,7 @@ class LicenseResolverMetadataTest {
         assertThat(LicenseResolver.SPDX_ID_MAP["BSD-2-Clause"]).isEqualTo(KnownLicense.BSD_2_CLAUSE)
         assertThat(LicenseResolver.SPDX_ID_MAP["UPL-1.0"]).isEqualTo(KnownLicense.UPL_1_0)
         assertThat(LicenseResolver.SPDX_ID_MAP["MIT-0"]).isEqualTo(KnownLicense.MIT_0)
+        assertThat(LicenseResolver.SPDX_ID_MAP["W3C"]).isEqualTo(KnownLicense.W3C)
         assertThat(LicenseResolver.SPDX_ID_MAP["W3C-19980720"]).isEqualTo(KnownLicense.W3C_19980720)
     }
 
