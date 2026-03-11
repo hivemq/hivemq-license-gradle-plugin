@@ -48,9 +48,27 @@ class LicenseResolverMetadataTest {
     }
 
     @Test
+    fun `BUILT_IN_LICENSES maps javax_activation to CDDL_1_1`() {
+        assertThat(LicenseResolver.BUILT_IN_LICENSES["javax.activation:javax.activation-api"])
+            .isEqualTo(KnownLicense.CDDL_1_1)
+    }
+
+    @Test
     fun `BUILT_IN_LICENSES maps javax_annotation to CDDL_1_1`() {
         assertThat(LicenseResolver.BUILT_IN_LICENSES["javax.annotation:javax.annotation-api"])
             .isEqualTo(KnownLicense.CDDL_1_1)
+    }
+
+    @Test
+    fun `BUILT_IN_LICENSES maps asm to BSD_3_CLAUSE`() {
+        assertThat(LicenseResolver.BUILT_IN_LICENSES["org.ow2.asm:asm"])
+            .isEqualTo(KnownLicense.BSD_3_CLAUSE)
+    }
+
+    @Test
+    fun `BUILT_IN_LICENSES maps picocontainer to BSD_3_CLAUSE`() {
+        assertThat(LicenseResolver.BUILT_IN_LICENSES["org.picocontainer:picocontainer"])
+            .isEqualTo(KnownLicense.BSD_3_CLAUSE)
     }
 
     @Test

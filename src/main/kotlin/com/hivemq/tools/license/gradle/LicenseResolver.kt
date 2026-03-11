@@ -53,12 +53,15 @@ object LicenseResolver {
 
     // built-in license mappings for well-known artifacts that don't report license metadata in CycloneDX
     val BUILT_IN_LICENSES = mapOf(
+        "javax.activation:javax.activation-api" to KnownLicense.CDDL_1_1,
         "javax.annotation:javax.annotation-api" to KnownLicense.CDDL_1_1,
         "javax.servlet:javax.servlet-api" to KnownLicense.CDDL_1_1,
         "javax.websocket:javax.websocket-api" to KnownLicense.CDDL_1_1,
         "javax.websocket:javax.websocket-client-api" to KnownLicense.CDDL_1_1,
-        "org.antlr:antlr-runtime" to KnownLicense.BSD_3_CLAUSE,
         "org.antlr:ST4" to KnownLicense.BSD_3_CLAUSE,
+        "org.antlr:antlr-runtime" to KnownLicense.BSD_3_CLAUSE,
+        "org.ow2.asm:asm" to KnownLicense.BSD_3_CLAUSE,
+        "org.picocontainer:picocontainer" to KnownLicense.BSD_3_CLAUSE,
     )
 
     // maps SPDX license IDs from CycloneDX to known licenses (first match in LICENSE_ORDER wins)
