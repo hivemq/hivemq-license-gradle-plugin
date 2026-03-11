@@ -16,7 +16,7 @@
 package com.hivemq.tools.license.gradle
 
 data class Coordinates(val group: String, val name: String, val version: String) {
-    val moduleId get() = "$group:$name"
+    val moduleId get() = if (group.isEmpty()) name else "$group:$name"
 
-    override fun toString() = "$group:$name:$version"
+    override fun toString() = if (group.isEmpty()) "$name:$version" else "$group:$name:$version"
 }

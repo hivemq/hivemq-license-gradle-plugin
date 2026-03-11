@@ -60,6 +60,26 @@ class LicenseResolverShouldIgnoreTest {
     }
 
     @Test
+    fun `ignores npm scoped package by name prefix when group is empty`() {
+        val coordinates = Coordinates("", "@hivemq/ui-library", "1.0.0")
+        assertThat(LicenseResolver.shouldIgnore(coordinates, setOf("@hivemq/"), emptySet())).isTrue()
+    }
+
+    @Test
+    fun `does not ignore npm package when name does not match prefix`() {
+        val coordinates = Coordinates("", "@fontsource/raleway", "5.2.8")
+        assertThat(LicenseResolver.shouldIgnore(coordinates, setOf("@hivemq/"), emptySet())).isFalse()
+    }
+
+    @Test
+    fun `allowed npm artifact overrides name prefix ignore`() {
+        val coordinates = Coordinates("", "@hivemq/public-lib", "1.0.0")
+        assertThat(
+            LicenseResolver.shouldIgnore(coordinates, setOf("@hivemq/"), setOf("@hivemq/public-lib"))
+        ).isFalse()
+    }
+
+    @Test
     fun `allowed artifact overrides ignored prefix`() {
         val coordinates = Coordinates("org.internal", "public-api", "1.0.0")
         assertThat(

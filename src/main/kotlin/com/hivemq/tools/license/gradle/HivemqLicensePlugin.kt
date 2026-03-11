@@ -50,6 +50,7 @@ class HivemqLicensePlugin : Plugin<Project> {
             group = "hivemq license"
             description = "Generates third-party license reports from the CycloneDX BOM."
             projectName.set(extension.projectName)
+            outputFileNamePrefix.convention("")
             dependencyLicense.set(cyclonedxJsonOutput)
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
             allowedArtifacts.set(extension.allowedArtifacts)

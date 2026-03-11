@@ -35,6 +35,9 @@ abstract class UpdateThirdPartyLicensesTask : DefaultTask() {
     @get:Input
     abstract val projectName: Property<String>
 
+    @get:Input
+    abstract val outputFileNamePrefix: Property<String>
+
     @get:InputFile
     abstract val dependencyLicense: RegularFileProperty
 
@@ -53,8 +56,9 @@ abstract class UpdateThirdPartyLicensesTask : DefaultTask() {
     @TaskAction
     protected fun run() {
         val productName = projectName.get()
-        val resultPlaintextFile = outputDirectory.get().asFile.resolve("licenses")
-        val resultHtmlFile = outputDirectory.get().asFile.resolve("licenses.html")
+        val prefix = outputFileNamePrefix.get()
+        val resultPlaintextFile = outputDirectory.get().asFile.resolve("${prefix}licenses")
+        val resultHtmlFile = outputDirectory.get().asFile.resolve("${prefix}licenses.html")
 
         check(productName.isNotBlank()) { "Project name is blank" }
         if (resultPlaintextFile.exists()) {

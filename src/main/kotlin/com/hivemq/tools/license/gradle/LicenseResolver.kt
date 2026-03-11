@@ -15,6 +15,7 @@
  */
 package com.hivemq.tools.license.gradle
 
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import java.io.File
 import java.util.TreeMap
@@ -28,11 +29,15 @@ object LicenseResolver {
         KnownLicense.APACHE_2_0,
         KnownLicense.MIT,
         KnownLicense.MIT_0,
+        KnownLicense.ZERO_BSD,
+        KnownLicense.UNLICENSE,
         KnownLicense.BOUNCY_CASTLE,
+        KnownLicense.ISC,
         KnownLicense.BSD_3_CLAUSE,
         KnownLicense.BSD_2_CLAUSE,
         KnownLicense.GO,
         KnownLicense.CC0_1_0,
+        KnownLicense.OFL_1_1,
         KnownLicense.PUBLIC_DOMAIN,
         KnownLicense.W3C,
         KnownLicense.W3C_19980720,
@@ -65,7 +70,7 @@ object LicenseResolver {
 
     fun shouldIgnore(coordinates: Coordinates, ignoredGroupPrefixes: Set<String>, allowedArtifacts: Set<String>): Boolean {
         if (coordinates.moduleId in allowedArtifacts) return false
-        return ignoredGroupPrefixes.any { coordinates.group.startsWith(it) }
+        return ignoredGroupPrefixes.any { coordinates.group.startsWith(it) || (coordinates.group.isEmpty() && coordinates.name.startsWith(it)) }
     }
 
     fun convertLicense(license: DependencyReport.LicenseEntry, coordinates: Coordinates): License {
@@ -127,7 +132,11 @@ object LicenseResolver {
         overriddenLicenses: Map<String, String> = emptyMap(),
     ): TreeMap<String, ResolvedDependency> {
         val objectMapper = ObjectMapper()
-        val bom = objectMapper.readValue(dependencyLicenseFile, DependencyReport.Bom::class.java)
+        val tree = objectMapper.readTree(dependencyLicenseFile)
+        if (!tree.has("components")) {
+            return resolvePnpmLicenses(tree, ignoredGroupPrefixes, allowedArtifacts, overriddenLicenses)
+        }
+        val bom = objectMapper.treeToValue(tree, DependencyReport.Bom::class.java)
         val entries = TreeMap<String, ResolvedDependency>()
         for (component in bom.components) {
             val group = component.group ?: continue
@@ -154,6 +163,46 @@ object LicenseResolver {
                 "License not on the approved list for '$coordinates': ${licenses.joinToString { it.fullName }}"
             }
             entries[coordinates.moduleId] = ResolvedDependency(coordinates, chosenLicense)
+        }
+        return entries
+    }
+
+    private fun resolvePnpmLicenses(
+        tree: JsonNode,
+        ignoredGroupPrefixes: Set<String>,
+        allowedArtifacts: Set<String>,
+        overriddenLicenses: Map<String, String>,
+    ): TreeMap<String, ResolvedDependency> {
+        val entries = TreeMap<String, ResolvedDependency>()
+        for ((_, packages) in tree.properties()) {
+            for (pkg in packages) {
+                val name = pkg.get("name")?.asText() ?: continue
+                val version = pkg.get("versions")?.firstOrNull()?.asText() ?: continue
+                val spdxId = pkg.get("license")?.asText()
+                val coordinates = Coordinates("", name, version)
+                if (shouldIgnore(coordinates, ignoredGroupPrefixes, allowedArtifacts)) continue
+                val overriddenSpdxId = overriddenLicenses[coordinates.moduleId]
+                if (overriddenSpdxId != null) {
+                    val knownLicense = checkNotNull(SPDX_ID_MAP[overriddenSpdxId]) {
+                        "Overridden license '$overriddenSpdxId' for '$coordinates' is not a known SPDX license ID"
+                    }
+                    entries[coordinates.moduleId] = ResolvedDependency(coordinates, knownLicense)
+                    continue
+                }
+                val builtInLicense = BUILT_IN_LICENSES[coordinates.moduleId]
+                if (builtInLicense != null) {
+                    entries[coordinates.moduleId] = ResolvedDependency(coordinates, builtInLicense)
+                    continue
+                }
+                check(spdxId != null && spdxId != "Unknown") { "No license found for '$coordinates'" }
+                // handle compound SPDX expressions like "MIT AND ISC"
+                val spdxIds = spdxId.split(" AND ", " OR ").map { it.trim() }
+                val licenses = spdxIds.mapNotNull { SPDX_ID_MAP[it] }
+                val knownLicense = checkNotNull(chooseLicense(licenses)) {
+                    "License not on the approved list for '$coordinates': $spdxId"
+                }
+                entries[coordinates.moduleId] = ResolvedDependency(coordinates, knownLicense)
+            }
         }
         return entries
     }

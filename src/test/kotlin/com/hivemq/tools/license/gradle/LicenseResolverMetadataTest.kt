@@ -69,6 +69,10 @@ class LicenseResolverMetadataTest {
         assertThat(LicenseResolver.SPDX_ID_MAP["W3C-19980720"]).isEqualTo(KnownLicense.W3C_19980720)
         assertThat(LicenseResolver.SPDX_ID_MAP["Unicode-3.0"]).isEqualTo(KnownLicense.UNICODE_3_0)
         assertThat(LicenseResolver.SPDX_ID_MAP["Unicode-DFS-2016"]).isEqualTo(KnownLicense.UNICODE_DFS_2016)
+        assertThat(LicenseResolver.SPDX_ID_MAP["0BSD"]).isEqualTo(KnownLicense.ZERO_BSD)
+        assertThat(LicenseResolver.SPDX_ID_MAP["ISC"]).isEqualTo(KnownLicense.ISC)
+        assertThat(LicenseResolver.SPDX_ID_MAP["OFL-1.1"]).isEqualTo(KnownLicense.OFL_1_1)
+        assertThat(LicenseResolver.SPDX_ID_MAP["Unlicense"]).isEqualTo(KnownLicense.UNLICENSE)
     }
 
     @Test

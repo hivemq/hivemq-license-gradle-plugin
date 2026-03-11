@@ -22,6 +22,7 @@ interface License {
 
 enum class KnownLicense(val id: String, override val fullName: String, override val url: String) : License {
     APACHE_2_0("Apache-2.0", "Apache License 2.0", "https://spdx.org/licenses/Apache-2.0.html"),
+    ZERO_BSD("0BSD", "BSD Zero Clause License", "https://spdx.org/licenses/0BSD.html"),
     BOUNCY_CASTLE("MIT", "Bouncy Castle Licence", "https://www.bouncycastle.org/licence.html"),
     BSD_2_CLAUSE("BSD-2-Clause", "BSD 2-Clause \"Simplified\" License", "https://spdx.org/licenses/BSD-2-Clause.html"),
     BSD_3_CLAUSE(
@@ -45,9 +46,12 @@ enum class KnownLicense(val id: String, override val fullName: String, override 
     EPL_1_0("EPL-1.0", "Eclipse Public License 1.0", "https://spdx.org/licenses/EPL-1.0.html"),
     EPL_2_0("EPL-2.0", "Eclipse Public License 2.0", "https://spdx.org/licenses/EPL-2.0.html"),
     GO("BSD-3-Clause", "Go License", "https://golang.org/LICENSE"),
+    ISC("ISC", "ISC License", "https://spdx.org/licenses/ISC.html"),
     MIT("MIT", "MIT License", "https://spdx.org/licenses/MIT.html"),
     MIT_0("MIT-0", "MIT No Attribution", "https://spdx.org/licenses/MIT-0.html"),
+    OFL_1_1("OFL-1.1", "SIL Open Font License 1.1", "https://spdx.org/licenses/OFL-1.1.html"),
     PUBLIC_DOMAIN("Public Domain", "Public Domain", ""),
+    UNLICENSE("Unlicense", "The Unlicense", "https://spdx.org/licenses/Unlicense.html"),
     W3C("W3C", "W3C Software Notice and License (2002-12-31)", "https://spdx.org/licenses/W3C.html"),
     W3C_19980720(
         "W3C-19980720",
