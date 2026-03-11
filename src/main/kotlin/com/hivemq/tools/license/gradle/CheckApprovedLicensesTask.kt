@@ -20,20 +20,25 @@ import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
+import org.gradle.work.DisableCachingByDefault
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 
 /**
  * Validates that all dependencies in the CycloneDX BOM have approved licenses.
  * Does not produce any output files.
  */
+@DisableCachingByDefault(because = "Validation task that should always run")
 abstract class CheckApprovedLicensesTask : DefaultTask() {
 
     @get:Input
     abstract val projectName: Property<String>
 
     @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
     abstract val dependencyLicense: RegularFileProperty
 
     @get:Input
