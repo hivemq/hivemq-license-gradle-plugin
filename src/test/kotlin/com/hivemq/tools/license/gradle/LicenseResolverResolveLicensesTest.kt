@@ -187,9 +187,9 @@ class LicenseResolverResolveLicensesTest {
             {
               "components": [
                 {
-                  "group": "javax.annotation",
-                  "name": "javax.annotation-api",
-                  "version": "1.3.2",
+                  "group": "com.example",
+                  "name": "dual-license-lib",
+                  "version": "1.0.0",
                   "licenses": [
                     { "license": { "id": "EPL-2.0" } },
                     { "license": { "id": "Apache-2.0" } }
@@ -202,7 +202,7 @@ class LicenseResolverResolveLicensesTest {
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
-        assertThat(result["javax.annotation:javax.annotation-api"]!!.license).isEqualTo(KnownLicense.APACHE_2_0)
+        assertThat(result["com.example:dual-license-lib"]!!.license).isEqualTo(KnownLicense.APACHE_2_0)
     }
 
     @Test
@@ -346,6 +346,78 @@ class LicenseResolverResolveLicensesTest {
         }.isInstanceOf(IllegalStateException::class.java)
             .hasMessageContaining("Overridden license 'UNKNOWN-LICENSE'")
             .hasMessageContaining("is not a known SPDX license ID")
+    }
+
+    @Test
+    fun `built-in license resolves when component has no licenses`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "javax.annotation",
+                  "name": "javax.annotation-api",
+                  "version": "1.3.2"
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result).hasSize(1)
+        assertThat(result["javax.annotation:javax.annotation-api"]!!.license).isEqualTo(KnownLicense.CDDL_1_1)
+    }
+
+    @Test
+    fun `built-in license resolves when component has empty licenses`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "javax.annotation",
+                  "name": "javax.annotation-api",
+                  "version": "1.3.2",
+                  "licenses": []
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result).hasSize(1)
+        assertThat(result["javax.annotation:javax.annotation-api"]!!.license).isEqualTo(KnownLicense.CDDL_1_1)
+    }
+
+    @Test
+    fun `user override takes precedence over built-in license`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "javax.annotation",
+                  "name": "javax.annotation-api",
+                  "version": "1.3.2"
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            overriddenLicenses = mapOf("javax.annotation:javax.annotation-api" to "Apache-2.0"),
+        )
+
+        assertThat(result).hasSize(1)
+        assertThat(result["javax.annotation:javax.annotation-api"]!!.license).isEqualTo(KnownLicense.APACHE_2_0)
     }
 
     @Test

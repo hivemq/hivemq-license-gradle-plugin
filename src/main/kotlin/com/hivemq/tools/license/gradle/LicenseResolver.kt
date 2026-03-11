@@ -46,6 +46,16 @@ object LicenseResolver {
         KnownLicense.UPL_1_0,
     )
 
+    // built-in license mappings for well-known artifacts that don't report license metadata in CycloneDX
+    val BUILT_IN_LICENSES = mapOf(
+        "javax.annotation:javax.annotation-api" to KnownLicense.CDDL_1_1,
+        "javax.servlet:javax.servlet-api" to KnownLicense.CDDL_1_1,
+        "javax.websocket:javax.websocket-api" to KnownLicense.CDDL_1_1,
+        "javax.websocket:javax.websocket-client-api" to KnownLicense.CDDL_1_1,
+        "org.antlr:antlr-runtime" to KnownLicense.BSD_3_CLAUSE,
+        "org.antlr:ST4" to KnownLicense.BSD_3_CLAUSE,
+    )
+
     // maps SPDX license IDs from CycloneDX to known licenses (first match in LICENSE_ORDER wins)
     val SPDX_ID_MAP = buildMap {
         for (license in LICENSE_ORDER) {
@@ -129,6 +139,11 @@ object LicenseResolver {
                     "Overridden license '$overriddenSpdxId' for '$coordinates' is not a known SPDX license ID"
                 }
                 entries[coordinates.moduleId] = ResolvedDependency(coordinates, knownLicense)
+                continue
+            }
+            val builtInLicense = BUILT_IN_LICENSES[coordinates.moduleId]
+            if (builtInLicense != null) {
+                entries[coordinates.moduleId] = ResolvedDependency(coordinates, builtInLicense)
                 continue
             }
             val licenses = (component.licenses ?: emptyList())

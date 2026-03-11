@@ -462,9 +462,9 @@ class UpdateThirdPartyLicensesTaskTest {
                   ]
                 },
                 {
-                  "group": "javax.annotation",
-                  "name": "javax.annotation-api",
-                  "version": "1.3.2",
+                  "group": "com.example",
+                  "name": "dual-license-lib",
+                  "version": "1.0.0",
                   "licenses": [
                     { "license": { "id": "EPL-2.0" } },
                     { "license": { "id": "Apache-2.0" } }
@@ -482,11 +482,11 @@ class UpdateThirdPartyLicensesTaskTest {
         assertThat(plaintext)
             .contains("com.google.guava:guava")
             .contains("org.slf4j:slf4j-api")
-            .contains("javax.annotation:javax.annotation-api")
+            .contains("com.example:dual-license-lib")
         // dual-license should prefer Apache-2.0
         val lines = plaintext.lines()
-        val annotationLine = lines.find { it.contains("javax.annotation:javax.annotation-api") }!!
-        assertThat(annotationLine).contains("Apache-2.0")
+        val dualLicenseLine = lines.find { it.contains("com.example:dual-license-lib") }!!
+        assertThat(dualLicenseLine).contains("Apache-2.0")
     }
 
     // --- Task fails with unapproved license ---

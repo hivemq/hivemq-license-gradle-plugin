@@ -48,6 +48,12 @@ class LicenseResolverMetadataTest {
     }
 
     @Test
+    fun `BUILT_IN_LICENSES maps javax_annotation to CDDL_1_1`() {
+        assertThat(LicenseResolver.BUILT_IN_LICENSES["javax.annotation:javax.annotation-api"])
+            .isEqualTo(KnownLicense.CDDL_1_1)
+    }
+
+    @Test
     fun `SPDX_ID_MAP maps known SPDX IDs`() {
         assertThat(LicenseResolver.SPDX_ID_MAP["Apache-2.0"]).isEqualTo(KnownLicense.APACHE_2_0)
         assertThat(LicenseResolver.SPDX_ID_MAP["MIT"]).isEqualTo(KnownLicense.MIT)
