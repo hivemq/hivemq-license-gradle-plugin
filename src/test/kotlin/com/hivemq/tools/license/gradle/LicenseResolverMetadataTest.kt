@@ -61,6 +61,8 @@ class LicenseResolverMetadataTest {
         assertThat(LicenseResolver.SPDX_ID_MAP["MIT-0"]).isEqualTo(KnownLicense.MIT_0)
         assertThat(LicenseResolver.SPDX_ID_MAP["W3C"]).isEqualTo(KnownLicense.W3C)
         assertThat(LicenseResolver.SPDX_ID_MAP["W3C-19980720"]).isEqualTo(KnownLicense.W3C_19980720)
+        assertThat(LicenseResolver.SPDX_ID_MAP["Unicode-3.0"]).isEqualTo(KnownLicense.UNICODE_3_0)
+        assertThat(LicenseResolver.SPDX_ID_MAP["Unicode-DFS-2016"]).isEqualTo(KnownLicense.UNICODE_DFS_2016)
     }
 
     @Test

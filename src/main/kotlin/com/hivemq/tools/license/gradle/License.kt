@@ -54,6 +54,12 @@ enum class KnownLicense(val id: String, override val fullName: String, override 
         "W3C Software Notice and License (1998-07-20)",
         "https://spdx.org/licenses/W3C-19980720.html"
     ),
+    UNICODE_3_0("Unicode-3.0", "Unicode License v3", "https://spdx.org/licenses/Unicode-3.0.html"),
+    UNICODE_DFS_2016(
+        "Unicode-DFS-2016",
+        "Unicode License Agreement - Data Files and Software (2016)",
+        "https://spdx.org/licenses/Unicode-DFS-2016.html"
+    ),
     UPL_1_0("UPL-1.0", "Universal Permissive License v1.0", "https://spdx.org/licenses/UPL-1.0.html"),
 }
 

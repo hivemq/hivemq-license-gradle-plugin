@@ -201,6 +201,12 @@ class LicenseResolverConvertLicenseTest {
     }
 
     @Test
+    fun `matches Unicode ICU License by name`() {
+        val entry = DependencyReport.LicenseEntry(name = "Unicode/ICU License")
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.UNICODE_3_0)
+    }
+
+    @Test
     fun `matches UPL 1_0 by name`() {
         val entry = DependencyReport.LicenseEntry(name = "Universal Permissive License, Version 1.0")
         assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.UPL_1_0)

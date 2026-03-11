@@ -41,6 +41,8 @@ object LicenseResolver {
         KnownLicense.EPL_1_0,
         KnownLicense.CDDL_1_1,
         KnownLicense.CDDL_1_0,
+        KnownLicense.UNICODE_3_0,
+        KnownLicense.UNICODE_DFS_2016,
         KnownLicense.UPL_1_0,
     )
 
@@ -84,6 +86,7 @@ object LicenseResolver {
             name.matches(".*MIT(\\s.*|$)".toRegex()) -> KnownLicense.MIT
             name.matches(".*MIT-0.*".toRegex()) -> KnownLicense.MIT_0
             name == "Public Domain" -> KnownLicense.PUBLIC_DOMAIN
+            name == "Unicode/ICU License" -> KnownLicense.UNICODE_3_0
             name == "Universal Permissive License, Version 1.0" -> KnownLicense.UPL_1_0
             url == "http://www.w3.org/Consortium/Legal/copyright-software-19980720" -> KnownLicense.W3C_19980720
             // from here license name and url are not enough to determine the exact license, so we checked the specific dependency manually
