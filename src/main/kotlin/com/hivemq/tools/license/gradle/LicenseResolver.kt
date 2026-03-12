@@ -62,6 +62,7 @@ object LicenseResolver {
         "org.antlr:antlr-runtime" to KnownLicense.BSD_3_CLAUSE,
         "org.ow2.asm:asm" to KnownLicense.BSD_3_CLAUSE,
         "org.picocontainer:picocontainer" to KnownLicense.BSD_3_CLAUSE,
+        "org.w3c.css:sac" to KnownLicense.W3C_19980720,
     )
 
     // maps SPDX license IDs from CycloneDX to known licenses (first match in LICENSE_ORDER wins)

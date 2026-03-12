@@ -118,6 +118,7 @@ Some well-known artifacts don't report license metadata in CycloneDX. The plugin
 | `org.antlr:ST4`                            | BSD-3-Clause |
 | `org.ow2.asm:asm`                          | BSD-3-Clause |
 | `org.picocontainer:picocontainer`          | BSD-3-Clause |
+| `org.w3c.css:sac`                          | W3C-19980720 |
 
 These can be overridden using the `overriddenLicenses` configuration.
 

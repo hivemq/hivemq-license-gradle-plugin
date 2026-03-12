@@ -72,6 +72,12 @@ class LicenseResolverMetadataTest {
     }
 
     @Test
+    fun `BUILT_IN_LICENSES maps sac to W3C_19980720`() {
+        assertThat(LicenseResolver.BUILT_IN_LICENSES["org.w3c.css:sac"])
+            .isEqualTo(KnownLicense.W3C_19980720)
+    }
+
+    @Test
     fun `SPDX_ID_MAP maps known SPDX IDs`() {
         assertThat(LicenseResolver.SPDX_ID_MAP["Apache-2.0"]).isEqualTo(KnownLicense.APACHE_2_0)
         assertThat(LicenseResolver.SPDX_ID_MAP["MIT"]).isEqualTo(KnownLicense.MIT)
