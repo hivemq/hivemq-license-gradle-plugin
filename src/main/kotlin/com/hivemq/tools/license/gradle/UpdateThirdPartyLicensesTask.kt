@@ -55,6 +55,9 @@ abstract class UpdateThirdPartyLicensesTask : DefaultTask() {
     @get:Input
     abstract val overriddenLicenses: MapProperty<String, String>
 
+    @get:Input
+    abstract val excludedDependencies: MapProperty<String, String>
+
     @get:OutputDirectory
     abstract val outputDirectory: DirectoryProperty
 
@@ -78,6 +81,7 @@ abstract class UpdateThirdPartyLicensesTask : DefaultTask() {
             ignoredGroupPrefixes = ignoredGroupPrefixes.get(),
             allowedArtifacts = allowedArtifacts.get(),
             overriddenLicenses = overriddenLicenses.get(),
+            excludedDependencies = excludedDependencies.get(),
         )
 
         val licensePlaintext = StringBuilder()

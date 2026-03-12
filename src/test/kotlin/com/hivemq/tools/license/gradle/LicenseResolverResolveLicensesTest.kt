@@ -421,6 +421,148 @@ class LicenseResolverResolveLicensesTest {
     }
 
     @Test
+    fun `excluded dependency resolved from overriddenLicenses`() {
+        val bom = writeBom("""{ "components": [] }""")
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            overriddenLicenses = mapOf("org.jline:jline" to "BSD-3-Clause"),
+            excludedDependencies = mapOf("org.jline:jline" to "4.0.2"),
+        )
+
+        assertThat(result).hasSize(1)
+        val entry = result["org.jline:jline"]!!
+        assertThat(entry.coordinates.group).isEqualTo("org.jline")
+        assertThat(entry.coordinates.name).isEqualTo("jline")
+        assertThat(entry.coordinates.version).isEqualTo("4.0.2")
+        assertThat(entry.license).isEqualTo(KnownLicense.BSD_3_CLAUSE)
+    }
+
+    @Test
+    fun `excluded dependency resolved from BUILT_IN_LICENSES`() {
+        val bom = writeBom("""{ "components": [] }""")
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            excludedDependencies = mapOf("javax.annotation:javax.annotation-api" to "1.3.2"),
+        )
+
+        assertThat(result).hasSize(1)
+        val entry = result["javax.annotation:javax.annotation-api"]!!
+        assertThat(entry.coordinates.version).isEqualTo("1.3.2")
+        assertThat(entry.license).isEqualTo(KnownLicense.CDDL_1_1)
+    }
+
+    @Test
+    fun `excluded dependency overriddenLicenses takes precedence over BUILT_IN_LICENSES`() {
+        val bom = writeBom("""{ "components": [] }""")
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            overriddenLicenses = mapOf("javax.annotation:javax.annotation-api" to "Apache-2.0"),
+            excludedDependencies = mapOf("javax.annotation:javax.annotation-api" to "1.3.2"),
+        )
+
+        assertThat(result).hasSize(1)
+        assertThat(result["javax.annotation:javax.annotation-api"]!!.license).isEqualTo(KnownLicense.APACHE_2_0)
+    }
+
+    @Test
+    fun `excluded dependency fails when not in overriddenLicenses or BUILT_IN_LICENSES`() {
+        val bom = writeBom("""{ "components": [] }""")
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(
+                bom,
+                defaultIgnoredPrefixes,
+                defaultAllowedArtifacts,
+                excludedDependencies = mapOf("com.unknown:unknown-lib" to "1.0.0"),
+            )
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("Excluded dependency")
+            .hasMessageContaining("com.unknown:unknown-lib")
+            .hasMessageContaining("no license defined")
+    }
+
+    @Test
+    fun `excluded dependency fails when overriddenLicense has unknown SPDX ID`() {
+        val bom = writeBom("""{ "components": [] }""")
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(
+                bom,
+                defaultIgnoredPrefixes,
+                defaultAllowedArtifacts,
+                overriddenLicenses = mapOf("org.jline:jline" to "INVALID-LICENSE"),
+                excludedDependencies = mapOf("org.jline:jline" to "4.0.2"),
+            )
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("Overridden license 'INVALID-LICENSE'")
+            .hasMessageContaining("is not a known SPDX license ID")
+    }
+
+    @Test
+    fun `excluded dependencies are merged with BOM dependencies`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.google.guava",
+                  "name": "guava",
+                  "version": "32.1.3-jre",
+                  "licenses": [
+                    { "license": { "id": "Apache-2.0" } }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            overriddenLicenses = mapOf("org.jline:jline" to "BSD-3-Clause"),
+            excludedDependencies = mapOf("org.jline:jline" to "4.0.2"),
+        )
+
+        assertThat(result).hasSize(2)
+        assertThat(result).containsKey("com.google.guava:guava")
+        assertThat(result).containsKey("org.jline:jline")
+    }
+
+    @Test
+    fun `multiple excluded dependencies are all resolved`() {
+        val bom = writeBom("""{ "components": [] }""")
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            overriddenLicenses = mapOf(
+                "org.jline:jline" to "BSD-3-Clause",
+                "org.jline:jline-picocli" to "BSD-3-Clause",
+            ),
+            excludedDependencies = mapOf(
+                "org.jline:jline" to "4.0.2",
+                "org.jline:jline-picocli" to "4.0.2",
+            ),
+        )
+
+        assertThat(result).hasSize(2)
+        assertThat(result["org.jline:jline"]!!.license).isEqualTo(KnownLicense.BSD_3_CLAUSE)
+        assertThat(result["org.jline:jline-picocli"]!!.license).isEqualTo(KnownLicense.BSD_3_CLAUSE)
+    }
+
+    @Test
     fun `resolves name-based license matching`() {
         val bom = writeBom(
             """

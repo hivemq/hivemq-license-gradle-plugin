@@ -28,10 +28,41 @@ class HivemqLicensePlugin : Plugin<Project> {
 
         project.plugins.apply(CyclonedxPlugin::class.java)
 
+        val filteredConfigName = "hivemqLicenseRuntimeClasspath"
+        project.afterEvaluate {
+            val excludedDependencies = extension.excludedDependencies.get()
+            if (excludedDependencies.isNotEmpty()) {
+                project.configurations.create(filteredConfigName) {
+                    isCanBeConsumed = false
+                    isCanBeResolved = true
+                    extendsFrom(project.configurations.getByName("runtimeClasspath"))
+                    for (dep in excludedDependencies) {
+                        val parts = dep.split(":")
+                        exclude(mapOf("group" to parts[0], "module" to parts[1]))
+                    }
+                }
+            }
+        }
+
+        val resolvedExcludedDependencies = extension.excludedDependencies.map { excludedDeps ->
+            if (excludedDeps.isEmpty()) return@map emptyMap<String, String>()
+            val runtimeClasspath = project.configurations.getByName("runtimeClasspath")
+            val resolvedVersions = mutableMapOf<String, String>()
+            runtimeClasspath.resolvedConfiguration.resolvedArtifacts.forEach { artifact ->
+                val moduleId = "${artifact.moduleVersion.id.group}:${artifact.moduleVersion.id.name}"
+                if (moduleId in excludedDeps) {
+                    resolvedVersions[moduleId] = artifact.moduleVersion.id.version
+                }
+            }
+            resolvedVersions.toMap()
+        }
+
         val cyclonedxDirectBom = project.tasks.named("cyclonedxDirectBom", CyclonedxDirectTask::class.java)
         cyclonedxDirectBom.configure {
             projectType.set(org.cyclonedx.model.Component.Type.APPLICATION)
-            includeConfigs.set(listOf("runtimeClasspath"))
+            includeConfigs.set(extension.excludedDependencies.map { excludedDeps ->
+                if (excludedDeps.isNotEmpty()) listOf(filteredConfigName) else listOf("runtimeClasspath")
+            })
         }
 
         val cyclonedxJsonOutput = cyclonedxDirectBom.flatMap { it.jsonOutput }
@@ -44,6 +75,7 @@ class HivemqLicensePlugin : Plugin<Project> {
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
             allowedArtifacts.set(extension.allowedArtifacts)
             overriddenLicenses.set(extension.overriddenLicenses)
+            excludedDependencies.set(resolvedExcludedDependencies)
         }
 
         project.tasks.register("updateThirdPartyLicenses", UpdateThirdPartyLicensesTask::class.java).configure {
@@ -55,6 +87,7 @@ class HivemqLicensePlugin : Plugin<Project> {
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
             allowedArtifacts.set(extension.allowedArtifacts)
             overriddenLicenses.set(extension.overriddenLicenses)
+            excludedDependencies.set(resolvedExcludedDependencies)
             outputDirectory.set(extension.thirdPartyLicenseDirectory)
         }
     }

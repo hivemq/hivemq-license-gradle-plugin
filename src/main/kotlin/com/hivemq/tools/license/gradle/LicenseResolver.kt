@@ -133,6 +133,7 @@ object LicenseResolver {
         ignoredGroupPrefixes: Set<String>,
         allowedArtifacts: Set<String>,
         overriddenLicenses: Map<String, String> = emptyMap(),
+        excludedDependencies: Map<String, String> = emptyMap(),
     ): TreeMap<String, ResolvedDependency> {
         val objectMapper = ObjectMapper()
         val tree = objectMapper.readTree(dependencyLicenseFile)
@@ -166,6 +167,23 @@ object LicenseResolver {
                 "License not on the approved list for '$coordinates': ${licenses.joinToString { it.fullName }}"
             }
             entries[coordinates.moduleId] = ResolvedDependency(coordinates, chosenLicense)
+        }
+        for ((moduleId, version) in excludedDependencies) {
+            val parts = moduleId.split(":")
+            val coordinates = Coordinates(parts[0], parts[1], version)
+            val overriddenSpdxId = overriddenLicenses[moduleId]
+            if (overriddenSpdxId != null) {
+                val knownLicense = checkNotNull(SPDX_ID_MAP[overriddenSpdxId]) {
+                    "Overridden license '$overriddenSpdxId' for excluded dependency '$coordinates' is not a known SPDX license ID"
+                }
+                entries[moduleId] = ResolvedDependency(coordinates, knownLicense)
+                continue
+            }
+            val builtInLicense = BUILT_IN_LICENSES[moduleId]
+            checkNotNull(builtInLicense) {
+                "Excluded dependency '$coordinates' has no license defined in overriddenLicenses or BUILT_IN_LICENSES"
+            }
+            entries[moduleId] = ResolvedDependency(coordinates, builtInLicense)
         }
         return entries
     }

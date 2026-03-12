@@ -50,6 +50,9 @@ abstract class CheckApprovedLicensesTask : DefaultTask() {
     @get:Input
     abstract val overriddenLicenses: MapProperty<String, String>
 
+    @get:Input
+    abstract val excludedDependencies: MapProperty<String, String>
+
     init {
         // always run - no outputs means Gradle would consider it UP-TO-DATE otherwise
         outputs.upToDateWhen { false }
@@ -62,6 +65,7 @@ abstract class CheckApprovedLicensesTask : DefaultTask() {
             ignoredGroupPrefixes = ignoredGroupPrefixes.get(),
             allowedArtifacts = allowedArtifacts.get(),
             overriddenLicenses = overriddenLicenses.get(),
+            excludedDependencies = excludedDependencies.get(),
         )
         logger.lifecycle("All ${entries.size} dependencies have approved licenses.")
     }
