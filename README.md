@@ -29,6 +29,7 @@ The `hivemqLicense` extension provides the following properties:
 | `thirdPartyLicenseDirectory`| `DirectoryProperty`     | -                                   | Yes      | Directory where license report files are generated                     |
 | `ignoredGroupPrefixes`      | `SetProperty<String>`   | `["com.hivemq"]`                    | No       | Group ID prefixes to exclude from reports (internal dependencies)      |
 | `allowedArtifacts`          | `SetProperty<String>`   | `["com.hivemq:hivemq-mqtt-client"]` | No       | Specific artifacts to include despite matching an ignored group prefix |
+| `excludedDependencies`      | `SetProperty<String>`   | `[]`                                | No       | Dependencies (`group:artifact`) to exclude from CycloneDX scanning     |
 | `overriddenLicenses`        | `MapProperty<String, String>` | `{}`                          | No       | Override license SPDX IDs for specific artifacts                       |
 
 ### Advanced Example
@@ -39,7 +40,12 @@ hivemqLicense {
     thirdPartyLicenseDirectory = layout.buildDirectory.dir("third-party-licenses")
     ignoredGroupPrefixes.set(setOf("com.hivemq", "com.mycompany"))
     allowedArtifacts.set(setOf("com.hivemq:hivemq-mqtt-client", "com.mycompany:public-lib"))
-    overriddenLicenses.set(mapOf("org.example:some-lib" to "Apache-2.0"))
+    excludedDependencies.set(setOf("org.jline:jline", "org.jline:jline-picocli"))
+    overriddenLicenses.set(mapOf(
+        "org.example:some-lib" to "Apache-2.0",
+        "org.jline:jline" to "BSD-3-Clause",
+        "org.jline:jline-picocli" to "BSD-3-Clause",
+    ))
 }
 ```
 
@@ -101,20 +107,41 @@ Compound SPDX expressions like `MIT AND ISC` or `MIT OR Apache-2.0` are supporte
 
 Some well-known artifacts don't report license metadata in CycloneDX. The plugin includes built-in mappings for these:
 
-| Artifact                                   | License    |
-|--------------------------------------------|------------|
-| `javax.annotation:javax.annotation-api`    | CDDL-1.1   |
-| `javax.servlet:javax.servlet-api`          | CDDL-1.1   |
-| `javax.websocket:javax.websocket-api`      | CDDL-1.1   |
-| `javax.websocket:javax.websocket-client-api` | CDDL-1.1 |
+| Artifact                                   | License      |
+|--------------------------------------------|--------------|
+| `javax.activation:javax.activation-api`    | CDDL-1.1     |
+| `javax.annotation:javax.annotation-api`    | CDDL-1.1     |
+| `javax.servlet:javax.servlet-api`          | CDDL-1.1     |
+| `javax.websocket:javax.websocket-api`      | CDDL-1.1     |
+| `javax.websocket:javax.websocket-client-api` | CDDL-1.1   |
 | `org.antlr:antlr-runtime`                  | BSD-3-Clause |
 | `org.antlr:ST4`                            | BSD-3-Clause |
+| `org.ow2.asm:asm`                          | BSD-3-Clause |
+| `org.picocontainer:picocontainer`          | BSD-3-Clause |
 
 These can be overridden using the `overriddenLicenses` configuration.
 
+## Excluded Dependencies
+
+Some dependencies are built with Maven 4, which produces POM files that the CycloneDX Gradle Plugin cannot parse ([CycloneDX #793](https://github.com/CycloneDX/cyclonedx-gradle-plugin/issues/793)). To work around this, you can exclude these dependencies from CycloneDX scanning using `excludedDependencies`.
+
+Excluded dependencies are removed from the configuration that CycloneDX scans (including their transitives). Their licenses are still included in the report, resolved from `overriddenLicenses` or `BUILT_IN_LICENSES`. The task fails if an excluded dependency has no license defined in either source.
+
+```kotlin
+hivemqLicense {
+    projectName = "My Application"
+    thirdPartyLicenseDirectory = layout.buildDirectory.dir("third-party-licenses")
+    excludedDependencies.set(setOf("org.jline:jline", "org.jline:jline-picocli"))
+    overriddenLicenses.set(mapOf(
+        "org.jline:jline" to "BSD-3-Clause",
+        "org.jline:jline-picocli" to "BSD-3-Clause",
+    ))
+}
+```
+
 ## How It Works
 
-1. The plugin applies the [CycloneDX Gradle Plugin](https://github.com/CycloneDX/cyclonedx-gradle-plugin) and configures it to generate a `bom.json` from the `runtimeClasspath`.
+1. The plugin applies the [CycloneDX Gradle Plugin](https://github.com/CycloneDX/cyclonedx-gradle-plugin) and configures it to generate a `bom.json` from the `runtimeClasspath` (or a filtered copy if `excludedDependencies` is set).
 2. Both tasks parse the generated BOM (or pnpm JSON) and resolve licenses using SPDX IDs, license name patterns, and URL-based matching.
 3. Dependencies matching the configured `ignoredGroupPrefixes` are excluded (unless listed in `allowedArtifacts`).
 
