@@ -26,7 +26,7 @@ class LicenseTest {
 
     @Test
     fun `enum has expected number of values`() {
-        assertThat(KnownLicense.entries).hasSize(24)
+        assertThat(KnownLicense.entries).hasSize(26)
     }
 
     @ParameterizedTest

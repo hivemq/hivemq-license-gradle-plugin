@@ -61,6 +61,18 @@ class LicenseResolverConvertLicenseTest {
     }
 
     @Test
+    fun `converts known SPDX ID BlueOak-1_0_0`() {
+        val entry = DependencyReport.LicenseEntry(id = "BlueOak-1.0.0")
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.BLUE_OAK_1_0_0)
+    }
+
+    @Test
+    fun `converts known SPDX ID CC-BY-4_0`() {
+        val entry = DependencyReport.LicenseEntry(id = "CC-BY-4.0")
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.CC_BY_4_0)
+    }
+
+    @Test
     fun `converts known SPDX ID LGPL-2_1-or-later`() {
         val entry = DependencyReport.LicenseEntry(id = "LGPL-2.1-or-later")
         assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.LGPL_2_1_OR_LATER)
@@ -102,6 +114,12 @@ class LicenseResolverConvertLicenseTest {
     }
 
     @Test
+    fun `matches Blue Oak Model License 1_0_0 by name`() {
+        val entry = DependencyReport.LicenseEntry(name = "Blue Oak Model License 1.0.0")
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.BLUE_OAK_1_0_0)
+    }
+
+    @Test
     fun `matches Bouncy Castle Licence by name`() {
         val entry = DependencyReport.LicenseEntry(name = "Bouncy Castle Licence")
         assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.BOUNCY_CASTLE)
@@ -132,6 +150,12 @@ class LicenseResolverConvertLicenseTest {
             url = "https://opensource.org/licenses/BSD-3-Clause",
         )
         assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.BSD_3_CLAUSE)
+    }
+
+    @Test
+    fun `matches Creative Commons Attribution 4_0 by name`() {
+        val entry = DependencyReport.LicenseEntry(name = "Creative Commons Attribution 4.0 International")
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.CC_BY_4_0)
     }
 
     @Test

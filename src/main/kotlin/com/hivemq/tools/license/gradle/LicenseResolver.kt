@@ -32,11 +32,13 @@ object LicenseResolver {
         KnownLicense.ZERO_BSD,
         KnownLicense.UNLICENSE,
         KnownLicense.BOUNCY_CASTLE,
+        KnownLicense.BLUE_OAK_1_0_0,
         KnownLicense.ISC,
         KnownLicense.BSD_3_CLAUSE,
         KnownLicense.BSD_2_CLAUSE,
         KnownLicense.GO,
         KnownLicense.CC0_1_0,
+        KnownLicense.CC_BY_4_0,
         KnownLicense.OFL_1_1,
         KnownLicense.PUBLIC_DOMAIN,
         KnownLicense.W3C,
@@ -103,6 +105,8 @@ object LicenseResolver {
             name == "Bouncy Castle Licence" -> KnownLicense.BOUNCY_CASTLE
             name.matches("(.*BSD.*2.*[Cc]lause.*)|(.*2.*[Cc]lause.*BSD.*)".toRegex()) -> KnownLicense.BSD_2_CLAUSE
             name.matches("(.*BSD.*3.*[Cc]lause.*)|(.*3.*[Cc]lause.*BSD.*)|(.*[Nn]ew.*BSD.*)|(.*BSD.*[Nn]ew.*)".toRegex()) || (url == "https://opensource.org/licenses/BSD-3-Clause") -> KnownLicense.BSD_3_CLAUSE
+            name.matches(".*Blue.*Oak.*1\\.0.*".toRegex()) -> KnownLicense.BLUE_OAK_1_0_0
+            name.matches(".*Creative.*Commons.*Attribution.*4\\.0.*".toRegex()) -> KnownLicense.CC_BY_4_0
             name == "CC0" -> KnownLicense.CC0_1_0
             name == "Public Domain, per Creative Commons CC0" -> KnownLicense.CC0_1_0
             url == "https://glassfish.dev.java.net/public/CDDLv1.0.html" -> KnownLicense.CDDL_1_0

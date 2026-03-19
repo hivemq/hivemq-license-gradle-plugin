@@ -22,6 +22,7 @@ interface License {
 
 enum class KnownLicense(val id: String, override val fullName: String, override val url: String) : License {
     APACHE_2_0("Apache-2.0", "Apache License 2.0", "https://spdx.org/licenses/Apache-2.0.html"),
+    BLUE_OAK_1_0_0("BlueOak-1.0.0", "Blue Oak Model License 1.0.0", "https://spdx.org/licenses/BlueOak-1.0.0.html"),
     BOUNCY_CASTLE("MIT", "Bouncy Castle Licence", "https://www.bouncycastle.org/licence.html"),
     BSD_2_CLAUSE("BSD-2-Clause", "BSD 2-Clause \"Simplified\" License", "https://spdx.org/licenses/BSD-2-Clause.html"),
     BSD_3_CLAUSE(
@@ -29,6 +30,7 @@ enum class KnownLicense(val id: String, override val fullName: String, override 
         "BSD 3-Clause \"New\" or \"Revised\" License",
         "https://spdx.org/licenses/BSD-3-Clause.html"
     ),
+    CC_BY_4_0("CC-BY-4.0", "Creative Commons Attribution 4.0 International", "https://spdx.org/licenses/CC-BY-4.0.html"),
     CC0_1_0("CC0-1.0", "Creative Commons Zero v1.0 Universal", "https://spdx.org/licenses/CC0-1.0.html"),
     CDDL_1_0("CDDL-1.0", "Common Development and Distribution License 1.0", "https://spdx.org/licenses/CDDL-1.0.html"),
     CDDL_1_1("CDDL-1.1", "Common Development and Distribution License 1.1", "https://spdx.org/licenses/CDDL-1.1.html"),
