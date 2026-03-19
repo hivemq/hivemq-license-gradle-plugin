@@ -24,6 +24,11 @@ class LicenseTest {
 
     // --- KnownLicense enum properties ---
 
+    @Test
+    fun `enum has expected number of values`() {
+        assertThat(KnownLicense.entries).hasSize(24)
+    }
+
     @ParameterizedTest
     @EnumSource(KnownLicense::class)
     fun `every KnownLicense has non-blank id`(license: KnownLicense) {
@@ -60,19 +65,6 @@ class LicenseTest {
     }
 
     @Test
-    fun `MIT has correct properties`() {
-        assertThat(KnownLicense.MIT.id).isEqualTo("MIT")
-        assertThat(KnownLicense.MIT.fullName).isEqualTo("MIT License")
-        assertThat(KnownLicense.MIT.url).isEqualTo("https://spdx.org/licenses/MIT.html")
-    }
-
-    @Test
-    fun `MIT_0 has correct properties`() {
-        assertThat(KnownLicense.MIT_0.id).isEqualTo("MIT-0")
-        assertThat(KnownLicense.MIT_0.fullName).isEqualTo("MIT No Attribution")
-    }
-
-    @Test
     fun `BOUNCY_CASTLE has MIT SPDX id`() {
         assertThat(KnownLicense.BOUNCY_CASTLE.id).isEqualTo("MIT")
         assertThat(KnownLicense.BOUNCY_CASTLE.fullName).isEqualTo("Bouncy Castle Licence")
@@ -91,17 +83,47 @@ class LicenseTest {
     }
 
     @Test
+    fun `MIT has correct properties`() {
+        assertThat(KnownLicense.MIT.id).isEqualTo("MIT")
+        assertThat(KnownLicense.MIT.fullName).isEqualTo("MIT License")
+        assertThat(KnownLicense.MIT.url).isEqualTo("https://spdx.org/licenses/MIT.html")
+    }
+
+    @Test
+    fun `MIT_0 has correct properties`() {
+        assertThat(KnownLicense.MIT_0.id).isEqualTo("MIT-0")
+        assertThat(KnownLicense.MIT_0.fullName).isEqualTo("MIT No Attribution")
+    }
+
+    @Test
     fun `PUBLIC_DOMAIN has empty url`() {
         assertThat(KnownLicense.PUBLIC_DOMAIN.id).isEqualTo("Public Domain")
         assertThat(KnownLicense.PUBLIC_DOMAIN.url).isEmpty()
     }
 
+    // --- UnknownLicense ---
+
     @Test
-    fun `enum has expected number of values`() {
-        assertThat(KnownLicense.entries).hasSize(24)
+    fun `UnknownLicense data class copy`() {
+        val original = UnknownLicense("MIT", "https://a.com")
+        val copy = original.copy(fullName = "BSD")
+        assertThat(copy.fullName).isEqualTo("BSD")
+        assertThat(copy.url).isEqualTo("https://a.com")
     }
 
-    // --- UnknownLicense ---
+    @Test
+    fun `UnknownLicense data class equality`() {
+        val a = UnknownLicense("MIT", "https://a.com")
+        val b = UnknownLicense("MIT", "https://a.com")
+        assertThat(a).isEqualTo(b)
+    }
+
+    @Test
+    fun `UnknownLicense implements License interface`() {
+        val license: License = UnknownLicense("Custom", "https://custom.com")
+        assertThat(license.fullName).isEqualTo("Custom")
+        assertThat(license.url).isEqualTo("https://custom.com")
+    }
 
     @Test
     fun `UnknownLicense stores fullName and url`() {
@@ -115,27 +137,5 @@ class LicenseTest {
         val license = UnknownLicense("Proprietary", null)
         assertThat(license.fullName).isEqualTo("Proprietary")
         assertThat(license.url).isNull()
-    }
-
-    @Test
-    fun `UnknownLicense implements License interface`() {
-        val license: License = UnknownLicense("Custom", "https://custom.com")
-        assertThat(license.fullName).isEqualTo("Custom")
-        assertThat(license.url).isEqualTo("https://custom.com")
-    }
-
-    @Test
-    fun `UnknownLicense data class equality`() {
-        val a = UnknownLicense("MIT", "https://a.com")
-        val b = UnknownLicense("MIT", "https://a.com")
-        assertThat(a).isEqualTo(b)
-    }
-
-    @Test
-    fun `UnknownLicense data class copy`() {
-        val original = UnknownLicense("MIT", "https://a.com")
-        val copy = original.copy(fullName = "BSD")
-        assertThat(copy.fullName).isEqualTo("BSD")
-        assertThat(copy.url).isEqualTo("https://a.com")
     }
 }
