@@ -22,9 +22,10 @@ import org.gradle.api.provider.SetProperty
 
 interface HivemqLicenseExtension {
     val projectName: Property<String>
+    val thirdPartyLicenseDirectory: DirectoryProperty
     val ignoredGroupPrefixes: SetProperty<String>
     val allowedArtifacts: SetProperty<String>
+    val additionalConfigurations: SetProperty<String>
     val excludedDependencies: SetProperty<String>
     val overriddenLicenses: MapProperty<String, String>
-    val thirdPartyLicenseDirectory: DirectoryProperty
 }

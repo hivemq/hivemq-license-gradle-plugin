@@ -60,9 +60,15 @@ class HivemqLicensePlugin : Plugin<Project> {
         val cyclonedxDirectBom = project.tasks.named("cyclonedxDirectBom", CyclonedxDirectTask::class.java)
         cyclonedxDirectBom.configure {
             projectType.set(org.cyclonedx.model.Component.Type.APPLICATION)
-            includeConfigs.set(extension.excludedDependencies.map { excludedDeps ->
-                if (excludedDeps.isNotEmpty()) listOf(filteredConfigName) else listOf("runtimeClasspath")
-            })
+            includeConfigs.set(
+                extension.excludedDependencies.zip(extension.additionalConfigurations) { excludedDeps, additionalConfigs ->
+                    val configs = mutableListOf(
+                        if (excludedDeps.isNotEmpty()) filteredConfigName else "runtimeClasspath"
+                    )
+                    configs.addAll(additionalConfigs)
+                    configs.toList()
+                }
+            )
         }
 
         val cyclonedxJsonOutput = cyclonedxDirectBom.flatMap { it.jsonOutput }
