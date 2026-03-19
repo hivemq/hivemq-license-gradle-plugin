@@ -65,6 +65,11 @@ enum class KnownLicense(val id: String, override val fullName: String, override 
         "https://spdx.org/licenses/Unicode-DFS-2016.html"
     ),
     UPL_1_0("UPL-1.0", "Universal Permissive License v1.0", "https://spdx.org/licenses/UPL-1.0.html"),
+    LGPL_2_1_OR_LATER(
+        "LGPL-2.1-or-later",
+        "GNU Lesser General Public License v2.1 or later",
+        "https://spdx.org/licenses/LGPL-2.1-or-later.html"
+    ),
 }
 
 data class UnknownLicense(override val fullName: String, override val url: String?) : License

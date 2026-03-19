@@ -43,8 +43,8 @@ class LicenseResolverMetadataTest {
     }
 
     @Test
-    fun `LICENSE_ORDER ends with UPL_1_0`() {
-        assertThat(LicenseResolver.LICENSE_ORDER.last()).isEqualTo(KnownLicense.UPL_1_0)
+    fun `LICENSE_ORDER ends with LGPL_2_1_OR_LATER`() {
+        assertThat(LicenseResolver.LICENSE_ORDER.last()).isEqualTo(KnownLicense.LGPL_2_1_OR_LATER)
     }
 
     @Test
@@ -97,6 +97,7 @@ class LicenseResolverMetadataTest {
         assertThat(LicenseResolver.SPDX_ID_MAP["ISC"]).isEqualTo(KnownLicense.ISC)
         assertThat(LicenseResolver.SPDX_ID_MAP["OFL-1.1"]).isEqualTo(KnownLicense.OFL_1_1)
         assertThat(LicenseResolver.SPDX_ID_MAP["Unlicense"]).isEqualTo(KnownLicense.UNLICENSE)
+        assertThat(LicenseResolver.SPDX_ID_MAP["LGPL-2.1-or-later"]).isEqualTo(KnownLicense.LGPL_2_1_OR_LATER)
     }
 
     @Test

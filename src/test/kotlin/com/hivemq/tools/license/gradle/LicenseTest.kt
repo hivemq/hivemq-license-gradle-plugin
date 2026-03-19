@@ -98,7 +98,7 @@ class LicenseTest {
 
     @Test
     fun `enum has expected number of values`() {
-        assertThat(KnownLicense.entries).hasSize(23)
+        assertThat(KnownLicense.entries).hasSize(24)
     }
 
     // --- UnknownLicense ---

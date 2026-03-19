@@ -61,6 +61,12 @@ class LicenseResolverConvertLicenseTest {
     }
 
     @Test
+    fun `converts known SPDX ID LGPL-2_1-or-later`() {
+        val entry = DependencyReport.LicenseEntry(id = "LGPL-2.1-or-later")
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.LGPL_2_1_OR_LATER)
+    }
+
+    @Test
     fun `unknown SPDX ID returns UnknownLicense`() {
         val entry = DependencyReport.LicenseEntry(id = "LGPL-3.0", url = "https://example.com")
         val result = LicenseResolver.convertLicense(entry, anyCoordinates)
@@ -210,6 +216,18 @@ class LicenseResolverConvertLicenseTest {
     fun `matches UPL 1_0 by name`() {
         val entry = DependencyReport.LicenseEntry(name = "Universal Permissive License, Version 1.0")
         assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.UPL_1_0)
+    }
+
+    @Test
+    fun `matches LGPL 2_1 by name`() {
+        val entry = DependencyReport.LicenseEntry(name = "GNU Lesser General Public License, Version 2.1")
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.LGPL_2_1_OR_LATER)
+    }
+
+    @Test
+    fun `matches LGPL 2_1 by short name`() {
+        val entry = DependencyReport.LicenseEntry(name = "LGPL 2.1")
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.LGPL_2_1_OR_LATER)
     }
 
     @Test
