@@ -42,6 +42,13 @@ class HivemqLicensePlugin : Plugin<Project> {
                     }
                 }
             }
+            for (configName in extension.additionalConfigurations.get()) {
+                project.configurations.create("hivemqLicense_$configName") {
+                    isCanBeConsumed = false
+                    isCanBeResolved = true
+                    extendsFrom(project.configurations.getByName(configName))
+                }
+            }
         }
 
         val resolvedExcludedDependencies = extension.excludedDependencies.map { excludedDeps ->
@@ -65,7 +72,7 @@ class HivemqLicensePlugin : Plugin<Project> {
                     val configs = mutableListOf(
                         if (excludedDeps.isNotEmpty()) filteredConfigName else "runtimeClasspath"
                     )
-                    configs.addAll(additionalConfigs)
+                    configs.addAll(additionalConfigs.map { "hivemqLicense_$it" })
                     configs.toList()
                 }
             )

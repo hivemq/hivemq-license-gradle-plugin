@@ -66,6 +66,42 @@ class HivemqLicensePluginIntegrationTest {
     }
 
     @Test
+    fun `additionalConfigurations resolves transitive dependencies`() {
+        projectDir.resolve("settings.gradle.kts").writeText("""rootProject.name = "test-project"""")
+        projectDir.resolve("build.gradle.kts").writeText(
+            """
+            plugins {
+                java
+                id("com.hivemq.tools.license")
+            }
+            hivemqLicense {
+                thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+                additionalConfigurations.add("internalJdbcDriver")
+            }
+            repositories {
+                mavenCentral()
+            }
+            val internalJdbcDriver by configurations.creating {
+                isTransitive = false
+            }
+            dependencies {
+                internalJdbcDriver("org.postgresql:postgresql:42.7.4")
+            }
+            """.trimIndent()
+        )
+
+        val result = gradleRunner("updateThirdPartyLicenses").build()
+
+        assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+
+        val plaintext = projectDir.resolve("build/tmp/third-party-licenses/licenses").readText()
+        // Direct dependency
+        assertThat(plaintext).contains("org.postgresql:postgresql")
+        // Transitive dependency (pulled in via the wrapper's transitive resolution)
+        assertThat(plaintext).contains("org.checkerframework:checker-qual")
+    }
+
+    @Test
     fun `updateThirdPartyLicenses generates reports from real dependencies`() {
         setup()
 

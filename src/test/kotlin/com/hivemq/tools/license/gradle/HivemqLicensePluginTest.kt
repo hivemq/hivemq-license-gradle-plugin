@@ -201,6 +201,37 @@ class HivemqLicensePluginTest {
     }
 
     @Test
+    fun `additionalConfigurations creates transitive wrapper configuration`() {
+        setup(
+            """
+            val myCustomConfig by configurations.creating {
+                isTransitive = false
+            }
+            hivemqLicense {
+                additionalConfigurations.add("myCustomConfig")
+            }
+            tasks.register("printWrapperConfig") {
+                doLast {
+                    val wrapper = project.configurations.findByName("hivemqLicense_myCustomConfig")
+                    println("exists=" + (wrapper != null))
+                    println("canBeResolved=" + wrapper?.isCanBeResolved)
+                    println("canBeConsumed=" + wrapper?.isCanBeConsumed)
+                    println("extendsFrom=" + wrapper?.extendsFrom?.map { it.name })
+                }
+            }
+            """.trimIndent()
+        )
+
+        val result = gradleRunner("printWrapperConfig").build()
+
+        assertThat(result.output)
+            .contains("exists=true")
+            .contains("canBeResolved=true")
+            .contains("canBeConsumed=false")
+            .contains("extendsFrom=[myCustomConfig]")
+    }
+
+    @Test
     fun `updateThirdPartyLicenses generates output files`() {
         setup()
 
