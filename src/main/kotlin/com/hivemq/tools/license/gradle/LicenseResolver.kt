@@ -61,6 +61,7 @@ object LicenseResolver {
         "javax.servlet:javax.servlet-api" to KnownLicense.CDDL_1_1,
         "javax.websocket:javax.websocket-api" to KnownLicense.CDDL_1_1,
         "javax.websocket:javax.websocket-client-api" to KnownLicense.CDDL_1_1,
+        "javax.ws.rs:jsr311-api" to KnownLicense.CDDL_1_1,
         "org.antlr:ST4" to KnownLicense.BSD_3_CLAUSE,
         "org.antlr:antlr-runtime" to KnownLicense.BSD_3_CLAUSE,
         "org.ow2.asm:asm" to KnownLicense.BSD_3_CLAUSE,

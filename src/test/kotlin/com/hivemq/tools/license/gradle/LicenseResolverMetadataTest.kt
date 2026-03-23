@@ -76,6 +76,12 @@ class LicenseResolverMetadataTest {
     }
 
     @Test
+    fun `BUILT_IN_LICENSES maps jsr311-api to CDDL_1_1`() {
+        assertThat(LicenseResolver.BUILT_IN_LICENSES["javax.ws.rs:jsr311-api"])
+            .isEqualTo(KnownLicense.CDDL_1_1)
+    }
+
+    @Test
     fun `BUILT_IN_LICENSES maps asm to BSD_3_CLAUSE`() {
         assertThat(LicenseResolver.BUILT_IN_LICENSES["org.ow2.asm:asm"])
             .isEqualTo(KnownLicense.BSD_3_CLAUSE)

@@ -23,15 +23,15 @@ hivemqLicense {
 
 The `hivemqLicense` extension provides the following properties:
 
-| Property                    | Type                    | Default                             | Required | Description                                                            |
-|-----------------------------|-------------------------|-------------------------------------|----------|------------------------------------------------------------------------|
-| `projectName`               | `Property<String>`      | `project.name`                      | No       | Display name used in license report headers                            |
-| `thirdPartyLicenseDirectory`| `DirectoryProperty`     | -                                   | Yes      | Directory where license report files are generated                     |
-| `ignoredGroupPrefixes`      | `SetProperty<String>`   | `["com.hivemq"]`                    | No       | Group ID prefixes to exclude from reports (internal dependencies)      |
-| `allowedArtifacts`          | `SetProperty<String>`   | `["com.hivemq:hivemq-mqtt-client"]` | No       | Specific artifacts to include despite matching an ignored group prefix |
-| `additionalConfigurations`  | `SetProperty<String>`   | `[]`                                | No       | Extra Gradle configurations to include in the CycloneDX BOM            |
-| `excludedDependencies`      | `SetProperty<String>`   | `[]`                                | No       | Dependencies (`group:artifact`) to exclude from CycloneDX scanning     |
-| `overriddenLicenses`        | `MapProperty<String, String>` | `{}`                          | No       | Override license SPDX IDs for specific artifacts                       |
+| Property                     | Type                          | Default                             | Required | Description                                                            |
+|------------------------------|-------------------------------|-------------------------------------|----------|------------------------------------------------------------------------|
+| `projectName`                | `Property<String>`            | `project.name`                      | No       | Display name used in license report headers                            |
+| `thirdPartyLicenseDirectory` | `DirectoryProperty`           | -                                   | Yes      | Directory where license report files are generated                     |
+| `ignoredGroupPrefixes`       | `SetProperty<String>`         | `["com.hivemq"]`                    | No       | Group ID prefixes to exclude from reports (internal dependencies)      |
+| `allowedArtifacts`           | `SetProperty<String>`         | `["com.hivemq:hivemq-mqtt-client"]` | No       | Specific artifacts to include despite matching an ignored group prefix |
+| `additionalConfigurations`   | `SetProperty<String>`         | `[]`                                | No       | Extra Gradle configurations to include in the CycloneDX BOM            |
+| `excludedDependencies`       | `SetProperty<String>`         | `[]`                                | No       | Dependencies (`group:artifact`) to exclude from CycloneDX scanning     |
+| `overriddenLicenses`         | `MapProperty<String, String>` | `{}`                                | No       | Override license SPDX IDs for specific artifacts                       |
 
 ### Advanced Example
 
@@ -52,9 +52,9 @@ hivemqLicense {
 
 ## Tasks
 
-| Task                       | Description                                                |
-|----------------------------|------------------------------------------------------------|
-| `checkApprovedLicenses`    | Validates that all dependencies have approved licenses     |
+| Task                       | Description                                                  |
+|----------------------------|--------------------------------------------------------------|
+| `checkApprovedLicenses`    | Validates that all dependencies have approved licenses       |
 | `updateThirdPartyLicenses` | Generates third-party license reports from the CycloneDX BOM |
 
 ### checkApprovedLicenses
@@ -108,51 +108,52 @@ Compound SPDX expressions like `MIT AND ISC` or `MIT OR Apache-2.0` are supporte
 
 The following licenses are recognized and approved. When a dependency has multiple licenses, the plugin chooses the one with the highest priority (top of the list).
 
-| Priority | SPDX ID            | Full Name                                              |
-|----------|--------------------|--------------------------------------------------------|
-| 1        | Apache-2.0         | Apache License 2.0                                     |
-| 2        | MIT                | MIT License                                            |
-| 3        | MIT-0              | MIT No Attribution                                     |
-| 4        | 0BSD               | BSD Zero Clause License                                |
-| 5        | Unlicense          | The Unlicense                                          |
-| 6        | MIT                | Bouncy Castle Licence                                  |
-| 7        | BlueOak-1.0.0      | Blue Oak Model License 1.0.0                           |
-| 8        | ISC                | ISC License                                            |
-| 9        | BSD-3-Clause       | BSD 3-Clause "New" or "Revised" License                |
-| 10       | BSD-2-Clause       | BSD 2-Clause "Simplified" License                      |
-| 11       | BSD-3-Clause       | Go License                                             |
-| 12       | CC0-1.0            | Creative Commons Zero v1.0 Universal                   |
-| 13       | CC-BY-4.0          | Creative Commons Attribution 4.0 International         |
-| 14       | OFL-1.1            | SIL Open Font License 1.1                              |
-| 15       | Public Domain      | Public Domain                                          |
-| 16       | W3C                | W3C Software Notice and License (2002-12-31)           |
-| 17       | W3C-19980720       | W3C Software Notice and License (1998-07-20)           |
-| 18       | BSD-3-Clause       | Eclipse Distribution License - v 1.0                   |
-| 19       | EPL-2.0            | Eclipse Public License 2.0                             |
-| 20       | EPL-1.0            | Eclipse Public License 1.0                             |
-| 21       | CDDL-1.1           | Common Development and Distribution License 1.1        |
-| 22       | CDDL-1.0           | Common Development and Distribution License 1.0        |
-| 23       | Unicode-3.0        | Unicode License v3                                     |
-| 24       | Unicode-DFS-2016   | Unicode License Agreement - Data Files and Software (2016) |
-| 25       | UPL-1.0            | Universal Permissive License v1.0                      |
-| 26       | LGPL-2.1-or-later  | GNU Lesser General Public License v2.1 or later        |
+| Priority | SPDX ID           | Full Name                                                  |
+|----------|-------------------|------------------------------------------------------------|
+| 1        | Apache-2.0        | Apache License 2.0                                         |
+| 2        | MIT               | MIT License                                                |
+| 3        | MIT-0             | MIT No Attribution                                         |
+| 4        | 0BSD              | BSD Zero Clause License                                    |
+| 5        | Unlicense         | The Unlicense                                              |
+| 6        | MIT               | Bouncy Castle Licence                                      |
+| 7        | BlueOak-1.0.0     | Blue Oak Model License 1.0.0                               |
+| 8        | ISC               | ISC License                                                |
+| 9        | BSD-3-Clause      | BSD 3-Clause "New" or "Revised" License                    |
+| 10       | BSD-2-Clause      | BSD 2-Clause "Simplified" License                          |
+| 11       | BSD-3-Clause      | Go License                                                 |
+| 12       | CC0-1.0           | Creative Commons Zero v1.0 Universal                       |
+| 13       | CC-BY-4.0         | Creative Commons Attribution 4.0 International             |
+| 14       | OFL-1.1           | SIL Open Font License 1.1                                  |
+| 15       | Public Domain     | Public Domain                                              |
+| 16       | W3C               | W3C Software Notice and License (2002-12-31)               |
+| 17       | W3C-19980720      | W3C Software Notice and License (1998-07-20)               |
+| 18       | BSD-3-Clause      | Eclipse Distribution License - v 1.0                       |
+| 19       | EPL-2.0           | Eclipse Public License 2.0                                 |
+| 20       | EPL-1.0           | Eclipse Public License 1.0                                 |
+| 21       | CDDL-1.1          | Common Development and Distribution License 1.1            |
+| 22       | CDDL-1.0          | Common Development and Distribution License 1.0            |
+| 23       | Unicode-3.0       | Unicode License v3                                         |
+| 24       | Unicode-DFS-2016  | Unicode License Agreement - Data Files and Software (2016) |
+| 25       | UPL-1.0           | Universal Permissive License v1.0                          |
+| 26       | LGPL-2.1-or-later | GNU Lesser General Public License v2.1 or later            |
 
 ## Built-in License Mappings
 
 Some well-known artifacts don't report license metadata in CycloneDX. The plugin includes built-in mappings for these:
 
-| Artifact                                   | License      |
-|--------------------------------------------|--------------|
-| `javax.activation:javax.activation-api`    | CDDL-1.1     |
-| `javax.annotation:javax.annotation-api`    | CDDL-1.1     |
-| `javax.servlet:javax.servlet-api`          | CDDL-1.1     |
-| `javax.websocket:javax.websocket-api`      | CDDL-1.1     |
-| `javax.websocket:javax.websocket-client-api` | CDDL-1.1   |
-| `org.antlr:antlr-runtime`                  | BSD-3-Clause |
-| `org.antlr:ST4`                            | BSD-3-Clause |
-| `org.ow2.asm:asm`                          | BSD-3-Clause |
-| `org.picocontainer:picocontainer`          | BSD-3-Clause |
-| `org.w3c.css:sac`                          | W3C-19980720 |
+| Artifact                                     | License      |
+|----------------------------------------------|--------------|
+| `javax.activation:javax.activation-api`      | CDDL-1.1     |
+| `javax.annotation:javax.annotation-api`      | CDDL-1.1     |
+| `javax.servlet:javax.servlet-api`            | CDDL-1.1     |
+| `javax.websocket:javax.websocket-api`        | CDDL-1.1     |
+| `javax.websocket:javax.websocket-client-api` | CDDL-1.1     |
+| `javax.ws.rs:jsr311-api`                     | CDDL-1.1     |
+| `org.antlr:ST4`                              | BSD-3-Clause |
+| `org.antlr:antlr-runtime`                    | BSD-3-Clause |
+| `org.ow2.asm:asm`                            | BSD-3-Clause |
+| `org.picocontainer:picocontainer`            | BSD-3-Clause |
+| `org.w3c.css:sac`                            | W3C-19980720 |
 
 These can be overridden using the `overriddenLicenses` configuration.
 
