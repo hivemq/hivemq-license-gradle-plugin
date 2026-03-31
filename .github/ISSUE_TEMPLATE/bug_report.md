@@ -17,6 +17,6 @@ assignees: ''
 ### Reproducer code
 
 ## Details
-- Affected HiveMQ Extension Gradle Plugin version(s): 
+- Affected HiveMQ License Gradle Plugin version(s): 
 - Used Gradle version:
 - Used Java version:
