@@ -12,3 +12,5 @@ out/
 
 .java-version
 .DS_Store
+
+.kotlin
