@@ -26,6 +26,27 @@ class HivemqLicensePlugin : Plugin<Project> {
         val extension = project.extensions.create("hivemqLicense", HivemqLicenseExtensionImpl::class.java)
         extension.projectName.convention(project.name)
 
+        // CycloneDX 3.2.3 triggers SbomGraphProvider during configuration phase (via getResolvedDependencies),
+        // where the thread context classloader is the Gradle daemon worker classloader. Other plugins (e.g. Shadow)
+        // can bring in plexus-xml, which replaces plexus-utils's Xpp3Dom with a version that uses XmlService via
+        // ServiceLoader. ServiceLoader.load() uses the context classloader, which doesn't include plugin dependencies
+        // during configuration phase. We force initialization here during apply(), where the context classloader is
+        // correct. The result is cached in a static field, so subsequent calls succeed regardless of classloader.
+        // See https://github.com/CycloneDX/cyclonedx-gradle-plugin/issues/816
+        val originalClassLoader = Thread.currentThread().contextClassLoader
+        try {
+            Thread.currentThread().contextClassLoader = javaClass.classLoader
+            Class.forName("org.apache.maven.api.xml.XmlService").getDeclaredMethod("getService").apply {
+                isAccessible = true
+                invoke(null)
+            }
+        } catch (_: Throwable) {
+            // Initialization may fail if plexus-xml is not on the classpath (no conflicting plugin present).
+            // That's fine — XmlService won't be needed in that case.
+        } finally {
+            Thread.currentThread().contextClassLoader = originalClassLoader
+        }
+
         project.plugins.apply(CyclonedxPlugin::class.java)
 
         // The CycloneDX plugin creates a consumable "cyclonedxDirectBom" configuration for aggregate BOM collection.
