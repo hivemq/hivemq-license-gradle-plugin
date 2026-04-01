@@ -28,6 +28,14 @@ class HivemqLicensePlugin : Plugin<Project> {
 
         project.plugins.apply(CyclonedxPlugin::class.java)
 
+        // The CycloneDX plugin creates a consumable "cyclonedxDirectBom" configuration for aggregate BOM collection.
+        // We don't use the aggregate BOM, and leaving it consumable causes issues: other plugins (e.g. Shadow) can
+        // trigger variant-aware resolution that consumes this configuration before CycloneDX's deferred artifact
+        // wiring runs, resulting in "Cannot mutate the artifacts of configuration" errors.
+        project.configurations.named("cyclonedxDirectBom").configure {
+            isCanBeConsumed = false
+        }
+
         val filteredConfigName = "hivemqLicenseRuntimeClasspath"
         project.afterEvaluate {
             val excludedDependencies = extension.excludedDependencies.get()
