@@ -10,7 +10,7 @@ This Gradle plugin generates and validates third-party license reports from Cycl
 Contents of the `build.gradle(.kts)` file:
 ```kotlin
 plugins {
-    id("com.hivemq.tools.license") version "1.3.3"
+    id("com.hivemq.tools.license") version "1.3.4"
 }
 
 hivemqLicense {
