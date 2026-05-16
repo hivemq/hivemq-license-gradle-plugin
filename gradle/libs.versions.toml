@@ -13,4 +13,4 @@ jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", ver
 pluginPublish = { id = "com.gradle.plugin-publish", version = "2.1.1" }
 defaults = { id = "io.github.sgtsilvio.gradle.defaults", version = "0.3.0" }
 metadata = { id = "io.github.sgtsilvio.gradle.metadata", version = "0.7.0" }
-spotless = { id = "com.diffplug.spotless", version = "8.4.0" }
+spotless = { id = "com.diffplug.spotless", version = "8.5.1" }
