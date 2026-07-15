@@ -1,6 +1,6 @@
 [versions]
 assertj = "3.27.7"
-cyclonedx = "3.2.4"
+cyclonedx = "3.3.0"
 jackson = "2.22.1"
 junit-jupiter = "5.11.0"
 
