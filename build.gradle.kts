@@ -77,6 +77,13 @@ testing {
     }
 }
 
+// Pass the catalog-managed versions of the plugins applied inside the TestKit integration builds into the test JVM, so
+// Renovate updates to those plugins are exercised by PluginCoexistenceIntegrationTest.
+tasks.withType<Test>().configureEach {
+    systemProperty("test.plugin.shadow.version", libs.versions.test.plugin.shadow.get())
+    systemProperty("test.plugin.oci.version", libs.versions.test.plugin.oci.get())
+}
+
 spotless {
     kotlin {
         licenseHeaderFile(rootDir.resolve("HEADER"), "(package |@file:)")

@@ -586,4 +586,88 @@ class LicenseResolverResolveLicensesTest {
         assertThat(result).hasSize(1)
         assertThat(result["com.example:some-lib"]!!.license).isEqualTo(KnownLicense.APACHE_2_0)
     }
+
+    // --- pnpm reports (no "components" key) ---
+
+    @Test
+    fun `resolves pnpm licenses when the report has no components`() {
+        val report = writeBom(
+            """
+            {
+              "MIT": [
+                { "name": "react", "versions": ["18.2.0"], "license": "MIT" }
+              ],
+              "ISC": [
+                { "name": "lru-cache", "versions": ["10.2.0"], "license": "ISC" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(report, emptySet(), emptySet())
+
+        assertThat(result).hasSize(2)
+        assertThat(result["react"]!!.coordinates.version).isEqualTo("18.2.0")
+        assertThat(result["react"]!!.license.id).isEqualTo("MIT")
+        assertThat(result["lru-cache"]!!.license.id).isEqualTo("ISC")
+    }
+
+    @Test
+    fun `pnpm ignores scoped packages via ignoredGroupPrefixes`() {
+        val report = writeBom(
+            """
+            {
+              "MIT": [
+                { "name": "react", "versions": ["18.2.0"], "license": "MIT" },
+                { "name": "@example/internal-widget", "versions": ["1.0.0"], "license": "MIT" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(report, setOf("@example/"), emptySet())
+
+        assertThat(result).containsOnlyKeys("react")
+    }
+
+    @Test
+    fun `pnpm resolves compound SPDX expression`() {
+        val report = writeBom(
+            """
+            {
+              "bucket": [
+                { "name": "some-pkg", "versions": ["1.0.0"], "license": "Apache-2.0 AND MIT" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(report, emptySet(), emptySet())
+
+        assertThat(result).hasSize(1)
+        assertThat(result["some-pkg"]!!.license.id).isIn("Apache-2.0", "MIT")
+    }
+
+    @Test
+    fun `pnpm applies overriddenLicenses`() {
+        val report = writeBom(
+            """
+            {
+              "Unknown": [
+                { "name": "mystery-pkg", "versions": ["2.0.0"], "license": "Unknown" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            report,
+            emptySet(),
+            emptySet(),
+            overriddenLicenses = mapOf("mystery-pkg" to "MIT"),
+        )
+
+        assertThat(result).hasSize(1)
+        assertThat(result["mystery-pkg"]!!.license.id).isEqualTo("MIT")
+    }
 }
