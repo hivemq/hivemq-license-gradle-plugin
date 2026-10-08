@@ -4,7 +4,7 @@ cyclonedx = "3.5.0"
 jackson = "2.22.3"
 junit-jupiter = "5.11.0"
 # Applied only in TestKit integration builds to verify coexistence; kept here so Renovate auto-updates them.
-test-plugin-oci = "0.30.0"
+test-plugin-oci = "0.31.0"
 test-plugin-shadow = "9.6.1"
 
 [libraries]
