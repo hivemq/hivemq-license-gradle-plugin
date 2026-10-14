@@ -175,6 +175,28 @@ class DependencyReportTest {
     }
 
     @Test
+    fun `component property without name`() {
+        val json = """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "lib",
+                  "version": "1.0.0",
+                  "properties": [
+                    { "value": "orphan" }
+                  ]
+                }
+              ]
+            }
+        """.trimIndent()
+        val bom = objectMapper.readValue(json, DependencyReport.Bom::class.java)
+        val property = bom.components[0].properties!![0]
+        assertThat(property.name).isNull()
+        assertThat(property.value).isEqualTo("orphan")
+    }
+
+    @Test
     fun `component ignores unknown fields`() {
         val json = """
             {

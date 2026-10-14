@@ -47,7 +47,7 @@ class DependencyReport {
     @JsonIgnoreProperties(ignoreUnknown = true)
     class Property(
         @param:JsonProperty("name")
-        val name: String,
+        val name: String? = null,
 
         @param:JsonProperty("value")
         val value: String? = null,

@@ -24,7 +24,7 @@ data class ResolvedDependency(val coordinates: Coordinates, val license: KnownLi
 
 object LicenseResolver {
 
-    // written by cyclonedx-gradle-plugin (3.5.0+) on a component whose Maven metadata could not be read
+    // written by cyclonedx-gradle-plugin (3.5.0+) on a component whose Maven metadata could not be fully read
     const val METADATA_UNRESOLVED_PROPERTY = "cdx:maven:package:metadata-unresolved"
 
     // defines the license to choose, if multiple licenses are available for an artifact
@@ -137,7 +137,7 @@ object LicenseResolver {
             ?.firstOrNull { it.name == METADATA_UNRESOLVED_PROPERTY }
             ?.value
             ?: return ""
-        return ", its Maven metadata could not be read ($reason)"
+        return ", its Maven metadata is incomplete ($reason)"
     }
 
     private fun failOnProblems(file: File, problems: List<String>) {
