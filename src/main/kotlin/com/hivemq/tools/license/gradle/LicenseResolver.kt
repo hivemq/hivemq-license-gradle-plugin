@@ -103,9 +103,15 @@ object LicenseResolver {
                 entries[coordinates.moduleId] = ResolvedDependency(coordinates, resolvedLicense)
                 continue
             }
-            val licenses = (component.licenses ?: emptyList())
-                .mapNotNull { it.license }
-                .map { convertLicense(it, coordinates) }
+            val licenses = (component.licenses ?: emptyList()).flatMap { choice ->
+                val license = choice.license
+                val expression = choice.expression
+                when {
+                    license != null -> listOf(convertLicense(license, coordinates))
+                    expression != null -> convertExpression(expression)
+                    else -> emptyList()
+                }
+            }
             if (licenses.isEmpty()) {
                 problems += "No license found for '$coordinates'" + describeUnresolvedMetadata(component)
                 continue
@@ -173,10 +179,7 @@ object LicenseResolver {
                     problems += "No license found for '$coordinates'"
                     continue
                 }
-                // handle compound SPDX expressions like "MIT AND ISC"
-                val spdxIds = spdxId.split(" AND ", " OR ").map { it.trim() }
-                val licenses = spdxIds.mapNotNull { SPDX_ID_MAP[it] }
-                val knownLicense = chooseLicense(licenses)
+                val knownLicense = chooseLicense(convertExpression(spdxId))
                 if (knownLicense == null) {
                     problems += "License not on the approved list for '$coordinates': $spdxId"
                     continue
@@ -211,6 +214,17 @@ object LicenseResolver {
             }
         }
         return BUILT_IN_LICENSES[coordinates.moduleId]
+    }
+
+    // Splits a compound SPDX expression like "(CDDL-1.0 OR GPL-2.0-with-classpath-exception)" into its licenses.
+    // AND and OR are treated alike: the caller picks the most permissive known license, which is right for OR and
+    // lenient for AND. An expression without a known license converts to one unknown license carrying the whole text.
+    fun convertExpression(expression: String): List<License> {
+        val known = expression
+            .split(" AND ", " OR ")
+            .map { it.trim().trim('(', ')') }
+            .mapNotNull { SPDX_ID_MAP[it] }
+        return known.ifEmpty { listOf(UnknownLicense(expression, null)) }
     }
 
     fun convertLicense(license: DependencyReport.LicenseEntry, coordinates: Coordinates): License {

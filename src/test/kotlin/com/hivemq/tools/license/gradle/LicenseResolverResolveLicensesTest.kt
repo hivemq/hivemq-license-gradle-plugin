@@ -587,6 +587,84 @@ class LicenseResolverResolveLicensesTest {
         assertThat(result["com.example:some-lib"]!!.license).isEqualTo(KnownLicense.APACHE_2_0)
     }
 
+    // --- SPDX expressions ---
+
+    @Test
+    fun `resolves a component that declares an SPDX expression`() {
+        // what cyclonedx-gradle-plugin writes for javax.servlet:javax.servlet-api, whose POM names
+        // "CDDL + GPLv2 with classpath exception"
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "dual-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "(CDDL-1.0 OR GPL-2.0-with-classpath-exception)" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result).hasSize(1)
+        assertThat(result["com.example:dual-lib"]!!.license).isEqualTo(KnownLicense.CDDL_1_0)
+    }
+
+    @Test
+    fun `chooses the preferred license from an SPDX expression`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "dual-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "EPL-2.0 OR Apache-2.0" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:dual-lib"]!!.license).isEqualTo(KnownLicense.APACHE_2_0)
+    }
+
+    @Test
+    fun `reports the SPDX expression when none of its licenses is approved`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "copyleft-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "(GPL-2.0-only OR GPL-3.0-only)" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:copyleft-lib:1.0.0': (GPL-2.0-only OR GPL-3.0-only)")
+    }
+
     // --- failure reporting ---
 
     @Test
