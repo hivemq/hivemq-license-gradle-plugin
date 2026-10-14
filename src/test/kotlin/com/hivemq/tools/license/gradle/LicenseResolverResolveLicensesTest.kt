@@ -673,7 +673,121 @@ class LicenseResolverResolveLicensesTest {
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
         }.isInstanceOf(IllegalStateException::class.java)
-            .hasMessageContaining("No license found for 'com.example:unreadable-lib:1.0.0', its Maven metadata could not be read (pom-unparseable)")
+            .hasMessageContaining("No license found for 'com.example:unreadable-lib:1.0.0', its Maven metadata is incomplete (pom-unparseable)")
+    }
+
+    @Test
+    fun `names unresolved metadata on a component whose licenses are not approved`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "partial-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "license": { "name": "Some Proprietary License" } }
+                  ],
+                  "properties": [
+                    { "name": "cdx:maven:package:metadata-unresolved", "value": "parent-unresolved" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:partial-lib:1.0.0': Some Proprietary License, its Maven metadata is incomplete (parent-unresolved)")
+    }
+
+    @Test
+    fun `resolves a component with an approved license despite unresolved metadata`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "partial-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "license": { "id": "Apache-2.0" } }
+                  ],
+                  "properties": [
+                    { "name": "cdx:maven:package:metadata-unresolved", "value": "model-incomplete" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result).hasSize(1)
+        assertThat(result["com.example:partial-lib"]!!.license).isEqualTo(KnownLicense.APACHE_2_0)
+    }
+
+    @Test
+    fun `lists one problem per line under a header that counts them`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "no-license-lib",
+                  "version": "1.0.0",
+                  "licenses": []
+                },
+                {
+                  "group": "com.example",
+                  "name": "proprietary-lib",
+                  "version": "2.0.0",
+                  "licenses": [
+                    { "license": { "name": "Some Proprietary License" } }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessage(
+                "2 license problems found in '${bom.absolutePath}':\n" +
+                    "  No license found for 'com.example:no-license-lib:1.0.0'\n" +
+                    "  License not on the approved list for 'com.example:proprietary-lib:2.0.0': Some Proprietary License"
+            )
+    }
+
+    @Test
+    fun `counts a single problem in the singular`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "no-license-lib",
+                  "version": "1.0.0",
+                  "licenses": []
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("1 license problem found in '")
     }
 
     // --- pnpm reports (no "components" key) ---
