@@ -587,6 +587,95 @@ class LicenseResolverResolveLicensesTest {
         assertThat(result["com.example:some-lib"]!!.license).isEqualTo(KnownLicense.APACHE_2_0)
     }
 
+    // --- failure reporting ---
+
+    @Test
+    fun `reports every offending component in one failure`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "no-license-lib",
+                  "version": "1.0.0",
+                  "licenses": []
+                },
+                {
+                  "group": "com.example",
+                  "name": "proprietary-lib",
+                  "version": "2.0.0",
+                  "licenses": [
+                    { "license": { "name": "Some Proprietary License" } }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(
+                bom,
+                defaultIgnoredPrefixes,
+                defaultAllowedArtifacts,
+                excludedDependencies = mapOf("com.unknown:unknown-lib" to "3.0.0"),
+            )
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("No license found for 'com.example:no-license-lib:1.0.0'")
+            .hasMessageContaining("License not on the approved list for 'com.example:proprietary-lib:2.0.0': Some Proprietary License")
+            .hasMessageContaining("Excluded dependency 'com.unknown:unknown-lib:3.0.0' has no license defined in overriddenLicenses or BUILT_IN_LICENSES")
+    }
+
+    @Test
+    fun `names the BOM file in the failure`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "no-license-lib",
+                  "version": "1.0.0",
+                  "licenses": []
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining(bom.absolutePath)
+    }
+
+    @Test
+    fun `names unresolved metadata recorded in the BOM`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "unreadable-lib",
+                  "version": "1.0.0",
+                  "licenses": [],
+                  "properties": [
+                    { "name": "cdx:maven:package:metadata-unresolved", "value": "pom-unparseable" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("No license found for 'com.example:unreadable-lib:1.0.0', its Maven metadata could not be read (pom-unparseable)")
+    }
+
     // --- pnpm reports (no "components" key) ---
 
     @Test
@@ -669,5 +758,28 @@ class LicenseResolverResolveLicensesTest {
 
         assertThat(result).hasSize(1)
         assertThat(result["mystery-pkg"]!!.license.id).isEqualTo("MIT")
+    }
+
+    @Test
+    fun `pnpm reports every offending package in one failure`() {
+        val report = writeBom(
+            """
+            {
+              "Unknown": [
+                { "name": "mystery-pkg", "versions": ["2.0.0"], "license": "Unknown" }
+              ],
+              "Proprietary": [
+                { "name": "closed-pkg", "versions": ["1.0.0"], "license": "Proprietary" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(report, emptySet(), emptySet())
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining(report.absolutePath)
+            .hasMessageContaining("No license found for 'mystery-pkg:2.0.0'")
+            .hasMessageContaining("License not on the approved list for 'closed-pkg:1.0.0': Proprietary")
     }
 }
