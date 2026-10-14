@@ -39,6 +39,18 @@ class DependencyReport {
 
         @param:JsonProperty("licenses")
         val licenses: List<LicenseChoice>? = null,
+
+        @param:JsonProperty("properties")
+        val properties: List<Property>? = null,
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    class Property(
+        @param:JsonProperty("name")
+        val name: String,
+
+        @param:JsonProperty("value")
+        val value: String? = null,
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)

@@ -24,6 +24,9 @@ data class ResolvedDependency(val coordinates: Coordinates, val license: KnownLi
 
 object LicenseResolver {
 
+    // written by cyclonedx-gradle-plugin (3.5.0+) on a component whose Maven metadata could not be read
+    const val METADATA_UNRESOLVED_PROPERTY = "cdx:maven:package:metadata-unresolved"
+
     // defines the license to choose, if multiple licenses are available for an artifact
     val LICENSE_ORDER = listOf(
         KnownLicense.APACHE_2_0,
@@ -86,10 +89,11 @@ object LicenseResolver {
         val objectMapper = ObjectMapper()
         val tree = objectMapper.readTree(dependencyLicenseFile)
         if (!tree.has("components")) {
-            return resolvePnpmLicenses(tree, ignoredGroupPrefixes, allowedArtifacts, overriddenLicenses)
+            return resolvePnpmLicenses(dependencyLicenseFile, tree, ignoredGroupPrefixes, allowedArtifacts, overriddenLicenses)
         }
         val bom = objectMapper.treeToValue(tree, DependencyReport.Bom::class.java)
         val entries = TreeMap<String, ResolvedDependency>()
+        val problems = mutableListOf<String>()
         for (component in bom.components) {
             val group = component.group ?: continue
             val coordinates = Coordinates(group, component.name, component.version)
@@ -102,9 +106,15 @@ object LicenseResolver {
             val licenses = (component.licenses ?: emptyList())
                 .mapNotNull { it.license }
                 .map { convertLicense(it, coordinates) }
-            check(licenses.isNotEmpty()) { "No license found for '$coordinates'" }
-            val chosenLicense = checkNotNull(chooseLicense(licenses)) {
-                "License not on the approved list for '$coordinates': ${licenses.joinToString { it.fullName }}"
+            if (licenses.isEmpty()) {
+                problems += "No license found for '$coordinates'" + describeUnresolvedMetadata(component)
+                continue
+            }
+            val chosenLicense = chooseLicense(licenses)
+            if (chosenLicense == null) {
+                problems += "License not on the approved list for '$coordinates': ${licenses.joinToString { it.fullName }}" +
+                    describeUnresolvedMetadata(component)
+                continue
             }
             entries[coordinates.moduleId] = ResolvedDependency(coordinates, chosenLicense)
         }
@@ -112,21 +122,41 @@ object LicenseResolver {
             val parts = moduleId.split(":")
             val coordinates = Coordinates(parts[0], parts[1], version)
             val resolvedLicense = resolveOverriddenOrBuiltIn(coordinates, overriddenLicenses)
-            checkNotNull(resolvedLicense) {
-                "Excluded dependency '$coordinates' has no license defined in overriddenLicenses or BUILT_IN_LICENSES"
+            if (resolvedLicense == null) {
+                problems += "Excluded dependency '$coordinates' has no license defined in overriddenLicenses or BUILT_IN_LICENSES"
+                continue
             }
             entries[moduleId] = ResolvedDependency(coordinates, resolvedLicense)
         }
+        failOnProblems(dependencyLicenseFile, problems)
         return entries
     }
 
+    private fun describeUnresolvedMetadata(component: DependencyReport.Component): String {
+        val reason = component.properties
+            ?.firstOrNull { it.name == METADATA_UNRESOLVED_PROPERTY }
+            ?.value
+            ?: return ""
+        return ", its Maven metadata could not be read ($reason)"
+    }
+
+    private fun failOnProblems(file: File, problems: List<String>) {
+        check(problems.isEmpty()) {
+            val noun = if (problems.size == 1) "problem" else "problems"
+            "${problems.size} license $noun found in '${file.absolutePath}':\n" +
+                problems.joinToString("\n") { "  $it" }
+        }
+    }
+
     private fun resolvePnpmLicenses(
+        dependencyLicenseFile: File,
         tree: JsonNode,
         ignoredGroupPrefixes: Set<String>,
         allowedArtifacts: Set<String>,
         overriddenLicenses: Map<String, String>,
     ): TreeMap<String, ResolvedDependency> {
         val entries = TreeMap<String, ResolvedDependency>()
+        val problems = mutableListOf<String>()
         for ((_, packages) in tree.properties()) {
             for (pkg in packages) {
                 val name = pkg.get("name")?.asText() ?: continue
@@ -139,16 +169,22 @@ object LicenseResolver {
                     entries[coordinates.moduleId] = ResolvedDependency(coordinates, resolvedLicense)
                     continue
                 }
-                check(spdxId != null && spdxId != "Unknown") { "No license found for '$coordinates'" }
+                if (spdxId == null || spdxId == "Unknown") {
+                    problems += "No license found for '$coordinates'"
+                    continue
+                }
                 // handle compound SPDX expressions like "MIT AND ISC"
                 val spdxIds = spdxId.split(" AND ", " OR ").map { it.trim() }
                 val licenses = spdxIds.mapNotNull { SPDX_ID_MAP[it] }
-                val knownLicense = checkNotNull(chooseLicense(licenses)) {
-                    "License not on the approved list for '$coordinates': $spdxId"
+                val knownLicense = chooseLicense(licenses)
+                if (knownLicense == null) {
+                    problems += "License not on the approved list for '$coordinates': $spdxId"
+                    continue
                 }
                 entries[coordinates.moduleId] = ResolvedDependency(coordinates, knownLicense)
             }
         }
+        failOnProblems(dependencyLicenseFile, problems)
         return entries
     }
 
@@ -157,8 +193,7 @@ object LicenseResolver {
         ignoredGroupPrefixes: Set<String>,
         allowedArtifacts: Set<String>
     ): Boolean {
-        if (coordinates.moduleId in allowedArtifacts) return false
-        return ignoredGroupPrefixes.any {
+        return coordinates.moduleId !in allowedArtifacts && ignoredGroupPrefixes.any {
             coordinates.group.startsWith(it) || (coordinates.group.isEmpty() && coordinates.name.startsWith(
                 it
             ))
