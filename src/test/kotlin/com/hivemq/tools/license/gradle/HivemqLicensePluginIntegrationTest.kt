@@ -136,11 +136,11 @@ class HivemqLicensePluginIntegrationTest {
     // --- BOM origin in the failure message ---
 
     /**
-     * A local Maven repository with one artifact whose POM declares no license, so the real cyclonedxDirectBom task
-     * produces a BOM that makes checkApprovedLicenses fail.
+     * Writes a local Maven repository with one artifact whose POM declares no license, so the real cyclonedxDirectBom
+     * task produces a BOM that makes checkApprovedLicenses fail.
      */
-    private fun setupWithUnlicensedDependency() {
-        val artifactDir = projectDir.resolve("repo/com/example/no-license-lib/1.0.0")
+    private fun writeUnlicensedRepository(repoDir: File) {
+        val artifactDir = repoDir.resolve("com/example/no-license-lib/1.0.0")
         artifactDir.mkdirs()
         artifactDir.resolve("no-license-lib-1.0.0.pom").writeText(
             """
@@ -157,37 +157,66 @@ class HivemqLicensePluginIntegrationTest {
             zip.write("Manifest-Version: 1.0\n".toByteArray())
             zip.closeEntry()
         }
-        projectDir.resolve("settings.gradle.kts").writeText(
-            """
-            rootProject.name = "test-project"
-            buildCache {
-                local {
-                    directory = file("build-cache")
-                }
+    }
+
+    /** Build script of a project depending on the unlicensed artifact, [repoPath] relative to the project. */
+    private fun unlicensedBuildFile(
+        repoPath: String,
+        extraPlugins: String = "",
+        licensePlugin: String = """id("com.hivemq.tools.license")""",
+        extra: String = "",
+    ) =
+        """
+        plugins {
+            java
+            $extraPlugins
+            $licensePlugin
+        }
+        repositories {
+            maven { url = uri("$repoPath") }
+        }
+        dependencies {
+            implementation("com.example:no-license-lib:1.0.0")
+        }
+        $extra
+        """.trimIndent()
+
+    private fun settingsWithLocalBuildCache(extra: String = "") =
+        """
+        rootProject.name = "test-project"
+        buildCache {
+            local {
+                directory = file("build-cache")
             }
-            """.trimIndent()
-        )
-        projectDir.resolve("build.gradle.kts").writeText(
-            """
-            plugins {
-                java
-                id("com.hivemq.tools.license")
-            }
-            repositories {
-                maven { url = uri("repo") }
-            }
-            dependencies {
-                implementation("com.example:no-license-lib:1.0.0")
-            }
-            """.trimIndent()
-        )
+        }
+        $extra
+        """.trimIndent()
+
+    /**
+     * Runs with the local build cache and without file system watching, since the daemon's watched view of the
+     * project can otherwise outlive a build directory deleted between two runs.
+     */
+    private fun cachedRunner(vararg args: String) = gradleRunner(*args, "--build-cache", "--no-watch-fs")
+
+    private fun setupWithUnlicensedDependency(extra: String = "") {
+        writeUnlicensedRepository(projectDir.resolve("repo"))
+        projectDir.resolve("settings.gradle.kts").writeText(settingsWithLocalBuildCache())
+        projectDir.resolve("build.gradle.kts").writeText(unlicensedBuildFile("repo", extra = extra))
+    }
+
+    // Gradle prints canonical paths, and the JUnit temp dir sits behind a symlink on macOS
+    private fun bomPath(projectDir: File) = projectDir.resolve("build/reports/cyclonedx-direct/bom.json").canonicalPath
+
+    // Supplied by the build (see build.gradle.kts).
+    private fun testProperty(name: String) = requireNotNull(System.getProperty(name)) {
+        "System property '$name' is not set; run the tests through Gradle."
     }
 
     @Test
     fun `failure says the BOM was produced by this build`() {
         setupWithUnlicensedDependency()
 
-        val result = gradleRunner("checkApprovedLicenses", "--build-cache").buildAndFail()
+        val result = cachedRunner("checkApprovedLicenses").buildAndFail()
 
         assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).contains("1 license problem found in '")
@@ -199,7 +228,7 @@ class HivemqLicensePluginIntegrationTest {
     fun `failure says the BOM was produced by this build with the configuration cache`() {
         setupWithUnlicensedDependency()
 
-        val result = gradleRunner("checkApprovedLicenses", "--build-cache", "--configuration-cache").buildAndFail()
+        val result = cachedRunner("checkApprovedLicenses", "--configuration-cache").buildAndFail()
 
         assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).contains("' (produced by this build):")
@@ -208,10 +237,10 @@ class HivemqLicensePluginIntegrationTest {
     @Test
     fun `failure says the BOM was restored from the build cache`() {
         setupWithUnlicensedDependency()
-        gradleRunner("checkApprovedLicenses", "--build-cache").buildAndFail()
+        cachedRunner("checkApprovedLicenses").buildAndFail()
         assertThat(projectDir.resolve("build").deleteRecursively()).isTrue()
 
-        val result = gradleRunner("checkApprovedLicenses", "--build-cache").buildAndFail()
+        val result = cachedRunner("checkApprovedLicenses").buildAndFail()
 
         assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.FROM_CACHE)
         assertThat(result.output).contains("' (restored from the build cache):")
@@ -220,11 +249,110 @@ class HivemqLicensePluginIntegrationTest {
     @Test
     fun `failure says the BOM is unchanged since an earlier build`() {
         setupWithUnlicensedDependency()
-        gradleRunner("checkApprovedLicenses", "--build-cache").buildAndFail()
+        cachedRunner("checkApprovedLicenses").buildAndFail()
 
-        val result = gradleRunner("checkApprovedLicenses", "--build-cache").buildAndFail()
+        val result = cachedRunner("checkApprovedLicenses").buildAndFail()
 
         assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.UP_TO_DATE)
         assertThat(result.output).contains("' (unchanged since an earlier build):")
+    }
+
+    @Test
+    fun `origin is reported per project when sibling projects load the plugin in different classloaders`() {
+        // Gradle gives a project whose plugins block differs from its sibling's a plugin classloader of its own, so
+        // the plugin classes, and with them the build service type, exist once per such project. The plugin is
+        // resolved from a repository here because TestKit's injected classpath loads it once for the whole build.
+        val pluginVersion = testProperty("test.plugin.version")
+        val shadowVersion = testProperty("test.plugin.shadow.version")
+        writeUnlicensedRepository(projectDir.resolve("repo"))
+        projectDir.resolve("settings.gradle.kts").writeText(
+            """
+            pluginManagement {
+                repositories {
+                    maven { url = uri("${testProperty("test.plugin.repo").replace("\\", "/")}") }
+                    gradlePluginPortal()
+                }
+            }
+            ${settingsWithLocalBuildCache("""include("a", "b")""")}
+            """.trimIndent()
+        )
+        projectDir.resolve("a").mkdirs()
+        projectDir.resolve("a/build.gradle.kts").writeText(
+            unlicensedBuildFile("../repo", licensePlugin = """id("com.hivemq.tools.license") version "$pluginVersion"""")
+        )
+        projectDir.resolve("b").mkdirs()
+        projectDir.resolve("b/build.gradle.kts").writeText(
+            unlicensedBuildFile(
+                "../repo",
+                extraPlugins = """id("com.gradleup.shadow") version "$shadowVersion"""",
+                licensePlugin = """id("com.hivemq.tools.license") version "$pluginVersion"""",
+            )
+        )
+
+        val result = GradleRunner.create()
+            .withProjectDir(projectDir)
+            .withArguments("checkApprovedLicenses", "--build-cache", "--no-watch-fs", "--continue")
+            .buildAndFail()
+
+        assertThat(result.task(":a:checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.task(":b:checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output).contains("'${bomPath(projectDir.resolve("a"))}' (produced by this build):")
+        assertThat(result.output).contains("'${bomPath(projectDir.resolve("b"))}' (produced by this build):")
+    }
+
+    @Test
+    fun `origin is reported per build in a composite build`() {
+        // the root build and the included build both have a ":cyclonedxDirectBom" task, so outcomes must be keyed by
+        // the task's path in the whole build tree
+        writeUnlicensedRepository(projectDir.resolve("repo"))
+        projectDir.resolve("settings.gradle.kts").writeText(settingsWithLocalBuildCache("""includeBuild("inc")"""))
+        projectDir.resolve("build.gradle.kts").writeText(unlicensedBuildFile("repo"))
+        val includedDir = projectDir.resolve("inc")
+        includedDir.mkdirs()
+        includedDir.resolve("settings.gradle.kts").writeText("""rootProject.name = "inc"""")
+        includedDir.resolve("build.gradle.kts").writeText(unlicensedBuildFile("../repo"))
+        cachedRunner("checkApprovedLicenses", ":inc:checkApprovedLicenses", "--continue").buildAndFail()
+        // the root build's BOM is restored from the cache, the included build's BOM is left untouched
+        assertThat(projectDir.resolve("build").deleteRecursively()).isTrue()
+
+        val result =
+            cachedRunner("checkApprovedLicenses", ":inc:checkApprovedLicenses", "--continue").buildAndFail()
+
+        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.FROM_CACHE)
+        assertThat(result.task(":inc:cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.UP_TO_DATE)
+        assertThat(result.output).contains("'${bomPath(projectDir)}' (restored from the build cache):")
+        assertThat(result.output).contains("'${bomPath(includedDir)}' (unchanged since an earlier build):")
+    }
+
+    @Test
+    fun `no origin is reported for a file that is not the BOM task output`() {
+        projectDir.resolve("frontend.json").writeText(
+            """
+            {
+              "Unknown": [
+                { "name": "mystery-pkg", "versions": ["2.0.0"], "license": "Unknown" }
+              ]
+            }
+            """.trimIndent()
+        )
+        setupWithUnlicensedDependency(
+            extra = """
+            hivemqLicense {
+                thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+            }
+            tasks.named<com.hivemq.tools.license.gradle.UpdateThirdPartyLicensesTask>("updateThirdPartyLicenses") {
+                dependencyLicense.set(file("frontend.json"))
+            }
+            """.trimIndent()
+        )
+
+        val result =
+            cachedRunner("cyclonedxDirectBom", "updateThirdPartyLicenses", "--continue").buildAndFail()
+
+        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        val frontendReport = projectDir.resolve("frontend.json").canonicalPath
+        assertThat(result.output).contains("1 license problem found in '$frontendReport':")
+        assertThat(result.output).doesNotContain("'$frontendReport' (")
     }
 }

@@ -867,10 +867,40 @@ class LicenseResolverResolveLicensesTest {
                 bom,
                 defaultIgnoredPrefixes,
                 defaultAllowedArtifacts,
-                dependencyLicenseOrigin = "restored from the build cache",
+                dependencyLicenseOrigin = { "restored from the build cache" },
             )
         }.isInstanceOf(IllegalStateException::class.java)
             .hasMessageContaining("1 license problem found in '${bom.absolutePath}' (restored from the build cache):")
+    }
+
+    @Test
+    fun `does not ask for the origin of the BOM when every license resolves`() {
+        // finding out the origin may wait for a build event, so it must only happen when the message is needed
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.google.guava",
+                  "name": "guava",
+                  "version": "32.1.3-jre",
+                  "licenses": [
+                    { "license": { "id": "Apache-2.0" } }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            dependencyLicenseOrigin = { error("the origin must not be asked for when nothing fails") },
+        )
+
+        assertThat(result).hasSize(1)
     }
 
     @Test
