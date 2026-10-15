@@ -846,6 +846,34 @@ class LicenseResolverResolveLicensesTest {
     }
 
     @Test
+    fun `names the origin of the BOM when given`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "no-license-lib",
+                  "version": "1.0.0",
+                  "licenses": []
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(
+                bom,
+                defaultIgnoredPrefixes,
+                defaultAllowedArtifacts,
+                dependencyLicenseOrigin = "restored from the build cache",
+            )
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("1 license problem found in '${bom.absolutePath}' (restored from the build cache):")
+    }
+
+    @Test
     fun `counts a single problem in the singular`() {
         val bom = writeBom(
             """

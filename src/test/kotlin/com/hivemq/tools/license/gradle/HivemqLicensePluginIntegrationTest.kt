@@ -21,6 +21,8 @@ import org.gradle.testkit.runner.TaskOutcome
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 class HivemqLicensePluginIntegrationTest {
 
@@ -129,5 +131,100 @@ class HivemqLicensePluginIntegrationTest {
         assertThat(html)
             .contains("com.google.guava:guava")
             .contains("org.slf4j:slf4j-api")
+    }
+
+    // --- BOM origin in the failure message ---
+
+    /**
+     * A local Maven repository with one artifact whose POM declares no license, so the real cyclonedxDirectBom task
+     * produces a BOM that makes checkApprovedLicenses fail.
+     */
+    private fun setupWithUnlicensedDependency() {
+        val artifactDir = projectDir.resolve("repo/com/example/no-license-lib/1.0.0")
+        artifactDir.mkdirs()
+        artifactDir.resolve("no-license-lib-1.0.0.pom").writeText(
+            """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>com.example</groupId>
+              <artifactId>no-license-lib</artifactId>
+              <version>1.0.0</version>
+            </project>
+            """.trimIndent()
+        )
+        ZipOutputStream(artifactDir.resolve("no-license-lib-1.0.0.jar").outputStream()).use { zip ->
+            zip.putNextEntry(ZipEntry("META-INF/MANIFEST.MF"))
+            zip.write("Manifest-Version: 1.0\n".toByteArray())
+            zip.closeEntry()
+        }
+        projectDir.resolve("settings.gradle.kts").writeText(
+            """
+            rootProject.name = "test-project"
+            buildCache {
+                local {
+                    directory = file("build-cache")
+                }
+            }
+            """.trimIndent()
+        )
+        projectDir.resolve("build.gradle.kts").writeText(
+            """
+            plugins {
+                java
+                id("com.hivemq.tools.license")
+            }
+            repositories {
+                maven { url = uri("repo") }
+            }
+            dependencies {
+                implementation("com.example:no-license-lib:1.0.0")
+            }
+            """.trimIndent()
+        )
+    }
+
+    @Test
+    fun `failure says the BOM was produced by this build`() {
+        setupWithUnlicensedDependency()
+
+        val result = gradleRunner("checkApprovedLicenses", "--build-cache").buildAndFail()
+
+        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.output).contains("1 license problem found in '")
+        assertThat(result.output).contains("' (produced by this build):")
+        assertThat(result.output).contains("No license found for 'com.example:no-license-lib:1.0.0'")
+    }
+
+    @Test
+    fun `failure says the BOM was produced by this build with the configuration cache`() {
+        setupWithUnlicensedDependency()
+
+        val result = gradleRunner("checkApprovedLicenses", "--build-cache", "--configuration-cache").buildAndFail()
+
+        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.output).contains("' (produced by this build):")
+    }
+
+    @Test
+    fun `failure says the BOM was restored from the build cache`() {
+        setupWithUnlicensedDependency()
+        gradleRunner("checkApprovedLicenses", "--build-cache").buildAndFail()
+        assertThat(projectDir.resolve("build").deleteRecursively()).isTrue()
+
+        val result = gradleRunner("checkApprovedLicenses", "--build-cache").buildAndFail()
+
+        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.FROM_CACHE)
+        assertThat(result.output).contains("' (restored from the build cache):")
+    }
+
+    @Test
+    fun `failure says the BOM is unchanged since an earlier build`() {
+        setupWithUnlicensedDependency()
+        gradleRunner("checkApprovedLicenses", "--build-cache").buildAndFail()
+
+        val result = gradleRunner("checkApprovedLicenses", "--build-cache").buildAndFail()
+
+        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.UP_TO_DATE)
+        assertThat(result.output).contains("' (unchanged since an earlier build):")
     }
 }

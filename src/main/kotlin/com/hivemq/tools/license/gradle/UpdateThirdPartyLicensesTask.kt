@@ -23,6 +23,7 @@ import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
@@ -45,6 +46,13 @@ abstract class UpdateThirdPartyLicensesTask : DefaultTask() {
     @get:InputFile
     @get:PathSensitive(PathSensitivity.NONE)
     abstract val dependencyLicense: RegularFileProperty
+
+    /** Path of the task that produces [dependencyLicense], used to tell where the file came from. */
+    @get:Internal
+    abstract val dependencyLicenseTaskPath: Property<String>
+
+    @get:Internal
+    abstract val taskOutcomes: Property<BomTaskOutcomeService>
 
     @get:Input
     abstract val ignoredGroupPrefixes: SetProperty<String>
@@ -82,6 +90,7 @@ abstract class UpdateThirdPartyLicensesTask : DefaultTask() {
             allowedArtifacts = allowedArtifacts.get(),
             overriddenLicenses = overriddenLicenses.get(),
             excludedDependencies = excludedDependencies.get(),
+            dependencyLicenseOrigin = dependencyLicenseOrigin(),
         )
 
         val licensePlaintext = StringBuilder()
@@ -184,4 +193,9 @@ abstract class UpdateThirdPartyLicensesTask : DefaultTask() {
 
         """.trimIndent()
     )
+
+    private fun dependencyLicenseOrigin(): String? {
+        val taskPath = dependencyLicenseTaskPath.orNull ?: return null
+        return taskOutcomes.orNull?.originOf(taskPath)
+    }
 }
