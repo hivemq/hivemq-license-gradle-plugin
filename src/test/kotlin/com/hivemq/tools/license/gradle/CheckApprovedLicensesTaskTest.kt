@@ -213,7 +213,7 @@ class CheckApprovedLicensesTaskTest {
         val result = gradleRunner().buildAndFail()
 
         assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.FAILED)
-        assertThat(result.output).contains(projectDir.resolve("build/reports/cyclonedx/bom.json").absolutePath)
+        assertThat(result.output).contains(projectDir.resolve("build/reports/cyclonedx/bom.json").canonicalPath)
         assertThat(result.output).contains("No license found for 'com.example:no-license-lib:1.0.0'")
         assertThat(result.output).contains("License not on the approved list for 'com.example:proprietary-lib:2.0.0'")
     }

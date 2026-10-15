@@ -61,7 +61,7 @@ class LicenseResolverResolveLicensesTest {
         assertThat(entry.coordinates.group).isEqualTo("com.google.guava")
         assertThat(entry.coordinates.name).isEqualTo("guava")
         assertThat(entry.coordinates.version).isEqualTo("32.1.3-jre")
-        assertThat(entry.license).isEqualTo(KnownLicense.APACHE_2_0)
+        assertThat(entry.licenses).containsExactly(KnownLicense.APACHE_2_0)
     }
 
     @Test
@@ -202,7 +202,7 @@ class LicenseResolverResolveLicensesTest {
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
-        assertThat(result["com.example:dual-license-lib"]!!.license).isEqualTo(KnownLicense.APACHE_2_0)
+        assertThat(result["com.example:dual-license-lib"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
     }
 
     @Test
@@ -286,7 +286,7 @@ class LicenseResolverResolveLicensesTest {
         )
 
         assertThat(result).hasSize(1)
-        assertThat(result["javax.annotation:javax.annotation-api"]!!.license).isEqualTo(KnownLicense.CDDL_1_1)
+        assertThat(result["javax.annotation:javax.annotation-api"]!!.licenses).containsExactly(KnownLicense.CDDL_1_1)
     }
 
     @Test
@@ -316,7 +316,7 @@ class LicenseResolverResolveLicensesTest {
         )
 
         assertThat(result).hasSize(1)
-        assertThat(result["javax.annotation:javax.annotation-api"]!!.license).isEqualTo(KnownLicense.CDDL_1_1)
+        assertThat(result["javax.annotation:javax.annotation-api"]!!.licenses).containsExactly(KnownLicense.CDDL_1_1)
     }
 
     @Test
@@ -367,7 +367,7 @@ class LicenseResolverResolveLicensesTest {
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
         assertThat(result).hasSize(1)
-        assertThat(result["javax.annotation:javax.annotation-api"]!!.license).isEqualTo(KnownLicense.CDDL_1_1)
+        assertThat(result["javax.annotation:javax.annotation-api"]!!.licenses).containsExactly(KnownLicense.CDDL_1_1)
     }
 
     @Test
@@ -390,7 +390,7 @@ class LicenseResolverResolveLicensesTest {
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
         assertThat(result).hasSize(1)
-        assertThat(result["javax.annotation:javax.annotation-api"]!!.license).isEqualTo(KnownLicense.CDDL_1_1)
+        assertThat(result["javax.annotation:javax.annotation-api"]!!.licenses).containsExactly(KnownLicense.CDDL_1_1)
     }
 
     @Test
@@ -417,7 +417,7 @@ class LicenseResolverResolveLicensesTest {
         )
 
         assertThat(result).hasSize(1)
-        assertThat(result["javax.annotation:javax.annotation-api"]!!.license).isEqualTo(KnownLicense.APACHE_2_0)
+        assertThat(result["javax.annotation:javax.annotation-api"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
     }
 
     @Test
@@ -437,7 +437,7 @@ class LicenseResolverResolveLicensesTest {
         assertThat(entry.coordinates.group).isEqualTo("org.jline")
         assertThat(entry.coordinates.name).isEqualTo("jline")
         assertThat(entry.coordinates.version).isEqualTo("4.0.2")
-        assertThat(entry.license).isEqualTo(KnownLicense.BSD_3_CLAUSE)
+        assertThat(entry.licenses).containsExactly(KnownLicense.BSD_3_CLAUSE)
     }
 
     @Test
@@ -454,7 +454,7 @@ class LicenseResolverResolveLicensesTest {
         assertThat(result).hasSize(1)
         val entry = result["javax.annotation:javax.annotation-api"]!!
         assertThat(entry.coordinates.version).isEqualTo("1.3.2")
-        assertThat(entry.license).isEqualTo(KnownLicense.CDDL_1_1)
+        assertThat(entry.licenses).containsExactly(KnownLicense.CDDL_1_1)
     }
 
     @Test
@@ -470,7 +470,7 @@ class LicenseResolverResolveLicensesTest {
         )
 
         assertThat(result).hasSize(1)
-        assertThat(result["javax.annotation:javax.annotation-api"]!!.license).isEqualTo(KnownLicense.APACHE_2_0)
+        assertThat(result["javax.annotation:javax.annotation-api"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
     }
 
     @Test
@@ -558,8 +558,8 @@ class LicenseResolverResolveLicensesTest {
         )
 
         assertThat(result).hasSize(2)
-        assertThat(result["org.jline:jline"]!!.license).isEqualTo(KnownLicense.BSD_3_CLAUSE)
-        assertThat(result["org.jline:jline-picocli"]!!.license).isEqualTo(KnownLicense.BSD_3_CLAUSE)
+        assertThat(result["org.jline:jline"]!!.licenses).containsExactly(KnownLicense.BSD_3_CLAUSE)
+        assertThat(result["org.jline:jline-picocli"]!!.licenses).containsExactly(KnownLicense.BSD_3_CLAUSE)
     }
 
     @Test
@@ -584,7 +584,7 @@ class LicenseResolverResolveLicensesTest {
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
         assertThat(result).hasSize(1)
-        assertThat(result["com.example:some-lib"]!!.license).isEqualTo(KnownLicense.APACHE_2_0)
+        assertThat(result["com.example:some-lib"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
     }
 
     // --- SPDX expressions ---
@@ -613,7 +613,7 @@ class LicenseResolverResolveLicensesTest {
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
         assertThat(result).hasSize(1)
-        assertThat(result["com.example:dual-lib"]!!.license).isEqualTo(KnownLicense.CDDL_1_0)
+        assertThat(result["com.example:dual-lib"]!!.licenses).containsExactly(KnownLicense.CDDL_1_0)
     }
 
     @Test
@@ -637,7 +637,928 @@ class LicenseResolverResolveLicensesTest {
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
-        assertThat(result["com.example:dual-lib"]!!.license).isEqualTo(KnownLicense.APACHE_2_0)
+        assertThat(result["com.example:dual-lib"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
+    }
+
+    @Test
+    fun `resolves an SPDX conjunction when every license is approved`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT AND ISC" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.MIT, KnownLicense.ISC)
+    }
+
+    @Test
+    fun `rejects an SPDX conjunction with an unapproved license`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT AND GPL-3.0-only" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': MIT AND GPL-3.0-only")
+    }
+
+    @Test
+    fun `binds AND tighter than OR in an SPDX expression`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "GPL-3.0-only OR MIT AND ISC" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.MIT, KnownLicense.ISC)
+    }
+
+    @Test
+    fun `rejects an SPDX conjunction whose grouped alternative is approved but whose other operand is not`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "(GPL-3.0-only OR MIT) AND GPL-2.0-only" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': (GPL-3.0-only OR MIT) AND GPL-2.0-only")
+    }
+
+    @Test
+    fun `tolerates spaces inside the parentheses of an SPDX expression`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "( MIT OR Apache-2.0 )" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
+    }
+
+    @Test
+    fun `rejects an SPDX license with an exception`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "GPL-2.0-only WITH Classpath-exception-2.0" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': GPL-2.0-only WITH Classpath-exception-2.0")
+    }
+
+    @Test
+    fun `resolves an SPDX disjunction with an unapproved alternative`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "GPL-3.0-only OR MIT" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.MIT)
+    }
+
+    @Test
+    fun `rejects an SPDX expression with a stray closing parenthesis`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT OR )" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': MIT OR )")
+    }
+
+    @Test
+    fun `rejects an SPDX expression with an operator in place of a license`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT OR AND" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': MIT OR AND")
+    }
+
+    @Test
+    fun `rejects an SPDX expression with a missing operand`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT OR" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': MIT OR")
+    }
+
+    @Test
+    fun `rejects an SPDX expression with an unclosed parenthesis`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "(MIT OR Apache-2.0" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': (MIT OR Apache-2.0")
+    }
+
+    @Test
+    fun `rejects an SPDX expression with tokens after a complete expression`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT Apache-2.0" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': MIT Apache-2.0")
+    }
+
+    @Test
+    fun `prefers the SPDX alternative with the fewest obligations`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "(Apache-2.0 AND ISC) OR MIT" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.MIT)
+    }
+
+    @Test
+    fun `resolves an SPDX conjunction with a grouped disjunction`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT AND (ISC OR Apache-2.0)" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0, KnownLicense.MIT)
+    }
+
+    @Test
+    fun `prefers the SPDX alternative with fewer licenses when obligations are equal`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "(Apache-2.0 AND MIT) OR MIT" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.MIT)
+    }
+
+    @Test
+    fun `rejects an SPDX expression with a parenthesis in place of an exception`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "Apache-2.0 OR MIT WITH (" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': Apache-2.0 OR MIT WITH (")
+    }
+
+    @Test
+    fun `rejects an SPDX expression with a bare WITH`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT WITH" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': MIT WITH")
+    }
+
+    @Test
+    fun `treats a license entry and an expression entry as alternatives`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "license": { "name": "Some Proprietary License" } },
+                    { "expression": "MIT AND ISC" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.MIT, KnownLicense.ISC)
+    }
+
+    @Test
+    fun `names every entry when neither a license entry nor an expression entry is approved`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "license": { "name": "Some Proprietary License" } },
+                    { "expression": "GPL-3.0-only" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': Some Proprietary License, GPL-3.0-only")
+    }
+
+    @Test
+    fun `ranks the alternatives of an SPDX expression only once it is complete`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT AND (Apache-2.0 OR MIT)" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.MIT)
+    }
+
+    @Test
+    fun `ranks the alternatives of an SPDX expression with a shared operand once it is complete`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "ISC AND (MIT OR ISC)" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.ISC)
+    }
+
+    @Test
+    fun `rejects an SPDX expression with an id outside the SPDX character set`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT OR ???" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': MIT OR ???")
+    }
+
+    @Test
+    fun `rejects an SPDX expression with a slash in place of an operator`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT OR MIT/ISC" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': MIT OR MIT/ISC")
+    }
+
+    @Test
+    fun `keeps only the alternatives of an SPDX expression that no smaller alternative covers`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "(Apache-2.0 OR MIT) AND (Apache-2.0 OR ISC) AND (Apache-2.0 OR BSD-3-Clause)" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
+    }
+
+    @Test
+    fun `resolves an SPDX license reference as unknown rather than malformed`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT OR DocumentRef-spdx:LicenseRef-custom" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.MIT)
+    }
+
+    @Test
+    fun `resolves an SPDX id with a plus suffix as unknown rather than malformed`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT OR GPL-2.0+" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.MIT)
+    }
+
+    @Test
+    fun `rejects an SPDX expression with a lone plus as an id`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT OR +" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': MIT OR +")
+    }
+
+    @Test
+    fun `rejects an SPDX expression with a doubled plus suffix`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT OR GPL-2.0-only++" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': MIT OR GPL-2.0-only++")
+    }
+
+    @Test
+    fun `rejects an SPDX expression with a colon as an exception id`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT OR MIT WITH :" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': MIT OR MIT WITH :")
+    }
+
+    @Test
+    fun `rejects an SPDX expression with more distinct alternatives than it evaluates`() {
+        // eleven pairs of distinct approved licenses have 2048 ways to be satisfied, none covering another
+        val ids = LicenseResolver.SPDX_ID_MAP.keys.filter { ' ' !in it }.take(22)
+        val expression = ids.chunked(2).joinToString(" AND ") { (a, b) -> "($a OR $b)" }
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "$expression" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': $expression")
+    }
+
+    @Test
+    fun `matches SPDX ids in an expression regardless of case`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "mit AND isc" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.MIT, KnownLicense.ISC)
+    }
+
+    @Test
+    fun `ranks SPDX alternatives regardless of the case of their ids`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT OR apache-2.0" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
+    }
+
+    @Test
+    fun `rejects an SPDX license reference without a name`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT OR LicenseRef-" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': MIT OR LicenseRef-")
+    }
+
+    @Test
+    fun `rejects an SPDX license reference with a plus suffix`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT OR LicenseRef-custom+" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': MIT OR LicenseRef-custom+")
+    }
+
+    @Test
+    fun `gives up on an SPDX expression that would expand beyond its budget before pruning it`() {
+        // ten pairs of distinct approved licenses, conjoined with themselves: a million candidates that prune back to
+        // the same thousand alternatives
+        val ids = LicenseResolver.SPDX_ID_MAP.keys.filter { ' ' !in it }.take(20)
+        val group = ids.chunked(2).joinToString(" AND ") { (a, b) -> "($a OR $b)" }
+        val expression = "($group) AND ($group)"
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "$expression" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': $expression")
+    }
+
+    @Test
+    fun `resolves an SPDX expression nested in a few parentheses`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "(((MIT)))" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.MIT)
+    }
+
+    @Test
+    fun `rejects an SPDX expression nested deeper than it evaluates`() {
+        // deep enough to overflow the stack if every parenthesis were parsed by recursion
+        val expression = "(".repeat(10_000) + "MIT" + ")".repeat(10_000)
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "expr-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "$expression" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': $expression")
     }
 
     @Test
@@ -807,7 +1728,7 @@ class LicenseResolverResolveLicensesTest {
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
         assertThat(result).hasSize(1)
-        assertThat(result["com.example:partial-lib"]!!.license).isEqualTo(KnownLicense.APACHE_2_0)
+        assertThat(result["com.example:partial-lib"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
     }
 
     @Test
@@ -840,8 +1761,8 @@ class LicenseResolverResolveLicensesTest {
         }.isInstanceOf(IllegalStateException::class.java)
             .hasMessage(
                 "2 license problems found in '${bom.absolutePath}':\n" +
-                    "  No license found for 'com.example:no-license-lib:1.0.0'\n" +
-                    "  License not on the approved list for 'com.example:proprietary-lib:2.0.0': Some Proprietary License"
+                        "  No license found for 'com.example:no-license-lib:1.0.0'\n" +
+                        "  License not on the approved list for 'com.example:proprietary-lib:2.0.0': Some Proprietary License"
             )
     }
 
@@ -947,8 +1868,8 @@ class LicenseResolverResolveLicensesTest {
 
         assertThat(result).hasSize(2)
         assertThat(result["react"]!!.coordinates.version).isEqualTo("18.2.0")
-        assertThat(result["react"]!!.license.id).isEqualTo("MIT")
-        assertThat(result["lru-cache"]!!.license.id).isEqualTo("ISC")
+        assertThat(result["react"]!!.licenses.single().id).isEqualTo("MIT")
+        assertThat(result["lru-cache"]!!.licenses.single().id).isEqualTo("ISC")
     }
 
     @Test
@@ -984,7 +1905,79 @@ class LicenseResolverResolveLicensesTest {
         val result = LicenseResolver.resolveLicenses(report, emptySet(), emptySet())
 
         assertThat(result).hasSize(1)
-        assertThat(result["some-pkg"]!!.license.id).isIn("Apache-2.0", "MIT")
+        assertThat(result["some-pkg"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0, KnownLicense.MIT)
+    }
+
+    @Test
+    fun `pnpm rejects a compound SPDX expression with an unapproved license`() {
+        val report = writeBom(
+            """
+            {
+              "bucket": [
+                { "name": "some-pkg", "versions": ["1.0.0"], "license": "MIT AND GPL-3.0-only" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(report, emptySet(), emptySet())
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'some-pkg:1.0.0': MIT AND GPL-3.0-only")
+    }
+
+    @Test
+    fun `pnpm resolves a license id that contains a space`() {
+        val report = writeBom(
+            """
+            {
+              "Public Domain": [
+                { "name": "free-pkg", "versions": ["1.0.0"], "license": "Public Domain" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(report, emptySet(), emptySet())
+
+        assertThat(result["free-pkg"]!!.licenses).containsExactly(KnownLicense.PUBLIC_DOMAIN)
+    }
+
+    @Test
+    fun `pnpm resolves a license id that contains a space inside a compound expression`() {
+        val report = writeBom(
+            """
+            {
+              "bucket": [
+                { "name": "free-pkg", "versions": ["1.0.0"], "license": "Public Domain OR GPL-3.0-only" },
+                { "name": "other-pkg", "versions": ["1.0.0"], "license": "MIT AND Public Domain" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(report, emptySet(), emptySet())
+
+        assertThat(result["free-pkg"]!!.licenses).containsExactly(KnownLicense.PUBLIC_DOMAIN)
+        assertThat(result["other-pkg"]!!.licenses).containsExactly(KnownLicense.MIT, KnownLicense.PUBLIC_DOMAIN)
+    }
+
+    @Test
+    fun `pnpm rejects a license id that contains a space when an operator is glued to it`() {
+        val report = writeBom(
+            """
+            {
+              "bucket": [
+                { "name": "glued-pkg", "versions": ["1.0.0"], "license": "MIT AND Public DomainOR GPL-3.0-only" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(report, emptySet(), emptySet())
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'glued-pkg:1.0.0': MIT AND Public DomainOR GPL-3.0-only")
     }
 
     @Test
@@ -1007,7 +2000,7 @@ class LicenseResolverResolveLicensesTest {
         )
 
         assertThat(result).hasSize(1)
-        assertThat(result["mystery-pkg"]!!.license.id).isEqualTo("MIT")
+        assertThat(result["mystery-pkg"]!!.licenses.single().id).isEqualTo("MIT")
     }
 
     @Test

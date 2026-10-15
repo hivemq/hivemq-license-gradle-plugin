@@ -16,69 +16,91 @@
 package com.hivemq.tools.license.gradle
 
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.io.File
 
+/**
+ * How a license is chosen when a component may be used under one of several: the alternative with the fewest
+ * obligations wins, which for single licenses is the one that comes first in [LicenseResolver.LICENSE_ORDER].
+ */
 class LicenseResolverChooseLicenseTest {
+
+    @TempDir
+    lateinit var tempDir: File
+
+    /** A BOM with one component, `com.example:lib:1.0.0`, offering each of [licenseEntries] as an alternative. */
+    private fun resolve(vararg licenseEntries: String): List<KnownLicense> {
+        val bom = tempDir.resolve("bom.json")
+        bom.writeText(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    ${licenseEntries.joinToString(",\n                    ")}
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        return LicenseResolver.resolveLicenses(bom, emptySet(), emptySet()).getValue("com.example:lib").licenses
+    }
+
+    private fun id(spdxId: String) = """{ "license": { "id": "$spdxId" } }"""
+
+    private fun name(name: String) = """{ "license": { "name": "$name" } }"""
 
     @Test
     fun `chooses single known license`() {
-        assertThat(LicenseResolver.chooseLicense(listOf(KnownLicense.MIT))).isEqualTo(KnownLicense.MIT)
+        assertThat(resolve(id("MIT"))).containsExactly(KnownLicense.MIT)
     }
 
     @Test
     fun `chooses Apache over EPL when both present`() {
-        val licenses = listOf(KnownLicense.EPL_2_0, KnownLicense.APACHE_2_0)
-        assertThat(LicenseResolver.chooseLicense(licenses)).isEqualTo(KnownLicense.APACHE_2_0)
+        assertThat(resolve(id("EPL-2.0"), id("Apache-2.0"))).containsExactly(KnownLicense.APACHE_2_0)
     }
 
     @Test
     fun `chooses MIT over BSD_3_CLAUSE`() {
-        val licenses = listOf(KnownLicense.BSD_3_CLAUSE, KnownLicense.MIT)
-        assertThat(LicenseResolver.chooseLicense(licenses)).isEqualTo(KnownLicense.MIT)
+        assertThat(resolve(id("BSD-3-Clause"), id("MIT"))).containsExactly(KnownLicense.MIT)
     }
 
     @Test
     fun `chooses Apache over all others`() {
-        val licenses = listOf(
-            KnownLicense.CDDL_1_0,
-            KnownLicense.EPL_1_0,
-            KnownLicense.MIT,
-            KnownLicense.APACHE_2_0,
-        )
-        assertThat(LicenseResolver.chooseLicense(licenses)).isEqualTo(KnownLicense.APACHE_2_0)
+        assertThat(resolve(id("CDDL-1.0"), id("EPL-1.0"), id("MIT"), id("Apache-2.0")))
+            .containsExactly(KnownLicense.APACHE_2_0)
     }
 
     @Test
-    fun `returns null for empty list`() {
-        assertThat(LicenseResolver.chooseLicense(emptyList())).isNull()
+    fun `fails for empty list`() {
+        assertThatThrownBy { resolve() }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("No license found for 'com.example:lib:1.0.0'")
     }
 
     @Test
-    fun `returns null for only unknown licenses`() {
-        val licenses = listOf(
-            UnknownLicense("LGPL-3.0", "https://example.com"),
-            UnknownLicense("Proprietary", null),
-        )
-        assertThat(LicenseResolver.chooseLicense(licenses)).isNull()
+    fun `fails for only unknown licenses`() {
+        assertThatThrownBy { resolve(name("LGPL-3.0"), name("Proprietary")) }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:lib:1.0.0': LGPL-3.0, Proprietary")
     }
 
     @Test
     fun `ignores unknown licenses and picks known one`() {
-        val licenses = listOf(
-            UnknownLicense("LGPL-3.0", "https://example.com"),
-            KnownLicense.EPL_2_0,
-        )
-        assertThat(LicenseResolver.chooseLicense(licenses)).isEqualTo(KnownLicense.EPL_2_0)
+        assertThat(resolve(name("LGPL-3.0"), id("EPL-2.0"))).containsExactly(KnownLicense.EPL_2_0)
     }
 
     @Test
     fun `follows LICENSE_ORDER priority`() {
-        // verify a few pairs from the order
-        assertThat(LicenseResolver.chooseLicense(listOf(KnownLicense.BOUNCY_CASTLE, KnownLicense.MIT)))
-            .isEqualTo(KnownLicense.MIT)
-        assertThat(LicenseResolver.chooseLicense(listOf(KnownLicense.W3C_19980720, KnownLicense.CC0_1_0)))
-            .isEqualTo(KnownLicense.CC0_1_0)
-        assertThat(LicenseResolver.chooseLicense(listOf(KnownLicense.UPL_1_0, KnownLicense.CDDL_1_1)))
-            .isEqualTo(KnownLicense.CDDL_1_1)
+        // verify a few pairs from the order; Bouncy Castle shares the MIT id, so it is reached by name
+        assertThat(resolve(name("Bouncy Castle Licence"), id("MIT"))).containsExactly(KnownLicense.MIT)
+        assertThat(resolve(id("W3C-19980720"), id("CC0-1.0"))).containsExactly(KnownLicense.CC0_1_0)
+        assertThat(resolve(id("UPL-1.0"), id("CDDL-1.1"))).containsExactly(KnownLicense.CDDL_1_1)
     }
 }
