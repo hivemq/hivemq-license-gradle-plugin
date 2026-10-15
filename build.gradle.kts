@@ -64,8 +64,13 @@ gradlePlugin {
 signing {
     val signingKey: String? by project
     val signingPassword: String? by project
-    useInMemoryPgpKeys(signingKey, signingPassword)
-    isRequired = signingKey != null && signingPassword != null
+    // CI passes the key through environment variables, which arrive empty when the secret is absent
+    if (!signingKey.isNullOrBlank()) {
+        useInMemoryPgpKeys(signingKey, signingPassword.orEmpty())
+    }
+    // A release must be signed, so publishing to the Plugin Portal fails without a key. Every other publication,
+    // the test repository the tests depend on included, is left unsigned when there is no key.
+    isRequired = gradle.startParameter.taskNames.any { it.substringAfterLast(':') == "publishPlugins" }
 }
 
 @Suppress("UnstableApiUsage")
@@ -90,13 +95,31 @@ publishing {
     }
 }
 
-// Pass the catalog-managed versions of the plugins applied inside the TestKit integration builds into the test JVM, so
-// Renovate updates to those plugins are exercised by PluginCoexistenceIntegrationTest.
+// Hands the repository to the test JVM. The published files are the input, not the directory, because every publish
+// rewrites maven-metadata.xml and a signing run rewrites the signatures, and the absolute path stays out of the cache
+// key.
+abstract class TestPluginRepository : CommandLineArgumentProvider {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val files: ConfigurableFileCollection
+
+    @get:Internal
+    abstract val directory: DirectoryProperty
+
+    override fun asArguments() = listOf("-Dtest.plugin.repo=${directory.get().asFile.absolutePath}")
+}
+
 tasks.withType<Test>().configureEach {
     dependsOn("publishAllPublicationsToTestRepository")
-    inputs.dir(testPluginRepository).withPathSensitivity(PathSensitivity.RELATIVE)
-    systemProperty("test.plugin.repo", testPluginRepository.get().asFile.absolutePath)
+    jvmArgumentProviders.add(
+        objects.newInstance<TestPluginRepository>().apply {
+            directory.set(testPluginRepository)
+            files.from(fileTree(testPluginRepository) { exclude("**/maven-metadata.xml*", "**/*.asc*") })
+        }
+    )
     systemProperty("test.plugin.version", version)
+    // Pass the catalog-managed versions of the plugins applied inside the TestKit integration builds into the test
+    // JVM, so Renovate updates to those plugins are exercised by PluginCoexistenceIntegrationTest.
     systemProperty("test.plugin.shadow.version", libs.versions.test.plugin.shadow.get())
     systemProperty("test.plugin.oci.version", libs.versions.test.plugin.oci.get())
 }
