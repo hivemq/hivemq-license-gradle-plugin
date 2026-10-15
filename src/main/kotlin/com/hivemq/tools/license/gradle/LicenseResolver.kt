@@ -143,7 +143,7 @@ object LicenseResolver {
     // the file the licenses were read from and, when known, how this build obtained it; finding out the origin may
     // wait for a build event, so it is only asked for when a message needs it
     private class LicenseSource(val file: File, val origin: () -> String?) {
-        override fun toString(): String {
+        fun describe(): String {
             val origin = origin()
             return if (origin == null) "'${file.absolutePath}'" else "'${file.absolutePath}' ($origin)"
         }
@@ -160,7 +160,7 @@ object LicenseResolver {
     private fun failOnProblems(source: LicenseSource, problems: List<String>) {
         check(problems.isEmpty()) {
             val noun = if (problems.size == 1) "problem" else "problems"
-            "${problems.size} license $noun found in $source:\n" +
+            "${problems.size} license $noun found in ${source.describe()}:\n" +
                 problems.joinToString("\n") { "  $it" }
         }
     }

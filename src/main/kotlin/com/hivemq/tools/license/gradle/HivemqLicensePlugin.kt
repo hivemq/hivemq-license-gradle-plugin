@@ -86,7 +86,7 @@ abstract class HivemqLicensePlugin @Inject constructor(
             resolvedVersions.toMap()
         }
 
-        val cyclonedxDirectBom = project.tasks.named("cyclonedxDirectBom", CyclonedxDirectTask::class.java)
+        val cyclonedxDirectBom = project.tasks.named(BOM_TASK_NAME, CyclonedxDirectTask::class.java)
         cyclonedxDirectBom.configure {
             projectType.set(org.cyclonedx.model.Component.Type.APPLICATION)
             includeConfigs.set(
@@ -101,9 +101,10 @@ abstract class HivemqLicensePlugin @Inject constructor(
         }
 
         val cyclonedxJsonOutput = cyclonedxDirectBom.flatMap { it.jsonOutput }
-        // Derived from the task's own output property, not from the task provider: a provider mapped from the task
-        // provider cannot be queried unless the task completed, and a consumer may point dependencyLicense elsewhere.
-        val cyclonedxJsonOutputPath = project.provider { cyclonedxDirectBom.get().jsonOutput.get().asFile.absolutePath }
+        // The location alone carries no dependency on the task, so it can be read even when a consumer pointed
+        // dependencyLicense elsewhere and the BOM task does not run.
+        val cyclonedxJsonOutputPath =
+            cyclonedxDirectBom.flatMap { it.jsonOutput.locationOnly }.map { it.asFile.absolutePath }
         // the task's path in the whole build tree, which is what task finish events carry
         val bomTaskPath = "${project.buildTreePath.trimEnd(':')}:${cyclonedxDirectBom.name}"
 
@@ -116,9 +117,7 @@ abstract class HivemqLicensePlugin @Inject constructor(
             doFirst { bomTaskOutcomes.get().recordExecuted(bomTaskPath) }
         }
 
-        project.tasks.register("checkApprovedLicenses", CheckApprovedLicensesTask::class.java).configure {
-            group = "hivemq license"
-            description = "Validates that all dependencies have approved licenses."
+        fun LicenseResolvingTask.readLicensesFromBom() {
             projectName.set(extension.projectName)
             dependencyLicense.set(cyclonedxJsonOutput)
             dependencyLicenseTaskPath.set(bomTaskPath)
@@ -131,21 +130,25 @@ abstract class HivemqLicensePlugin @Inject constructor(
             excludedDependencies.set(resolvedExcludedDependencies)
         }
 
+        project.tasks.register("checkApprovedLicenses", CheckApprovedLicensesTask::class.java).configure {
+            group = TASK_GROUP
+            description = "Validates that all dependencies have approved licenses."
+            readLicensesFromBom()
+        }
+
         project.tasks.register("updateThirdPartyLicenses", UpdateThirdPartyLicensesTask::class.java).configure {
-            group = "hivemq license"
+            group = TASK_GROUP
             description = "Generates third-party license reports from the CycloneDX BOM."
-            projectName.set(extension.projectName)
+            readLicensesFromBom()
             outputFileNamePrefix.convention("")
-            dependencyLicense.set(cyclonedxJsonOutput)
-            dependencyLicenseTaskPath.set(bomTaskPath)
-            dependencyLicenseTaskOutput.set(cyclonedxJsonOutputPath)
-            taskOutcomes.set(bomTaskOutcomes)
-            usesService(bomTaskOutcomes)
-            ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
-            allowedArtifacts.set(extension.allowedArtifacts)
-            overriddenLicenses.set(extension.overriddenLicenses)
-            excludedDependencies.set(resolvedExcludedDependencies)
             outputDirectory.set(extension.thirdPartyLicenseDirectory)
         }
+    }
+
+    companion object {
+        /** The CycloneDX task whose BOM the license tasks read. */
+        const val BOM_TASK_NAME = "cyclonedxDirectBom"
+
+        private const val TASK_GROUP = "hivemq license"
     }
 }

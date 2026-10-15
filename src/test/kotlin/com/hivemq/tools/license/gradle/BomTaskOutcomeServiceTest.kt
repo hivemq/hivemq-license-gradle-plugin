@@ -17,6 +17,7 @@ package com.hivemq.tools.license.gradle
 
 import org.assertj.core.api.Assertions.assertThat
 import org.gradle.api.services.BuildServiceParameters
+import org.gradle.tooling.Failure
 import org.gradle.tooling.events.OperationDescriptor
 import org.gradle.tooling.events.PluginIdentifier
 import org.gradle.tooling.events.task.TaskFailureResult
@@ -27,7 +28,6 @@ import org.gradle.tooling.events.task.TaskSkippedResult
 import org.gradle.tooling.events.task.TaskSuccessResult
 import org.junit.jupiter.api.Test
 import java.time.Duration
-import java.time.Instant
 
 class BomTaskOutcomeServiceTest {
 
@@ -67,15 +67,15 @@ class BomTaskOutcomeServiceTest {
     private fun failure() = object : TaskFailureResult {
         override fun getStartTime() = 0L
         override fun getEndTime() = 0L
-        override fun getFailures() = emptyList<org.gradle.tooling.Failure>()
+        override fun getFailures() = emptyList<Failure>()
         override fun isIncremental() = false
         override fun getExecutionReasons() = emptyList<String>()
     }
 
     private fun originWithin(limit: Duration, taskPath: String): String? {
-        val start = Instant.now()
+        val start = System.nanoTime()
         val origin = service.originOf(taskPath)
-        assertThat(Duration.between(start, Instant.now())).isLessThan(limit)
+        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(limit)
         return origin
     }
 
@@ -88,7 +88,8 @@ class BomTaskOutcomeServiceTest {
 
     @Test
     fun `a task restored from the cache is known from its finish event`() {
-        service.onFinish(taskFinished(":cyclonedxDirectBom", success(fromCache = true, upToDate = false)))
+        // Gradle reports a task restored from the cache as up to date as well
+        service.onFinish(taskFinished(":cyclonedxDirectBom", success(fromCache = true, upToDate = true)))
 
         assertThat(originWithin(Duration.ofMillis(500), ":cyclonedxDirectBom")).isEqualTo("restored from the build cache")
     }
@@ -116,17 +117,27 @@ class BomTaskOutcomeServiceTest {
 
     @Test
     fun `a task that never finishes has no origin after the bounded wait`() {
-        val start = Instant.now()
+        val start = System.nanoTime()
 
         assertThat(service.originOf(":cyclonedxDirectBom")).isNull()
 
-        assertThat(Duration.between(start, Instant.now())).isGreaterThanOrEqualTo(Duration.ofSeconds(2))
+        assertThat(Duration.ofNanos(System.nanoTime() - start)).isGreaterThanOrEqualTo(Duration.ofSeconds(2))
+    }
+
+    @Test
+    fun `only the BOM task is recorded`() {
+        service.onFinish(taskFinished(":compileJava", success(fromCache = true, upToDate = true)))
+        service.onFinish(taskFinished(":cyclonedxDirectBom", success(fromCache = false, upToDate = false)))
+
+        assertThat(service.originOf(":cyclonedxDirectBom")).isEqualTo("produced by this build")
+        // an event that was recorded would answer at once with "restored from the build cache"
+        assertThat(service.originOf(":compileJava")).isNull()
     }
 
     @Test
     fun `outcomes are kept per task path`() {
         service.recordExecuted(":cyclonedxDirectBom")
-        service.onFinish(taskFinished(":inc:cyclonedxDirectBom", success(fromCache = true, upToDate = false)))
+        service.onFinish(taskFinished(":inc:cyclonedxDirectBom", success(fromCache = true, upToDate = true)))
 
         assertThat(service.originOf(":cyclonedxDirectBom")).isEqualTo("produced by this build")
         assertThat(service.originOf(":inc:cyclonedxDirectBom")).isEqualTo("restored from the build cache")
