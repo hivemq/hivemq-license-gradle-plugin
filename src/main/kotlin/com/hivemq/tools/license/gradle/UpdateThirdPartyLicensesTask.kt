@@ -56,9 +56,9 @@ abstract class UpdateThirdPartyLicensesTask : LicenseResolvingTask() {
         val licenseHtml = StringBuilder()
         licensePlaintext.addHeaderPlaintext(productName)
         licenseHtml.addHeaderHtml(productName)
-        for ((coordinates, chosenLicense) in entries.values) {
-            licensePlaintext.addLinePlaintext(coordinates, chosenLicense)
-            licenseHtml.addLineHtml(coordinates, chosenLicense)
+        for ((coordinates, licenses) in entries.values) {
+            licensePlaintext.addLinePlaintext(coordinates, licenses)
+            licenseHtml.addLineHtml(coordinates, licenses)
         }
         licensePlaintext.addFooterPlaintext()
         licenseHtml.addFooterHtml()
@@ -114,19 +114,21 @@ abstract class UpdateThirdPartyLicensesTask : LicenseResolvingTask() {
         """.trimIndent()
     )
 
-    private fun StringBuilder.addLinePlaintext(coordinates: Coordinates, license: KnownLicense) =
+    // a dependency under several licenses at once is listed as "MIT AND ISC", with one URL per license
+    private fun StringBuilder.addLinePlaintext(coordinates: Coordinates, licenses: List<KnownLicense>) =
         //@formatter:off
-        append(" ${"%-74s".format(coordinates.moduleId)} | ${"%-41s".format(coordinates.version)} | ${"%-13s".format(license.id)} | ${license.url}\n")
+        append(" ${"%-74s".format(coordinates.moduleId)} | ${"%-41s".format(coordinates.version)} | ${"%-13s".format(licenses.joinToString(" AND ") { it.id })} | ${licenses.joinToString(", ") { it.url }}\n")
         //@formatter:on
 
-    private fun StringBuilder.addLineHtml(coordinates: Coordinates, license: KnownLicense) = append(
+    // the separator carries the "|" margin of the template, so every link lands on its own indented line
+    private fun StringBuilder.addLineHtml(coordinates: Coordinates, licenses: List<KnownLicense>) = append(
         """
         |    <tr>
         |        <td>${coordinates.moduleId}</td>
         |        <td>${coordinates.version}</td>
-        |        <td>${license.id}</td>
+        |        <td>${licenses.joinToString(" AND ") { it.id }}</td>
         |        <td>
-        |            <a href="${license.url}">${license.url}</a>
+        |            ${licenses.joinToString("<br>\n|            ") { """<a href="${it.url}">${it.url}</a>""" }}
         |        </td>
         |    </tr>
         |
