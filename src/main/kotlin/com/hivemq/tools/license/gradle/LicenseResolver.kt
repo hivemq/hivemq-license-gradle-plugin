@@ -85,7 +85,7 @@ object LicenseResolver {
         allowedArtifacts: Set<String>,
         overriddenLicenses: Map<String, String> = emptyMap(),
         excludedDependencies: Map<String, String> = emptyMap(),
-        dependencyLicenseOrigin: String? = null,
+        dependencyLicenseOrigin: () -> String? = { null },
     ): TreeMap<String, ResolvedDependency> {
         val objectMapper = ObjectMapper()
         val tree = objectMapper.readTree(dependencyLicenseFile)
@@ -140,9 +140,13 @@ object LicenseResolver {
         return entries
     }
 
-    // the file the licenses were read from and, when known, how this build obtained it
-    private class LicenseSource(val file: File, val origin: String?) {
-        override fun toString() = if (origin == null) "'${file.absolutePath}'" else "'${file.absolutePath}' ($origin)"
+    // the file the licenses were read from and, when known, how this build obtained it; finding out the origin may
+    // wait for a build event, so it is only asked for when a message needs it
+    private class LicenseSource(val file: File, val origin: () -> String?) {
+        override fun toString(): String {
+            val origin = origin()
+            return if (origin == null) "'${file.absolutePath}'" else "'${file.absolutePath}' ($origin)"
+        }
     }
 
     private fun describeUnresolvedMetadata(component: DependencyReport.Component): String {
