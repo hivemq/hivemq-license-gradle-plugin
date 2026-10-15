@@ -19,8 +19,12 @@ import org.cyclonedx.gradle.CyclonedxDirectTask
 import org.cyclonedx.gradle.CyclonedxPlugin
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.gradle.build.event.BuildEventsListenerRegistry
+import javax.inject.Inject
 
-class HivemqLicensePlugin : Plugin<Project> {
+abstract class HivemqLicensePlugin @Inject constructor(
+    private val buildEventsListenerRegistry: BuildEventsListenerRegistry,
+) : Plugin<Project> {
 
     override fun apply(project: Project) {
         val extension = project.extensions.create("hivemqLicense", HivemqLicenseExtensionImpl::class.java)
@@ -70,7 +74,7 @@ class HivemqLicensePlugin : Plugin<Project> {
         }
 
         val resolvedExcludedDependencies = extension.excludedDependencies.map { excludedDeps ->
-            if (excludedDeps.isEmpty()) return@map emptyMap<String, String>()
+            if (excludedDeps.isEmpty()) return@map emptyMap()
             val runtimeClasspath = project.configurations.getByName("runtimeClasspath")
             val resolvedVersions = mutableMapOf<String, String>()
             runtimeClasspath.resolvedConfiguration.resolvedArtifacts.forEach { artifact ->
@@ -97,12 +101,29 @@ class HivemqLicensePlugin : Plugin<Project> {
         }
 
         val cyclonedxJsonOutput = cyclonedxDirectBom.flatMap { it.jsonOutput }
+        val bomTaskPath = if (project.path == ":") ":cyclonedxDirectBom" else "${project.path}:cyclonedxDirectBom"
+
+        // One listener per build records how every task finished. The plugin is applied per project, so register the
+        // listener only with the first registration of the shared service.
+        val sharedServices = project.gradle.sharedServices
+        val listenerRegistered = sharedServices.registrations.findByName(BomTaskOutcomeService.NAME) != null
+        val bomTaskOutcomes = sharedServices.registerIfAbsent(BomTaskOutcomeService.NAME, BomTaskOutcomeService::class.java) {}
+        if (!listenerRegistered) {
+            buildEventsListenerRegistry.onTaskCompletion(bomTaskOutcomes)
+        }
+        cyclonedxDirectBom.configure {
+            usesService(bomTaskOutcomes)
+            doFirst { bomTaskOutcomes.get().recordExecuted(bomTaskPath) }
+        }
 
         project.tasks.register("checkApprovedLicenses", CheckApprovedLicensesTask::class.java).configure {
             group = "hivemq license"
             description = "Validates that all dependencies have approved licenses."
             projectName.set(extension.projectName)
             dependencyLicense.set(cyclonedxJsonOutput)
+            dependencyLicenseTaskPath.set(bomTaskPath)
+            taskOutcomes.set(bomTaskOutcomes)
+            usesService(bomTaskOutcomes)
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
             allowedArtifacts.set(extension.allowedArtifacts)
             overriddenLicenses.set(extension.overriddenLicenses)
@@ -115,6 +136,9 @@ class HivemqLicensePlugin : Plugin<Project> {
             projectName.set(extension.projectName)
             outputFileNamePrefix.convention("")
             dependencyLicense.set(cyclonedxJsonOutput)
+            dependencyLicenseTaskPath.set(bomTaskPath)
+            taskOutcomes.set(bomTaskOutcomes)
+            usesService(bomTaskOutcomes)
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
             allowedArtifacts.set(extension.allowedArtifacts)
             overriddenLicenses.set(extension.overriddenLicenses)

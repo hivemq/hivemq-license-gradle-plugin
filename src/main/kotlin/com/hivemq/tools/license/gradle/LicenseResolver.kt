@@ -85,11 +85,13 @@ object LicenseResolver {
         allowedArtifacts: Set<String>,
         overriddenLicenses: Map<String, String> = emptyMap(),
         excludedDependencies: Map<String, String> = emptyMap(),
+        dependencyLicenseOrigin: String? = null,
     ): TreeMap<String, ResolvedDependency> {
         val objectMapper = ObjectMapper()
         val tree = objectMapper.readTree(dependencyLicenseFile)
+        val source = LicenseSource(dependencyLicenseFile, dependencyLicenseOrigin)
         if (!tree.has("components")) {
-            return resolvePnpmLicenses(dependencyLicenseFile, tree, ignoredGroupPrefixes, allowedArtifacts, overriddenLicenses)
+            return resolvePnpmLicenses(source, tree, ignoredGroupPrefixes, allowedArtifacts, overriddenLicenses)
         }
         val bom = objectMapper.treeToValue(tree, DependencyReport.Bom::class.java)
         val entries = TreeMap<String, ResolvedDependency>()
@@ -134,8 +136,13 @@ object LicenseResolver {
             }
             entries[moduleId] = ResolvedDependency(coordinates, resolvedLicense)
         }
-        failOnProblems(dependencyLicenseFile, problems)
+        failOnProblems(source, problems)
         return entries
+    }
+
+    // the file the licenses were read from and, when known, how this build obtained it
+    private class LicenseSource(val file: File, val origin: String?) {
+        override fun toString() = if (origin == null) "'${file.absolutePath}'" else "'${file.absolutePath}' ($origin)"
     }
 
     private fun describeUnresolvedMetadata(component: DependencyReport.Component): String {
@@ -146,16 +153,16 @@ object LicenseResolver {
         return ", its Maven metadata is incomplete ($reason)"
     }
 
-    private fun failOnProblems(file: File, problems: List<String>) {
+    private fun failOnProblems(source: LicenseSource, problems: List<String>) {
         check(problems.isEmpty()) {
             val noun = if (problems.size == 1) "problem" else "problems"
-            "${problems.size} license $noun found in '${file.absolutePath}':\n" +
+            "${problems.size} license $noun found in $source:\n" +
                 problems.joinToString("\n") { "  $it" }
         }
     }
 
     private fun resolvePnpmLicenses(
-        dependencyLicenseFile: File,
+        source: LicenseSource,
         tree: JsonNode,
         ignoredGroupPrefixes: Set<String>,
         allowedArtifacts: Set<String>,
@@ -187,7 +194,7 @@ object LicenseResolver {
                 entries[coordinates.moduleId] = ResolvedDependency(coordinates, knownLicense)
             }
         }
-        failOnProblems(dependencyLicenseFile, problems)
+        failOnProblems(source, problems)
         return entries
     }
 
