@@ -101,16 +101,16 @@ abstract class HivemqLicensePlugin @Inject constructor(
         }
 
         val cyclonedxJsonOutput = cyclonedxDirectBom.flatMap { it.jsonOutput }
-        val bomTaskPath = if (project.path == ":") ":cyclonedxDirectBom" else "${project.path}:cyclonedxDirectBom"
+        // Derived from the task's own output property, not from the task provider: a provider mapped from the task
+        // provider cannot be queried unless the task completed, and a consumer may point dependencyLicense elsewhere.
+        val cyclonedxJsonOutputPath = project.provider { cyclonedxDirectBom.get().jsonOutput.get().asFile.absolutePath }
+        // the task's path in the whole build tree, which is what task finish events carry
+        val bomTaskPath = "${project.buildTreePath.trimEnd(':')}:${cyclonedxDirectBom.name}"
 
-        // One listener per build records how every task finished. The plugin is applied per project, so register the
-        // listener only with the first registration of the shared service.
-        val sharedServices = project.gradle.sharedServices
-        val listenerRegistered = sharedServices.registrations.findByName(BomTaskOutcomeService.NAME) != null
-        val bomTaskOutcomes = sharedServices.registerIfAbsent(BomTaskOutcomeService.NAME, BomTaskOutcomeService::class.java) {}
-        if (!listenerRegistered) {
-            buildEventsListenerRegistry.onTaskCompletion(bomTaskOutcomes)
-        }
+        // The plugin is applied per project; Gradle registers the service and the listener once per provider.
+        val bomTaskOutcomes = project.gradle.sharedServices
+            .registerIfAbsent(BomTaskOutcomeService.NAME, BomTaskOutcomeService::class.java) {}
+        buildEventsListenerRegistry.onTaskCompletion(bomTaskOutcomes)
         cyclonedxDirectBom.configure {
             usesService(bomTaskOutcomes)
             doFirst { bomTaskOutcomes.get().recordExecuted(bomTaskPath) }
@@ -122,6 +122,7 @@ abstract class HivemqLicensePlugin @Inject constructor(
             projectName.set(extension.projectName)
             dependencyLicense.set(cyclonedxJsonOutput)
             dependencyLicenseTaskPath.set(bomTaskPath)
+            dependencyLicenseTaskOutput.set(cyclonedxJsonOutputPath)
             taskOutcomes.set(bomTaskOutcomes)
             usesService(bomTaskOutcomes)
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
@@ -137,6 +138,7 @@ abstract class HivemqLicensePlugin @Inject constructor(
             outputFileNamePrefix.convention("")
             dependencyLicense.set(cyclonedxJsonOutput)
             dependencyLicenseTaskPath.set(bomTaskPath)
+            dependencyLicenseTaskOutput.set(cyclonedxJsonOutputPath)
             taskOutcomes.set(bomTaskOutcomes)
             usesService(bomTaskOutcomes)
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)

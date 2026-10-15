@@ -77,9 +77,26 @@ testing {
     }
 }
 
+// A Maven repository with this plugin, for TestKit builds that need to resolve it from a plugins block like a real
+// consumer. TestKit's injected plugin classpath loads the plugin once for the whole build, which hides problems that
+// only show when Gradle gives sibling projects with different plugins blocks their own plugin classloaders.
+val testPluginRepository = layout.buildDirectory.dir("test-repo")
+publishing {
+    repositories {
+        maven {
+            name = "test"
+            url = uri(testPluginRepository)
+        }
+    }
+}
+
 // Pass the catalog-managed versions of the plugins applied inside the TestKit integration builds into the test JVM, so
 // Renovate updates to those plugins are exercised by PluginCoexistenceIntegrationTest.
 tasks.withType<Test>().configureEach {
+    dependsOn("publishAllPublicationsToTestRepository")
+    inputs.dir(testPluginRepository).withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty("test.plugin.repo", testPluginRepository.get().asFile.absolutePath)
+    systemProperty("test.plugin.version", version)
     systemProperty("test.plugin.shadow.version", libs.versions.test.plugin.shadow.get())
     systemProperty("test.plugin.oci.version", libs.versions.test.plugin.oci.get())
 }

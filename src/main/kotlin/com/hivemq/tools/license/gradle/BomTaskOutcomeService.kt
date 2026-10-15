@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 
 /**
- * Records how each task of the build obtained its outputs, so the license tasks can say whether the BOM they read was
+ * Records how the tasks of the build obtained their outputs, so the license tasks can say whether the BOM they read was
  * produced by this build, restored from the build cache, or left over from an earlier build.
  *
  * A task cannot see another task's outcome through its inputs, so [HivemqLicensePlugin] feeds this service from two
@@ -36,10 +36,13 @@ import java.util.concurrent.TimeoutException
  * actually runs. For a task Gradle skipped, only the task finish event tells whether it was restored from the cache or
  * up to date, and Gradle delivers those events asynchronously, "some time soon" after the task completed. [originOf]
  * therefore waits a bounded moment for the event and gives up without an origin if it does not arrive.
+ *
+ * Tasks are keyed by their path in the whole build tree, since every build of a composite has its own
+ * `:cyclonedxDirectBom` and the finish events of all of them reach every listener.
  */
 abstract class BomTaskOutcomeService : BuildService<BuildServiceParameters.None>, OperationCompletionListener {
 
-    private val origins = ConcurrentHashMap<String, CompletableFuture<String>>()
+    private val origins = ConcurrentHashMap<String, CompletableFuture<String?>>()
 
     private fun originFuture(taskPath: String) = origins.computeIfAbsent(taskPath) { CompletableFuture() }
 
@@ -50,9 +53,10 @@ abstract class BomTaskOutcomeService : BuildService<BuildServiceParameters.None>
 
     override fun onFinish(event: FinishEvent) {
         if (event !is TaskFinishEvent) return
-        val result = event.result as? TaskSuccessResult ?: return
+        val result = event.result
         originFuture(event.descriptor.taskPath).complete(
             when {
+                result !is TaskSuccessResult -> null // skipped or failed, nothing to say about its outputs
                 result.isFromCache -> "restored from the build cache"
                 result.isUpToDate -> "unchanged since an earlier build"
                 else -> PRODUCED_BY_THIS_BUILD
@@ -68,7 +72,14 @@ abstract class BomTaskOutcomeService : BuildService<BuildServiceParameters.None>
     }
 
     companion object {
-        const val NAME = "hivemqLicenseBomTaskOutcomes"
+        /**
+         * Gradle loads a plugin once per distinct plugins block, so sibling projects with different plugins can hold
+         * different copies of this class. A shared service is typed by the class that registered it and cannot be
+         * assigned to a property typed by another copy, so each copy registers a service of its own.
+         */
+        val NAME = "hivemqLicenseBomTaskOutcomes-" +
+            Integer.toHexString(System.identityHashCode(BomTaskOutcomeService::class.java.classLoader))
+
         private const val PRODUCED_BY_THIS_BUILD = "produced by this build"
         private val EVENT_WAIT: Duration = Duration.ofSeconds(2)
     }

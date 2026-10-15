@@ -42,9 +42,13 @@ abstract class CheckApprovedLicensesTask : DefaultTask() {
     @get:PathSensitive(PathSensitivity.NONE)
     abstract val dependencyLicense: RegularFileProperty
 
-    /** Path of the task that produces [dependencyLicense], used to tell where the file came from. */
+    /** Path in the build tree of the task that produces the BOM, used to tell where [dependencyLicense] came from. */
     @get:Internal
     abstract val dependencyLicenseTaskPath: Property<String>
+
+    /** Absolute path of that task's output, so the origin is only reported when [dependencyLicense] is that file. */
+    @get:Internal
+    abstract val dependencyLicenseTaskOutput: Property<String>
 
     @get:Internal
     abstract val taskOutcomes: Property<BomTaskOutcomeService>
@@ -74,13 +78,15 @@ abstract class CheckApprovedLicensesTask : DefaultTask() {
             allowedArtifacts = allowedArtifacts.get(),
             overriddenLicenses = overriddenLicenses.get(),
             excludedDependencies = excludedDependencies.get(),
-            dependencyLicenseOrigin = dependencyLicenseOrigin(),
+            dependencyLicenseOrigin = ::dependencyLicenseOrigin,
         )
         logger.lifecycle("All ${entries.size} dependencies have approved licenses.")
     }
 
     private fun dependencyLicenseOrigin(): String? {
         val taskPath = dependencyLicenseTaskPath.orNull ?: return null
+        val taskOutput = dependencyLicenseTaskOutput.orNull ?: return null
+        if (dependencyLicense.get().asFile.absolutePath != taskOutput) return null
         return taskOutcomes.orNull?.originOf(taskPath)
     }
 }
