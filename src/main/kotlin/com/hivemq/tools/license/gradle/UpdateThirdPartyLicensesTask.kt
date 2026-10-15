@@ -15,19 +15,11 @@
  */
 package com.hivemq.tools.license.gradle
 
-import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
-import org.gradle.api.file.RegularFileProperty
-import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
-import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.Internal
-import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.OutputDirectory
-import org.gradle.api.tasks.PathSensitive
-import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 
 /**
@@ -35,40 +27,10 @@ import org.gradle.api.tasks.TaskAction
  * `licenses.html` files in the configured [outputDirectory].
  */
 @CacheableTask
-abstract class UpdateThirdPartyLicensesTask : DefaultTask() {
-
-    @get:Input
-    abstract val projectName: Property<String>
+abstract class UpdateThirdPartyLicensesTask : LicenseResolvingTask() {
 
     @get:Input
     abstract val outputFileNamePrefix: Property<String>
-
-    @get:InputFile
-    @get:PathSensitive(PathSensitivity.NONE)
-    abstract val dependencyLicense: RegularFileProperty
-
-    /** Path in the build tree of the task that produces the BOM, used to tell where [dependencyLicense] came from. */
-    @get:Internal
-    abstract val dependencyLicenseTaskPath: Property<String>
-
-    /** Absolute path of that task's output, so the origin is only reported when [dependencyLicense] is that file. */
-    @get:Internal
-    abstract val dependencyLicenseTaskOutput: Property<String>
-
-    @get:Internal
-    abstract val taskOutcomes: Property<BomTaskOutcomeService>
-
-    @get:Input
-    abstract val ignoredGroupPrefixes: SetProperty<String>
-
-    @get:Input
-    abstract val allowedArtifacts: SetProperty<String>
-
-    @get:Input
-    abstract val overriddenLicenses: MapProperty<String, String>
-
-    @get:Input
-    abstract val excludedDependencies: MapProperty<String, String>
 
     @get:OutputDirectory
     abstract val outputDirectory: DirectoryProperty
@@ -88,14 +50,7 @@ abstract class UpdateThirdPartyLicensesTask : DefaultTask() {
             check(resultHtmlFile.delete()) { "Could not delete file '$resultHtmlFile'" }
         }
 
-        val entries = LicenseResolver.resolveLicenses(
-            dependencyLicenseFile = dependencyLicense.get().asFile.absoluteFile,
-            ignoredGroupPrefixes = ignoredGroupPrefixes.get(),
-            allowedArtifacts = allowedArtifacts.get(),
-            overriddenLicenses = overriddenLicenses.get(),
-            excludedDependencies = excludedDependencies.get(),
-            dependencyLicenseOrigin = ::dependencyLicenseOrigin,
-        )
+        val entries = resolveLicenses()
 
         val licensePlaintext = StringBuilder()
         val licenseHtml = StringBuilder()
@@ -197,11 +152,4 @@ abstract class UpdateThirdPartyLicensesTask : DefaultTask() {
 
         """.trimIndent()
     )
-
-    private fun dependencyLicenseOrigin(): String? {
-        val taskPath = dependencyLicenseTaskPath.orNull ?: return null
-        val taskOutput = dependencyLicenseTaskOutput.orNull ?: return null
-        if (dependencyLicense.get().asFile.absolutePath != taskOutput) return null
-        return taskOutcomes.orNull?.originOf(taskPath)
-    }
 }

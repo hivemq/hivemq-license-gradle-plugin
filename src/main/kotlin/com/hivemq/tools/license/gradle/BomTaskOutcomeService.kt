@@ -22,14 +22,15 @@ import org.gradle.tooling.events.OperationCompletionListener
 import org.gradle.tooling.events.task.TaskFinishEvent
 import org.gradle.tooling.events.task.TaskSuccessResult
 import java.time.Duration
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 
 /**
- * Records how the tasks of the build obtained their outputs, so the license tasks can say whether the BOM they read was
- * produced by this build, restored from the build cache, or left over from an earlier build.
+ * Records how the BOM tasks of the build obtained their outputs, so the license tasks can say whether the BOM they read
+ * was produced by this build, restored from the build cache, or left over from an earlier build.
  *
  * A task cannot see another task's outcome through its inputs, so [HivemqLicensePlugin] feeds this service from two
  * sides. A `doFirst` action on the BOM task calls [recordExecuted] synchronously, which only happens when the task
@@ -53,10 +54,13 @@ abstract class BomTaskOutcomeService : BuildService<BuildServiceParameters.None>
 
     override fun onFinish(event: FinishEvent) {
         if (event !is TaskFinishEvent) return
+        val taskPath = event.descriptor.taskPath
+        if (taskPath.substringAfterLast(':') != HivemqLicensePlugin.BOM_TASK_NAME) return
         val result = event.result
-        originFuture(event.descriptor.taskPath).complete(
+        originFuture(taskPath).complete(
             when {
                 result !is TaskSuccessResult -> null // skipped or failed, nothing to say about its outputs
+                // a task restored from the cache is reported as up to date as well, so this comes first
                 result.isFromCache -> "restored from the build cache"
                 result.isUpToDate -> "unchanged since an earlier build"
                 else -> PRODUCED_BY_THIS_BUILD
@@ -75,10 +79,10 @@ abstract class BomTaskOutcomeService : BuildService<BuildServiceParameters.None>
         /**
          * Gradle loads a plugin once per distinct plugins block, so sibling projects with different plugins can hold
          * different copies of this class. A shared service is typed by the class that registered it and cannot be
-         * assigned to a property typed by another copy, so each copy registers a service of its own.
+         * assigned to a property typed by another copy, so each copy registers a service of its own, under a name
+         * drawn once per class.
          */
-        val NAME = "hivemqLicenseBomTaskOutcomes-" +
-            Integer.toHexString(System.identityHashCode(BomTaskOutcomeService::class.java.classLoader))
+        val NAME = "hivemqLicenseBomTaskOutcomes-" + UUID.randomUUID()
 
         private const val PRODUCED_BY_THIS_BUILD = "produced by this build"
         private val EVENT_WAIT: Duration = Duration.ofSeconds(2)

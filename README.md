@@ -62,10 +62,10 @@ hivemqLicense {
 Reads the CycloneDX BOM and validates that every dependency has a license from the approved list.
 The task fails if any dependency has an unapproved or unknown license. One failure names the BOM file that was read,
 says when known whether this build produced it, restored it from the build cache or found it unchanged from an earlier
-build, and lists every offending dependency, so a BOM with several problems is fixed in one round. When the CycloneDX plugin
-recorded that a dependency's Maven metadata is incomplete (`cdx:maven:package:metadata-unresolved`, CycloneDX Gradle
-plugin 3.5.0 or later), the entry says so and names the reason, to tell a POM that could not be read or completed apart
-from a POM that declares no license.
+build, and lists every offending dependency, so a BOM with several problems is fixed in one round. When the CycloneDX
+plugin recorded that a dependency's Maven metadata is incomplete (`cdx:maven:package:metadata-unresolved`, CycloneDX
+Gradle plugin 3.5.0 or later), the entry says so and names the reason, to tell a POM that could not be read or completed
+apart from a POM that declares no license.
 
 ### updateThirdPartyLicenses
 
