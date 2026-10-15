@@ -204,7 +204,7 @@ class HivemqLicensePluginIntegrationTest {
         projectDir.resolve("build.gradle.kts").writeText(unlicensedBuildFile("repo", extra = extra))
     }
 
-    // Gradle prints canonical paths, and the JUnit temp dir sits behind a symlink on macOS
+    // Gradle canonicalizes the project directory, and the JUnit temp dir sits behind a symlink on macOS
     private fun bomPath(projectDir: File) = projectDir.resolve("build/reports/cyclonedx-direct/bom.json").canonicalPath
 
     // Supplied by the build (see build.gradle.kts).
@@ -232,6 +232,59 @@ class HivemqLicensePluginIntegrationTest {
 
         assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).contains("' (produced by this build):")
+    }
+
+    @Test
+    fun `failure says the BOM is unchanged when the configuration cache is reused`() {
+        setupWithUnlicensedDependency()
+        cachedRunner("checkApprovedLicenses", "--configuration-cache").buildAndFail()
+
+        val result = cachedRunner("checkApprovedLicenses", "--configuration-cache").buildAndFail()
+
+        assertThat(result.output).contains("Reusing configuration cache.")
+        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.UP_TO_DATE)
+        assertThat(result.output).contains("' (unchanged since an earlier build):")
+    }
+
+    @Test
+    fun `updateThirdPartyLicenses is up to date and restored from the build cache`() {
+        // the task's inputs live in a base class, so this checks they still take part in its up-to-date check and key
+        setupWithUnlicensedDependency(
+            extra = """
+            hivemqLicense {
+                thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+                overriddenLicenses.put("com.example:no-license-lib", "MIT")
+            }
+            """.trimIndent()
+        )
+        assertThat(cachedRunner("updateThirdPartyLicenses").build().task(":updateThirdPartyLicenses")?.outcome)
+            .isEqualTo(TaskOutcome.SUCCESS)
+
+        val unchanged = cachedRunner("updateThirdPartyLicenses").build()
+        assertThat(unchanged.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.UP_TO_DATE)
+
+        assertThat(projectDir.resolve("build/tmp/third-party-licenses").deleteRecursively()).isTrue()
+        val restored = cachedRunner("updateThirdPartyLicenses").build()
+        assertThat(restored.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.FROM_CACHE)
+        assertThat(projectDir.resolve("build/tmp/third-party-licenses/licenses").readText())
+            .contains("com.example:no-license-lib")
+            .contains("MIT")
+    }
+
+    @Test
+    fun `updateThirdPartyLicenses failure says where the BOM came from`() {
+        setupWithUnlicensedDependency(
+            extra = """
+            hivemqLicense {
+                thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+            }
+            """.trimIndent()
+        )
+
+        val result = cachedRunner("updateThirdPartyLicenses").buildAndFail()
+
+        assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output).contains("'${bomPath(projectDir)}' (produced by this build):")
     }
 
     @Test
