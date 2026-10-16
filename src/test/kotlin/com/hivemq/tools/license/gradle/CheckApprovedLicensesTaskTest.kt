@@ -52,9 +52,9 @@ class CheckApprovedLicensesTaskTest {
         )
     }
 
-    private fun gradleRunner(vararg args: String) = GradleRunner.create()
+    private fun gradleRunner() = GradleRunner.create()
         .withProjectDir(projectDir)
-        .withArguments(*args)
+        .withArguments("checkApprovedLicenses")
         .withPluginClasspath()
 
     @Test
@@ -78,7 +78,7 @@ class CheckApprovedLicensesTaskTest {
         )
         writeBuildFile()
 
-        val result = gradleRunner("checkApprovedLicenses").build()
+        val result = gradleRunner().build()
 
         assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).contains("1 dependencies have approved licenses")
@@ -113,7 +113,7 @@ class CheckApprovedLicensesTaskTest {
         )
         writeBuildFile()
 
-        val result = gradleRunner("checkApprovedLicenses").build()
+        val result = gradleRunner().build()
 
         assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).contains("2 dependencies have approved licenses")
@@ -125,7 +125,7 @@ class CheckApprovedLicensesTaskTest {
         writeBom("""{ "components": [] }""")
         writeBuildFile()
 
-        val result = gradleRunner("checkApprovedLicenses").build()
+        val result = gradleRunner().build()
 
         assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).contains("0 dependencies have approved licenses")
@@ -152,7 +152,7 @@ class CheckApprovedLicensesTaskTest {
         )
         writeBuildFile()
 
-        val result = gradleRunner("checkApprovedLicenses").buildAndFail()
+        val result = gradleRunner().buildAndFail()
 
         assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.FAILED)
         assertThat(result.output).contains("License not on the approved list")
@@ -177,10 +177,45 @@ class CheckApprovedLicensesTaskTest {
         )
         writeBuildFile()
 
-        val result = gradleRunner("checkApprovedLicenses").buildAndFail()
+        val result = gradleRunner().buildAndFail()
 
         assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.FAILED)
         assertThat(result.output).contains("No license found")
+    }
+
+    @Test
+    fun `reports every offending component in one failure`() {
+        setup()
+        writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "no-license-lib",
+                  "version": "1.0.0",
+                  "licenses": []
+                },
+                {
+                  "group": "com.example",
+                  "name": "proprietary-lib",
+                  "version": "2.0.0",
+                  "licenses": [
+                    { "license": { "name": "Some Proprietary License" } }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        writeBuildFile()
+
+        val result = gradleRunner().buildAndFail()
+
+        assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output).contains(projectDir.resolve("build/reports/cyclonedx/bom.json").canonicalPath)
+        assertThat(result.output).contains("No license found for 'com.example:no-license-lib:1.0.0'")
+        assertThat(result.output).contains("License not on the approved list for 'com.example:proprietary-lib:2.0.0'")
     }
 
     @Test
@@ -204,7 +239,7 @@ class CheckApprovedLicensesTaskTest {
         )
         writeBuildFile()
 
-        val result = gradleRunner("checkApprovedLicenses").build()
+        val result = gradleRunner().build()
 
         assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).contains("0 dependencies have approved licenses")
@@ -231,7 +266,7 @@ class CheckApprovedLicensesTaskTest {
         )
         writeBuildFile()
 
-        val result = gradleRunner("checkApprovedLicenses").build()
+        val result = gradleRunner().build()
 
         assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).contains("1 dependencies have approved licenses")
@@ -271,7 +306,7 @@ class CheckApprovedLicensesTaskTest {
             """.trimIndent()
         )
 
-        val result = gradleRunner("checkApprovedLicenses").build()
+        val result = gradleRunner().build()
 
         assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).contains("0 dependencies have approved licenses")
@@ -312,7 +347,7 @@ class CheckApprovedLicensesTaskTest {
             """.trimIndent()
         )
 
-        val result = gradleRunner("checkApprovedLicenses").build()
+        val result = gradleRunner().build()
 
         assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).contains("1 dependencies have approved licenses")
@@ -340,7 +375,7 @@ class CheckApprovedLicensesTaskTest {
         )
         writeBuildFile()
 
-        val result = gradleRunner("checkApprovedLicenses").build()
+        val result = gradleRunner().build()
 
         assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).contains("1 dependencies have approved licenses")
@@ -367,7 +402,7 @@ class CheckApprovedLicensesTaskTest {
         )
         writeBuildFile()
 
-        val result = gradleRunner("checkApprovedLicenses").build()
+        val result = gradleRunner().build()
 
         assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
     }
@@ -378,7 +413,7 @@ class CheckApprovedLicensesTaskTest {
         writeBom("""{ "components": [] }""")
         writeBuildFile()
 
-        gradleRunner("checkApprovedLicenses").build()
+        gradleRunner().build()
 
         val outputDir = projectDir.resolve("build/tmp/third-party-licenses")
         if (outputDir.exists()) {

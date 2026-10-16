@@ -16,54 +16,61 @@
 package com.hivemq.tools.license.gradle
 
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 
 class ResolvedDependencyTest {
 
     @Test
-    fun `stores coordinates and license`() {
+    fun `stores coordinates and licenses`() {
         val coordinates = Coordinates("com.google.guava", "guava", "32.1.3-jre")
-        val dep = ResolvedDependency(coordinates, KnownLicense.APACHE_2_0)
+        val dep = ResolvedDependency(coordinates, listOf(KnownLicense.APACHE_2_0))
         assertThat(dep.coordinates).isEqualTo(coordinates)
-        assertThat(dep.license).isEqualTo(KnownLicense.APACHE_2_0)
+        assertThat(dep.licenses).containsExactly(KnownLicense.APACHE_2_0)
     }
 
     @Test
     fun `data class equality`() {
-        val a = ResolvedDependency(Coordinates("g", "n", "v"), KnownLicense.MIT)
-        val b = ResolvedDependency(Coordinates("g", "n", "v"), KnownLicense.MIT)
+        val a = ResolvedDependency(Coordinates("g", "n", "v"), listOf(KnownLicense.MIT))
+        val b = ResolvedDependency(Coordinates("g", "n", "v"), listOf(KnownLicense.MIT))
         assertThat(a).isEqualTo(b)
     }
 
     @Test
-    fun `data class inequality on different license`() {
-        val a = ResolvedDependency(Coordinates("g", "n", "v"), KnownLicense.MIT)
-        val b = ResolvedDependency(Coordinates("g", "n", "v"), KnownLicense.APACHE_2_0)
+    fun `data class inequality on different licenses`() {
+        val a = ResolvedDependency(Coordinates("g", "n", "v"), listOf(KnownLicense.MIT))
+        val b = ResolvedDependency(Coordinates("g", "n", "v"), listOf(KnownLicense.APACHE_2_0))
         assertThat(a).isNotEqualTo(b)
     }
 
     @Test
     fun `data class inequality on different coordinates`() {
-        val a = ResolvedDependency(Coordinates("g", "n", "1.0"), KnownLicense.MIT)
-        val b = ResolvedDependency(Coordinates("g", "n", "2.0"), KnownLicense.MIT)
+        val a = ResolvedDependency(Coordinates("g", "n", "1.0"), listOf(KnownLicense.MIT))
+        val b = ResolvedDependency(Coordinates("g", "n", "2.0"), listOf(KnownLicense.MIT))
         assertThat(a).isNotEqualTo(b)
     }
 
     @Test
     fun destructuring() {
-        val dep = ResolvedDependency(Coordinates("com.example", "lib", "1.0"), KnownLicense.EPL_2_0)
-        val (coordinates, license) = dep
+        val dep = ResolvedDependency(Coordinates("com.example", "lib", "1.0"), listOf(KnownLicense.EPL_2_0))
+        val (coordinates, licenses) = dep
         assertThat(coordinates.group).isEqualTo("com.example")
         assertThat(coordinates.name).isEqualTo("lib")
         assertThat(coordinates.version).isEqualTo("1.0")
-        assertThat(license).isEqualTo(KnownLicense.EPL_2_0)
+        assertThat(licenses).containsExactly(KnownLicense.EPL_2_0)
     }
 
     @Test
-    fun `copy with different license`() {
-        val original = ResolvedDependency(Coordinates("g", "n", "v"), KnownLicense.MIT)
-        val copy = original.copy(license = KnownLicense.APACHE_2_0)
-        assertThat(copy.license).isEqualTo(KnownLicense.APACHE_2_0)
+    fun `requires at least one license`() {
+        assertThatThrownBy { ResolvedDependency(Coordinates("g", "n", "v"), emptyList()) }
+            .isInstanceOf(IllegalArgumentException::class.java)
+    }
+
+    @Test
+    fun `copy with different licenses`() {
+        val original = ResolvedDependency(Coordinates("g", "n", "v"), listOf(KnownLicense.MIT))
+        val copy = original.copy(licenses = listOf(KnownLicense.APACHE_2_0))
+        assertThat(copy.licenses).containsExactly(KnownLicense.APACHE_2_0)
         assertThat(copy.coordinates).isEqualTo(original.coordinates)
     }
 }

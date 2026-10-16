@@ -134,6 +134,69 @@ class DependencyReportTest {
     }
 
     @Test
+    fun `component with properties`() {
+        val json = """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "lib",
+                  "version": "1.0.0",
+                  "properties": [
+                    { "name": "cdx:maven:package:test", "value": "false" },
+                    { "name": "cdx:maven:package:metadata-unresolved", "value": "pom-unresolved" }
+                  ]
+                }
+              ]
+            }
+        """.trimIndent()
+        val bom = objectMapper.readValue(json, DependencyReport.Bom::class.java)
+        val properties = bom.components[0].properties!!
+        assertThat(properties).hasSize(2)
+        assertThat(properties[1].name).isEqualTo("cdx:maven:package:metadata-unresolved")
+        assertThat(properties[1].value).isEqualTo("pom-unresolved")
+    }
+
+    @Test
+    fun `component with null properties`() {
+        val json = """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "lib",
+                  "version": "1.0.0"
+                }
+              ]
+            }
+        """.trimIndent()
+        val bom = objectMapper.readValue(json, DependencyReport.Bom::class.java)
+        assertThat(bom.components[0].properties).isNull()
+    }
+
+    @Test
+    fun `component property without name`() {
+        val json = """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "lib",
+                  "version": "1.0.0",
+                  "properties": [
+                    { "value": "orphan" }
+                  ]
+                }
+              ]
+            }
+        """.trimIndent()
+        val bom = objectMapper.readValue(json, DependencyReport.Bom::class.java)
+        val property = bom.components[0].properties!![0]
+        assertThat(property.name).isNull()
+        assertThat(property.value).isEqualTo("orphan")
+    }
+
+    @Test
     fun `component ignores unknown fields`() {
         val json = """
             {
