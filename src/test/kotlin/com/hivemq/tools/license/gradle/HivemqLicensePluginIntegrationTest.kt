@@ -133,6 +133,44 @@ class HivemqLicensePluginIntegrationTest {
             .contains("org.slf4j:slf4j-api")
     }
 
+    // --- Unresolved metadata in the failure message ---
+
+    @Test
+    fun `failure says why the metadata of a dependency without a POM is incomplete`() {
+        // a repository that serves the jar alone, so the CycloneDX plugin finds no POM to read licenses from
+        val artifactDir = projectDir.resolve("repo/com/example/pomless-lib/1.0.0")
+        artifactDir.mkdirs()
+        ZipOutputStream(artifactDir.resolve("pomless-lib-1.0.0.jar").outputStream()).use { zip ->
+            zip.putNextEntry(ZipEntry("META-INF/MANIFEST.MF"))
+            zip.write("Manifest-Version: 1.0\n".toByteArray())
+            zip.closeEntry()
+        }
+        projectDir.resolve("settings.gradle.kts").writeText(settingsWithLocalBuildCache())
+        projectDir.resolve("build.gradle.kts").writeText(
+            """
+            plugins {
+                java
+                id("com.hivemq.tools.license")
+            }
+            repositories {
+                maven {
+                    url = uri("repo")
+                    metadataSources { artifact() }
+                }
+            }
+            dependencies {
+                implementation("com.example:pomless-lib:1.0.0")
+            }
+            """.trimIndent()
+        )
+
+        val result = cachedRunner("checkApprovedLicenses").buildAndFail()
+
+        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.output)
+            .contains("No license found for 'com.example:pomless-lib:1.0.0', its Maven metadata is incomplete (pom-unresolved)")
+    }
+
     // --- BOM origin in the failure message ---
 
     /**
@@ -210,6 +248,18 @@ class HivemqLicensePluginIntegrationTest {
     // Supplied by the build (see build.gradle.kts).
     private fun testProperty(name: String) = requireNotNull(System.getProperty(name)) {
         "System property '$name' is not set; run the tests through Gradle."
+    }
+
+    @Test
+    fun `failure names no origin when the BOM task is excluded from the build`() {
+        setupWithUnlicensedDependency()
+        cachedRunner("checkApprovedLicenses").buildAndFail()
+
+        val result = cachedRunner("checkApprovedLicenses", "-x", "cyclonedxDirectBom").buildAndFail()
+
+        assertThat(result.task(":cyclonedxDirectBom")).isNull()
+        assertThat(result.output).contains("'${bomPath(projectDir)}':")
+        assertThat(result.output).doesNotContain("'${bomPath(projectDir)}' (")
     }
 
     @Test

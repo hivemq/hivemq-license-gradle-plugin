@@ -31,7 +31,10 @@ import java.time.Duration
 
 class BomTaskOutcomeServiceTest {
 
+    private val eventWait = Duration.ofMillis(200)
+
     private val service = object : BomTaskOutcomeService() {
+        override val eventWait = this@BomTaskOutcomeServiceTest.eventWait
         override fun getParameters(): BuildServiceParameters.None = throw UnsupportedOperationException()
     }
 
@@ -72,10 +75,11 @@ class BomTaskOutcomeServiceTest {
         override fun getExecutionReasons() = emptyList<String>()
     }
 
-    private fun originWithin(limit: Duration, taskPath: String): String? {
+    /** The origin of the BOM task, which must be answered without waiting for an event. */
+    private fun bomTaskOriginWithoutWaiting(): String? {
         val start = System.nanoTime()
-        val origin = service.originOf(taskPath)
-        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(limit)
+        val origin = service.originOf(":cyclonedxDirectBom")
+        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(eventWait.dividedBy(2))
         return origin
     }
 
@@ -83,7 +87,7 @@ class BomTaskOutcomeServiceTest {
     fun `an executed task is recorded before its finish event arrives`() {
         service.recordExecuted(":cyclonedxDirectBom")
 
-        assertThat(originWithin(Duration.ofMillis(500), ":cyclonedxDirectBom")).isEqualTo("produced by this build")
+        assertThat(bomTaskOriginWithoutWaiting()).isEqualTo("produced by this build")
     }
 
     @Test
@@ -91,28 +95,28 @@ class BomTaskOutcomeServiceTest {
         // Gradle reports a task restored from the cache as up to date as well
         service.onFinish(taskFinished(":cyclonedxDirectBom", success(fromCache = true, upToDate = true)))
 
-        assertThat(originWithin(Duration.ofMillis(500), ":cyclonedxDirectBom")).isEqualTo("restored from the build cache")
+        assertThat(bomTaskOriginWithoutWaiting()).isEqualTo("restored from the build cache")
     }
 
     @Test
     fun `an up-to-date task is known from its finish event`() {
         service.onFinish(taskFinished(":cyclonedxDirectBom", success(fromCache = false, upToDate = true)))
 
-        assertThat(originWithin(Duration.ofMillis(500), ":cyclonedxDirectBom")).isEqualTo("unchanged since an earlier build")
+        assertThat(bomTaskOriginWithoutWaiting()).isEqualTo("unchanged since an earlier build")
     }
 
     @Test
     fun `a skipped task has no origin and does not make the caller wait`() {
         service.onFinish(taskFinished(":cyclonedxDirectBom", skipped()))
 
-        assertThat(originWithin(Duration.ofMillis(500), ":cyclonedxDirectBom")).isNull()
+        assertThat(bomTaskOriginWithoutWaiting()).isNull()
     }
 
     @Test
     fun `a failed task has no origin and does not make the caller wait`() {
         service.onFinish(taskFinished(":cyclonedxDirectBom", failure()))
 
-        assertThat(originWithin(Duration.ofMillis(500), ":cyclonedxDirectBom")).isNull()
+        assertThat(bomTaskOriginWithoutWaiting()).isNull()
     }
 
     @Test
@@ -121,7 +125,7 @@ class BomTaskOutcomeServiceTest {
 
         assertThat(service.originOf(":cyclonedxDirectBom")).isNull()
 
-        assertThat(Duration.ofNanos(System.nanoTime() - start)).isGreaterThanOrEqualTo(Duration.ofSeconds(2))
+        assertThat(Duration.ofNanos(System.nanoTime() - start)).isGreaterThanOrEqualTo(eventWait)
     }
 
     @Test
