@@ -24,7 +24,7 @@ Gradle plugin that generates and validates third-party license reports from Cycl
 - `KnownLicense` enum entries are sorted alphabetically
 - `LICENSE_ORDER` defines priority (not alphabetical) — higher priority = earlier in list
 - Tests are organized by section with comment headers (e.g., `// --- Section ---`) and sorted alphabetically within sections
-- Test classes: `LicenseTest`, `LicenseResolverMetadataTest`, `LicenseResolverConvertLicenseTest`, `LicenseResolverChooseLicenseTest`
+- Test classes touched when adding a license: `LicenseTest`, `LicenseResolverMetadataTest`, `LicenseResolverConvertLicenseTest`, `LicenseResolverChooseLicenseTest`; the resolver, the build service and the plugin wiring have their own (`LicenseResolverResolveLicensesTest`, `BomTaskOutcomeServiceTest`, `HivemqLicensePluginIntegrationTest`)
 
 ## Adding a New License
 

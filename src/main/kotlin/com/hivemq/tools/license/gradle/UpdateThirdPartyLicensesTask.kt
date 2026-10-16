@@ -43,14 +43,14 @@ abstract class UpdateThirdPartyLicensesTask : LicenseResolvingTask() {
         val resultHtmlFile = outputDirectory.get().asFile.resolve("${prefix}licenses.html")
 
         check(productName.isNotBlank()) { "Project name is blank" }
+        // resolved before the previous reports go, so a failure leaves them in place
+        val entries = resolveLicenses()
         if (resultPlaintextFile.exists()) {
             check(resultPlaintextFile.delete()) { "Could not delete file '$resultPlaintextFile'" }
         }
         if (resultHtmlFile.exists()) {
             check(resultHtmlFile.delete()) { "Could not delete file '$resultHtmlFile'" }
         }
-
-        val entries = resolveLicenses()
 
         val licensePlaintext = StringBuilder()
         val licenseHtml = StringBuilder()
@@ -114,26 +114,31 @@ abstract class UpdateThirdPartyLicensesTask : LicenseResolvingTask() {
         """.trimIndent()
     )
 
-    // a dependency under several licenses at once is listed as "MIT AND ISC", with one URL per license
+    // a dependency under several licenses at once is listed as "MIT AND ISC", with one URL per license that has one
     private fun StringBuilder.addLinePlaintext(coordinates: Coordinates, licenses: List<KnownLicense>) =
         //@formatter:off
-        append(" ${"%-74s".format(coordinates.moduleId)} | ${"%-41s".format(coordinates.version)} | ${"%-13s".format(licenses.joinToString(" AND ") { it.id })} | ${licenses.joinToString(", ") { it.url }}\n")
+        append(" ${"%-74s".format(coordinates.moduleId)} | ${"%-41s".format(coordinates.version)} | ${"%-13s".format(licenses.joinToString(" AND ") { it.id })} | ${licenses.urls().joinToString(", ")}\n")
         //@formatter:on
 
-    // the separator carries the "|" margin of the template, so every link lands on its own indented line
-    private fun StringBuilder.addLineHtml(coordinates: Coordinates, licenses: List<KnownLicense>) = append(
-        """
-        |    <tr>
-        |        <td>${coordinates.moduleId}</td>
-        |        <td>${coordinates.version}</td>
-        |        <td>${licenses.joinToString(" AND ") { it.id }}</td>
-        |        <td>
-        |            ${licenses.joinToString("<br>\n|            ") { """<a href="${it.url}">${it.url}</a>""" }}
-        |        </td>
-        |    </tr>
-        |
-        """.trimMargin()
-    )
+    private fun List<KnownLicense>.urls() = map { it.url }.filter { it.isNotBlank() }
+
+    // every link on its own line, and a license without a URL leaves the cell empty
+    private fun StringBuilder.addLineHtml(coordinates: Coordinates, licenses: List<KnownLicense>) {
+        val links = licenses.urls().map { """<a href="$it">$it</a>""" }
+        val lines = listOf(
+            "    <tr>",
+            "        <td>${coordinates.moduleId}</td>",
+            "        <td>${coordinates.version}</td>",
+            "        <td>${licenses.joinToString(" AND ") { it.id }}</td>",
+            "        <td>",
+        ) + links.mapIndexed { index, link ->
+            "            $link" + if (index < links.lastIndex) "<br>" else ""
+        } + listOf(
+            "        </td>",
+            "    </tr>",
+        )
+        append(lines.joinToString("\n", postfix = "\n"))
+    }
 
     private fun StringBuilder.addFooterPlaintext() = append(
         """

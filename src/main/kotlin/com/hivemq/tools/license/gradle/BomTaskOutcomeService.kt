@@ -36,7 +36,7 @@ import java.util.concurrent.TimeoutException
  * sides. A `doFirst` action on the BOM task calls [recordExecuted] synchronously, which only happens when the task
  * actually runs. For a task Gradle skipped, only the task finish event tells whether it was restored from the cache or
  * up to date, and Gradle delivers those events asynchronously, "some time soon" after the task completed. [originOf]
- * therefore waits a bounded moment for the event and gives up without an origin if it does not arrive.
+ * therefore waits [eventWait] for the event and gives up without an origin if it does not arrive.
  *
  * Tasks are keyed by their path in the whole build tree, since every build of a composite has its own
  * `:cyclonedxDirectBom` and the finish events of all of them reach every listener.
@@ -44,6 +44,9 @@ import java.util.concurrent.TimeoutException
 abstract class BomTaskOutcomeService : BuildService<BuildServiceParameters.None>, OperationCompletionListener {
 
     private val origins = ConcurrentHashMap<String, CompletableFuture<String?>>()
+
+    /** How long [originOf] waits for the task finish event of a task that was skipped. */
+    protected open val eventWait: Duration = Duration.ofSeconds(2)
 
     private fun originFuture(taskPath: String) = origins.computeIfAbsent(taskPath) { CompletableFuture() }
 
@@ -68,9 +71,9 @@ abstract class BomTaskOutcomeService : BuildService<BuildServiceParameters.None>
         )
     }
 
-    /** How the task at [taskPath] obtained its outputs, or null if that is not known within [EVENT_WAIT]. */
+    /** How the task at [taskPath] obtained its outputs, or null if that is not known within [eventWait]. */
     fun originOf(taskPath: String): String? = try {
-        originFuture(taskPath).get(EVENT_WAIT.toMillis(), TimeUnit.MILLISECONDS)
+        originFuture(taskPath).get(eventWait.toMillis(), TimeUnit.MILLISECONDS)
     } catch (_: TimeoutException) {
         null
     }
@@ -85,6 +88,5 @@ abstract class BomTaskOutcomeService : BuildService<BuildServiceParameters.None>
         val NAME = "hivemqLicenseBomTaskOutcomes-" + UUID.randomUUID()
 
         private const val PRODUCED_BY_THIS_BUILD = "produced by this build"
-        private val EVENT_WAIT: Duration = Duration.ofSeconds(2)
     }
 }
