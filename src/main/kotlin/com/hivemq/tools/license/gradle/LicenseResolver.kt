@@ -96,17 +96,30 @@ object LicenseResolver {
         val objectMapper = ObjectMapper()
         val tree = objectMapper.readTree(dependencyLicenseFile)
         val source = LicenseSource(dependencyLicenseFile, dependencyLicenseOrigin)
+        // an override naming an unknown license is a problem of its own, and its module is not resolved any further
+        val invalidOverrides = overriddenLicenses.filterValues { it !in SPDX_ID_MAP }
+        val problems = invalidOverrides.map { (moduleId, spdxId) ->
+            "Overridden license '$spdxId' for '$moduleId' is not a known SPDX license ID"
+        }.toMutableList()
         if (!tree.has("components")) {
-            return resolvePnpmLicenses(source, tree, ignoredGroupPrefixes, allowedArtifacts, overriddenLicenses)
+            return resolvePnpmLicenses(
+                source,
+                tree,
+                ignoredGroupPrefixes,
+                allowedArtifacts,
+                overriddenLicenses,
+                invalidOverrides.keys,
+                problems,
+            )
         }
         val bom = objectMapper.treeToValue(tree, DependencyReport.Bom::class.java)
         val entries = TreeMap<String, ResolvedDependency>()
-        val problems = mutableListOf<String>()
         for (component in bom.components) {
             val group = component.group ?: continue
             val coordinates = Coordinates(group, component.name, component.version)
             if (shouldIgnore(coordinates, ignoredGroupPrefixes, allowedArtifacts)) continue
-            val resolvedLicense = resolveOverriddenOrBuiltIn(coordinates, overriddenLicenses)
+            if (coordinates.moduleId in invalidOverrides) continue
+            val resolvedLicense = resolveOverriddenOrBuiltIn(coordinates.moduleId, overriddenLicenses)
             if (resolvedLicense != null) {
                 entries[coordinates.moduleId] = ResolvedDependency(coordinates, listOf(resolvedLicense))
                 continue
@@ -120,7 +133,9 @@ object LicenseResolver {
                         LicenseOption((it as? KnownLicense)?.let(::listOf), it.fullName)
                     }
 
-                    expression != null -> LicenseOption(evaluateExpression(expression), expression)
+                    expression != null -> evaluateExpression(expression).let { result ->
+                        LicenseOption(result.licenses, result.describe(expression))
+                    }
                     else -> null
                 }
             }
@@ -137,9 +152,10 @@ object LicenseResolver {
             entries[coordinates.moduleId] = ResolvedDependency(coordinates, chosenLicenses)
         }
         for ((moduleId, version) in excludedDependencies) {
+            if (moduleId in invalidOverrides) continue
             val parts = moduleId.split(":")
             val coordinates = Coordinates(parts[0], parts[1], version)
-            val resolvedLicense = resolveOverriddenOrBuiltIn(coordinates, overriddenLicenses)
+            val resolvedLicense = resolveOverriddenOrBuiltIn(moduleId, overriddenLicenses)
             if (resolvedLicense == null) {
                 problems += "Excluded dependency '$coordinates' has no license defined in overriddenLicenses or BUILT_IN_LICENSES"
                 continue
@@ -184,9 +200,10 @@ object LicenseResolver {
         ignoredGroupPrefixes: Set<String>,
         allowedArtifacts: Set<String>,
         overriddenLicenses: Map<String, String>,
+        invalidOverrides: Set<String>,
+        problems: MutableList<String>,
     ): TreeMap<String, ResolvedDependency> {
         val entries = TreeMap<String, ResolvedDependency>()
-        val problems = mutableListOf<String>()
         for ((_, packages) in tree.properties()) {
             for (pkg in packages) {
                 val name = pkg.get("name")?.asText() ?: continue
@@ -194,7 +211,8 @@ object LicenseResolver {
                 val spdxId = pkg.get("license")?.asText()
                 val coordinates = Coordinates("", name, version)
                 if (shouldIgnore(coordinates, ignoredGroupPrefixes, allowedArtifacts)) continue
-                val resolvedLicense = resolveOverriddenOrBuiltIn(coordinates, overriddenLicenses)
+                if (coordinates.moduleId in invalidOverrides) continue
+                val resolvedLicense = resolveOverriddenOrBuiltIn(coordinates.moduleId, overriddenLicenses)
                 if (resolvedLicense != null) {
                     entries[coordinates.moduleId] = ResolvedDependency(coordinates, listOf(resolvedLicense))
                     continue
@@ -203,12 +221,12 @@ object LicenseResolver {
                     problems += "No license found for '$coordinates'"
                     continue
                 }
-                val licenses = evaluateExpression(spdxId)
-                if (licenses == null) {
-                    problems += "License not on the approved list for '$coordinates': $spdxId"
+                val result = evaluateExpression(spdxId)
+                if (result.licenses == null) {
+                    problems += "License not on the approved list for '$coordinates': ${result.describe(spdxId)}"
                     continue
                 }
-                entries[coordinates.moduleId] = ResolvedDependency(coordinates, licenses)
+                entries[coordinates.moduleId] = ResolvedDependency(coordinates, result.licenses)
             }
         }
         failOnProblems(source, problems)
@@ -227,25 +245,21 @@ object LicenseResolver {
         }
     }
 
-    private fun resolveOverriddenOrBuiltIn(
-        coordinates: Coordinates,
-        overriddenLicenses: Map<String, String>,
-    ): KnownLicense? {
-        val overriddenSpdxId = overriddenLicenses[coordinates.moduleId]
-        if (overriddenSpdxId != null) {
-            return checkNotNull(SPDX_ID_MAP[overriddenSpdxId]) {
-                "Overridden license '$overriddenSpdxId' for '$coordinates' is not a known SPDX license ID"
-            }
-        }
-        return BUILT_IN_LICENSES[coordinates.moduleId]
-    }
+    // the caller has already set aside modules whose override names an unknown license, so one here is a bug
+    private fun resolveOverriddenOrBuiltIn(moduleId: String, overriddenLicenses: Map<String, String>): KnownLicense? =
+        overriddenLicenses[moduleId]?.let { SPDX_ID_MAP.getValue(it) } ?: BUILT_IN_LICENSES[moduleId]
 
     // Evaluates an SPDX license expression such as "(CDDL-1.0 OR GPL-2.0-with-classpath-exception)" to the licenses
-    // that apply when it is satisfied, or null when it is not. "A OR B" is satisfied by any approved alternative, and
-    // the one with the fewest obligations is reported. "A AND B" needs every operand approved and reports all of them.
-    // AND binds tighter than OR, parentheses group, a license with a WITH exception is not approved as the license,
-    // and a malformed expression is never satisfied.
-    private fun evaluateExpression(expression: String): List<KnownLicense>? = SpdxExpression(expression).evaluate()
+    // that apply when it is satisfied, or to the reason when the expression itself is at fault. "A OR B" is satisfied
+    // by any approved alternative, and the one with the fewest obligations is reported. "A AND B" needs every operand
+    // approved and reports all of them. AND binds tighter than OR, parentheses group, a license with a WITH exception
+    // is not approved as the license, and a malformed expression is never satisfied.
+    private fun evaluateExpression(expression: String): ExpressionResult = SpdxExpression(expression).evaluate()
+
+    // the licenses an expression is satisfied by, or null with the reason when that is a fault of the expression
+    private class ExpressionResult(val licenses: List<KnownLicense>?, val problem: String? = null) {
+        fun describe(expression: String) = if (problem == null) expression else "$expression ($problem)"
+    }
 
     // Parses the expression into every way it can be satisfied, each one the licenses that then apply together, and
     // ranks them once the whole expression is read, so an alternative is never chosen before an enclosing AND adds
@@ -261,10 +275,15 @@ object LicenseResolver {
         private var candidates = 0
         private var depth = 0
 
-        fun evaluate(): List<KnownLicense>? {
+        fun evaluate(): ExpressionResult {
             val options = disjunction()
-            if (!wellFormed || !withinBudget || position != tokens.size) return null
-            return chooseOption(options.map { option -> option.sortedBy { LICENSE_ORDER.indexOf(it) } })
+            return when {
+                !withinBudget -> ExpressionResult(null, "SPDX expression too complex to evaluate")
+                !wellFormed || position != tokens.size -> ExpressionResult(null, "malformed SPDX expression")
+                else -> ExpressionResult(
+                    chooseOption(options.map { option -> option.sortedBy { LICENSE_ORDER.indexOf(it) } })
+                )
+            }
         }
 
         // disjunction := conjunction ("OR" conjunction)*

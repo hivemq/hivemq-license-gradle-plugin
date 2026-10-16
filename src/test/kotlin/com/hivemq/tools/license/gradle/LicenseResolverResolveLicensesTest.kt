@@ -35,6 +35,24 @@ class LicenseResolverResolveLicensesTest {
         return file
     }
 
+    /** A BOM with one component, `com.example:expr-lib:1.0.0`, declaring its license as [expression]. */
+    private fun writeExpressionBom(expression: String) = writeBom(
+        """
+        {
+          "components": [
+            {
+              "group": "com.example",
+              "name": "expr-lib",
+              "version": "1.0.0",
+              "licenses": [
+                { "expression": "$expression" }
+              ]
+            }
+          ]
+        }
+        """.trimIndent()
+    )
+
     @Test
     fun `resolves single dependency with SPDX ID`() {
         val bom = writeBom(
@@ -349,6 +367,43 @@ class LicenseResolverResolveLicensesTest {
     }
 
     @Test
+    fun `reports an unknown overridden license together with the other problems`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "overridden-lib",
+                  "version": "1.0.0",
+                  "licenses": []
+                },
+                {
+                  "group": "com.example",
+                  "name": "no-license-lib",
+                  "version": "1.0.0",
+                  "licenses": []
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(
+                bom,
+                defaultIgnoredPrefixes,
+                defaultAllowedArtifacts,
+                overriddenLicenses = mapOf("com.example:overridden-lib" to "UNKNOWN-LICENSE"),
+            )
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("2 license problems found in '${bom.absolutePath}':")
+            .hasMessageContaining("Overridden license 'UNKNOWN-LICENSE' for 'com.example:overridden-lib' is not a known SPDX license ID")
+            .hasMessageNotContaining("overridden-lib:1.0.0")
+            .hasMessageContaining("No license found for 'com.example:no-license-lib:1.0.0'")
+    }
+
+    @Test
     fun `built-in license resolves when component has no licenses`() {
         val bom = writeBom(
             """
@@ -503,6 +558,7 @@ class LicenseResolverResolveLicensesTest {
                 excludedDependencies = mapOf("org.jline:jline" to "4.0.2"),
             )
         }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("1 license problem found in")
             .hasMessageContaining("Overridden license 'INVALID-LICENSE'")
             .hasMessageContaining("is not a known SPDX license ID")
     }
@@ -642,22 +698,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `resolves an SPDX conjunction when every license is approved`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT AND ISC" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT AND ISC")
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
@@ -666,22 +707,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX conjunction with an unapproved license`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT AND GPL-3.0-only" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT AND GPL-3.0-only")
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -691,22 +717,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `binds AND tighter than OR in an SPDX expression`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "GPL-3.0-only OR MIT AND ISC" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("GPL-3.0-only OR MIT AND ISC")
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
@@ -715,22 +726,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX conjunction whose grouped alternative is approved but whose other operand is not`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "(GPL-3.0-only OR MIT) AND GPL-2.0-only" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("(GPL-3.0-only OR MIT) AND GPL-2.0-only")
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -740,22 +736,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `tolerates spaces inside the parentheses of an SPDX expression`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "( MIT OR Apache-2.0 )" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("( MIT OR Apache-2.0 )")
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
@@ -764,22 +745,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX license with an exception`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "GPL-2.0-only WITH Classpath-exception-2.0" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("GPL-2.0-only WITH Classpath-exception-2.0")
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -789,22 +755,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `resolves an SPDX disjunction with an unapproved alternative`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "GPL-3.0-only OR MIT" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("GPL-3.0-only OR MIT")
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
@@ -813,22 +764,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX expression with a stray closing parenthesis`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT OR )" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT OR )")
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -838,22 +774,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX expression with an operator in place of a license`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT OR AND" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT OR AND")
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -863,22 +784,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX expression with a missing operand`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT OR" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT OR")
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -888,22 +794,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX expression with an unclosed parenthesis`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "(MIT OR Apache-2.0" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("(MIT OR Apache-2.0")
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -913,22 +804,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX expression with tokens after a complete expression`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT Apache-2.0" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT Apache-2.0")
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -938,22 +814,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `prefers the SPDX alternative with the fewest obligations`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "(Apache-2.0 AND ISC) OR MIT" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("(Apache-2.0 AND ISC) OR MIT")
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
@@ -962,22 +823,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `resolves an SPDX conjunction with a grouped disjunction`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT AND (ISC OR Apache-2.0)" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT AND (ISC OR Apache-2.0)")
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
@@ -986,22 +832,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `prefers the SPDX alternative with fewer licenses when obligations are equal`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "(Apache-2.0 AND MIT) OR MIT" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("(Apache-2.0 AND MIT) OR MIT")
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
@@ -1010,22 +841,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX expression with a parenthesis in place of an exception`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "Apache-2.0 OR MIT WITH (" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("Apache-2.0 OR MIT WITH (")
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -1035,22 +851,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX expression with a bare WITH`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT WITH" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT WITH")
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -1111,22 +912,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `ranks the alternatives of an SPDX expression only once it is complete`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT AND (Apache-2.0 OR MIT)" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT AND (Apache-2.0 OR MIT)")
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
@@ -1135,22 +921,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `ranks the alternatives of an SPDX expression with a shared operand once it is complete`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "ISC AND (MIT OR ISC)" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("ISC AND (MIT OR ISC)")
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
@@ -1159,22 +930,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX expression with an id outside the SPDX character set`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT OR ???" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT OR ???")
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -1184,22 +940,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX expression with a slash in place of an operator`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT OR MIT/ISC" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT OR MIT/ISC")
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -1209,22 +950,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `keeps only the alternatives of an SPDX expression that no smaller alternative covers`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "(Apache-2.0 OR MIT) AND (Apache-2.0 OR ISC) AND (Apache-2.0 OR BSD-3-Clause)" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("(Apache-2.0 OR MIT) AND (Apache-2.0 OR ISC) AND (Apache-2.0 OR BSD-3-Clause)")
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
@@ -1233,22 +959,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `resolves an SPDX license reference as unknown rather than malformed`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT OR DocumentRef-spdx:LicenseRef-custom" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT OR DocumentRef-spdx:LicenseRef-custom")
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
@@ -1257,22 +968,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `resolves an SPDX id with a plus suffix as unknown rather than malformed`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT OR GPL-2.0+" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT OR GPL-2.0+")
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
@@ -1281,22 +977,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX expression with a lone plus as an id`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT OR +" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT OR +")
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -1306,22 +987,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX expression with a doubled plus suffix`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT OR GPL-2.0-only++" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT OR GPL-2.0-only++")
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -1331,22 +997,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX expression with a colon as an exception id`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT OR MIT WITH :" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT OR MIT WITH :")
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -1359,22 +1010,7 @@ class LicenseResolverResolveLicensesTest {
         // eleven pairs of distinct approved licenses have 2048 ways to be satisfied, none covering another
         val ids = LicenseResolver.SPDX_ID_MAP.keys.filter { ' ' !in it }.take(22)
         val expression = ids.chunked(2).joinToString(" AND ") { (a, b) -> "($a OR $b)" }
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "$expression" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom(expression)
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -1384,22 +1020,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `matches SPDX ids in an expression regardless of case`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "mit AND isc" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("mit AND isc")
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
@@ -1408,22 +1029,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `ranks SPDX alternatives regardless of the case of their ids`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT OR apache-2.0" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT OR apache-2.0")
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
@@ -1432,22 +1038,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX license reference without a name`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT OR LicenseRef-" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT OR LicenseRef-")
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -1457,22 +1048,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX license reference with a plus suffix`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "MIT OR LicenseRef-custom+" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("MIT OR LicenseRef-custom+")
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -1487,22 +1063,7 @@ class LicenseResolverResolveLicensesTest {
         val ids = LicenseResolver.SPDX_ID_MAP.keys.filter { ' ' !in it }.take(20)
         val group = ids.chunked(2).joinToString(" AND ") { (a, b) -> "($a OR $b)" }
         val expression = "($group) AND ($group)"
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "$expression" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom(expression)
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
@@ -1512,22 +1073,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `resolves an SPDX expression nested in a few parentheses`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "(((MIT)))" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom("(((MIT)))")
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
@@ -1538,27 +1084,36 @@ class LicenseResolverResolveLicensesTest {
     fun `rejects an SPDX expression nested deeper than it evaluates`() {
         // deep enough to overflow the stack if every parenthesis were parsed by recursion
         val expression = "(".repeat(10_000) + "MIT" + ")".repeat(10_000)
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "expression": "$expression" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+        val bom = writeExpressionBom(expression)
 
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
         }.isInstanceOf(IllegalStateException::class.java)
-            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': $expression")
+            .hasMessageContaining(
+                "License not on the approved list for 'com.example:expr-lib:1.0.0': $expression (SPDX expression too complex to evaluate)"
+            )
+    }
+
+    @Test
+    fun `says when an SPDX expression is malformed`() {
+        val bom = writeExpressionBom("MIT OR )")
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:expr-lib:1.0.0': MIT OR ) (malformed SPDX expression)")
+    }
+
+    @Test
+    fun `says when an SPDX expression is too complex to evaluate`() {
+        val ids = LicenseResolver.SPDX_ID_MAP.keys.filter { ' ' !in it }.take(22)
+        val expression = ids.chunked(2).joinToString(" AND ") { (a, b) -> "($a OR $b)" }
+        val bom = writeExpressionBom(expression)
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining(": $expression (SPDX expression too complex to evaluate)")
     }
 
     @Test
@@ -1978,6 +1533,48 @@ class LicenseResolverResolveLicensesTest {
             LicenseResolver.resolveLicenses(report, emptySet(), emptySet())
         }.isInstanceOf(IllegalStateException::class.java)
             .hasMessageContaining("License not on the approved list for 'glued-pkg:1.0.0': MIT AND Public DomainOR GPL-3.0-only")
+    }
+
+    @Test
+    fun `pnpm says when a license expression is malformed`() {
+        val report = writeBom(
+            """
+            {
+              "bucket": [
+                { "name": "odd-pkg", "versions": ["1.0.0"], "license": "MIT OR )" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(report, emptySet(), emptySet())
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'odd-pkg:1.0.0': MIT OR ) (malformed SPDX expression)")
+    }
+
+    @Test
+    fun `pnpm reports an unknown overridden license and resolves the package no further`() {
+        val report = writeBom(
+            """
+            {
+              "MIT": [
+                { "name": "odd-pkg", "versions": ["1.0.0"], "license": "MIT" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(
+                report,
+                emptySet(),
+                emptySet(),
+                overriddenLicenses = mapOf("odd-pkg" to "NOT-A-LICENSE"),
+            )
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("1 license problem found in '${report.absolutePath}':")
+            .hasMessageContaining("Overridden license 'NOT-A-LICENSE' for 'odd-pkg' is not a known SPDX license ID")
     }
 
     @Test
