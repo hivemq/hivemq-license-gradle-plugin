@@ -16,13 +16,15 @@ Gradle plugin that generates and validates third-party license reports from Cycl
 - `src/main/kotlin/com/hivemq/tools/license/gradle/LicenseResolver.kt` — `LICENSE_ORDER` (priority-ordered), `BUILT_IN_LICENSES`, `SPDX_ID_MAP`, license resolution logic
 - `src/main/kotlin/com/hivemq/tools/license/gradle/HivemqLicenseExtension.kt` — Plugin extension configuration
 - `src/main/kotlin/com/hivemq/tools/license/gradle/HivemqLicensePlugin.kt` — Plugin entry point
+- `src/main/kotlin/com/hivemq/tools/license/gradle/LicenseResolvingTask.kt`, shared inputs of both tasks and the license resolution call
+- `src/main/kotlin/com/hivemq/tools/license/gradle/BomTaskOutcomeService.kt`, build service recording how the BOM task finished, so a failure can say where the BOM came from
 
 ## Conventions
 
 - `KnownLicense` enum entries are sorted alphabetically
 - `LICENSE_ORDER` defines priority (not alphabetical) — higher priority = earlier in list
 - Tests are organized by section with comment headers (e.g., `// --- Section ---`) and sorted alphabetically within sections
-- Test classes: `LicenseTest`, `LicenseResolverMetadataTest`, `LicenseResolverConvertLicenseTest`, `LicenseResolverChooseLicenseTest`
+- Test classes touched when adding a license: `LicenseTest`, `LicenseResolverMetadataTest`, `LicenseResolverConvertLicenseTest`, `LicenseResolverChooseLicenseTest`; the resolver, the build service and the plugin wiring have their own (`LicenseResolverResolveLicensesTest`, `BomTaskOutcomeServiceTest`, `HivemqLicensePluginIntegrationTest`)
 
 ## Adding a New License
 

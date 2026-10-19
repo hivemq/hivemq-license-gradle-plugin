@@ -19,8 +19,12 @@ import org.cyclonedx.gradle.CyclonedxDirectTask
 import org.cyclonedx.gradle.CyclonedxPlugin
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.gradle.build.event.BuildEventsListenerRegistry
+import javax.inject.Inject
 
-class HivemqLicensePlugin : Plugin<Project> {
+abstract class HivemqLicensePlugin @Inject constructor(
+    private val buildEventsListenerRegistry: BuildEventsListenerRegistry,
+) : Plugin<Project> {
 
     override fun apply(project: Project) {
         val extension = project.extensions.create("hivemqLicense", HivemqLicenseExtensionImpl::class.java)
@@ -70,7 +74,7 @@ class HivemqLicensePlugin : Plugin<Project> {
         }
 
         val resolvedExcludedDependencies = extension.excludedDependencies.map { excludedDeps ->
-            if (excludedDeps.isEmpty()) return@map emptyMap<String, String>()
+            if (excludedDeps.isEmpty()) return@map emptyMap()
             val runtimeClasspath = project.configurations.getByName("runtimeClasspath")
             val resolvedVersions = mutableMapOf<String, String>()
             runtimeClasspath.resolvedConfiguration.resolvedArtifacts.forEach { artifact ->
@@ -82,7 +86,7 @@ class HivemqLicensePlugin : Plugin<Project> {
             resolvedVersions.toMap()
         }
 
-        val cyclonedxDirectBom = project.tasks.named("cyclonedxDirectBom", CyclonedxDirectTask::class.java)
+        val cyclonedxDirectBom = project.tasks.named(BOM_TASK_NAME, CyclonedxDirectTask::class.java)
         cyclonedxDirectBom.configure {
             projectType.set(org.cyclonedx.model.Component.Type.APPLICATION)
             includeConfigs.set(
@@ -97,29 +101,54 @@ class HivemqLicensePlugin : Plugin<Project> {
         }
 
         val cyclonedxJsonOutput = cyclonedxDirectBom.flatMap { it.jsonOutput }
+        // The location alone carries no dependency on the task, so it can be read even when a consumer pointed
+        // dependencyLicense elsewhere and the BOM task does not run.
+        val cyclonedxJsonOutputPath =
+            cyclonedxDirectBom.flatMap { it.jsonOutput.locationOnly }.map { it.asFile.absolutePath }
+        // the task's path in the whole build tree, which is what task finish events carry
+        val bomTaskPath = "${project.buildTreePath.trimEnd(':')}:${cyclonedxDirectBom.name}"
 
-        project.tasks.register("checkApprovedLicenses", CheckApprovedLicensesTask::class.java).configure {
-            group = "hivemq license"
-            description = "Validates that all dependencies have approved licenses."
+        // The plugin is applied per project; Gradle registers the service and the listener once per provider.
+        val bomTaskOutcomes = project.gradle.sharedServices
+            .registerIfAbsent(BomTaskOutcomeService.NAME, BomTaskOutcomeService::class.java) {}
+        buildEventsListenerRegistry.onTaskCompletion(bomTaskOutcomes)
+        cyclonedxDirectBom.configure {
+            usesService(bomTaskOutcomes)
+            doFirst { bomTaskOutcomes.get().recordExecuted(bomTaskPath) }
+        }
+
+        fun LicenseResolvingTask.readLicensesFromBom() {
             projectName.set(extension.projectName)
             dependencyLicense.set(cyclonedxJsonOutput)
+            dependencyLicenseTaskPath.set(bomTaskPath)
+            dependencyLicenseTaskOutput.set(cyclonedxJsonOutputPath)
+            taskOutcomes.set(bomTaskOutcomes)
+            usesService(bomTaskOutcomes)
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
             allowedArtifacts.set(extension.allowedArtifacts)
             overriddenLicenses.set(extension.overriddenLicenses)
             excludedDependencies.set(resolvedExcludedDependencies)
+        }
+
+        project.tasks.register("checkApprovedLicenses", CheckApprovedLicensesTask::class.java).configure {
+            group = TASK_GROUP
+            description = "Validates that all dependencies have approved licenses."
+            readLicensesFromBom()
         }
 
         project.tasks.register("updateThirdPartyLicenses", UpdateThirdPartyLicensesTask::class.java).configure {
-            group = "hivemq license"
+            group = TASK_GROUP
             description = "Generates third-party license reports from the CycloneDX BOM."
-            projectName.set(extension.projectName)
+            readLicensesFromBom()
             outputFileNamePrefix.convention("")
-            dependencyLicense.set(cyclonedxJsonOutput)
-            ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
-            allowedArtifacts.set(extension.allowedArtifacts)
-            overriddenLicenses.set(extension.overriddenLicenses)
-            excludedDependencies.set(resolvedExcludedDependencies)
             outputDirectory.set(extension.thirdPartyLicenseDirectory)
         }
+    }
+
+    companion object {
+        /** The CycloneDX task whose BOM the license tasks read. */
+        const val BOM_TASK_NAME = "cyclonedxDirectBom"
+
+        private const val TASK_GROUP = "hivemq license"
     }
 }

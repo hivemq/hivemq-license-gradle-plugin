@@ -15,18 +15,11 @@
  */
 package com.hivemq.tools.license.gradle
 
-import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
-import org.gradle.api.file.RegularFileProperty
-import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
-import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.OutputDirectory
-import org.gradle.api.tasks.PathSensitive
-import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 
 /**
@@ -34,29 +27,10 @@ import org.gradle.api.tasks.TaskAction
  * `licenses.html` files in the configured [outputDirectory].
  */
 @CacheableTask
-abstract class UpdateThirdPartyLicensesTask : DefaultTask() {
-
-    @get:Input
-    abstract val projectName: Property<String>
+abstract class UpdateThirdPartyLicensesTask : LicenseResolvingTask() {
 
     @get:Input
     abstract val outputFileNamePrefix: Property<String>
-
-    @get:InputFile
-    @get:PathSensitive(PathSensitivity.NONE)
-    abstract val dependencyLicense: RegularFileProperty
-
-    @get:Input
-    abstract val ignoredGroupPrefixes: SetProperty<String>
-
-    @get:Input
-    abstract val allowedArtifacts: SetProperty<String>
-
-    @get:Input
-    abstract val overriddenLicenses: MapProperty<String, String>
-
-    @get:Input
-    abstract val excludedDependencies: MapProperty<String, String>
 
     @get:OutputDirectory
     abstract val outputDirectory: DirectoryProperty
@@ -69,6 +43,8 @@ abstract class UpdateThirdPartyLicensesTask : DefaultTask() {
         val resultHtmlFile = outputDirectory.get().asFile.resolve("${prefix}licenses.html")
 
         check(productName.isNotBlank()) { "Project name is blank" }
+        // resolved before the previous reports go, so a failure leaves them in place
+        val entries = resolveLicenses()
         if (resultPlaintextFile.exists()) {
             check(resultPlaintextFile.delete()) { "Could not delete file '$resultPlaintextFile'" }
         }
@@ -76,21 +52,13 @@ abstract class UpdateThirdPartyLicensesTask : DefaultTask() {
             check(resultHtmlFile.delete()) { "Could not delete file '$resultHtmlFile'" }
         }
 
-        val entries = LicenseResolver.resolveLicenses(
-            dependencyLicenseFile = dependencyLicense.get().asFile.absoluteFile,
-            ignoredGroupPrefixes = ignoredGroupPrefixes.get(),
-            allowedArtifacts = allowedArtifacts.get(),
-            overriddenLicenses = overriddenLicenses.get(),
-            excludedDependencies = excludedDependencies.get(),
-        )
-
         val licensePlaintext = StringBuilder()
         val licenseHtml = StringBuilder()
         licensePlaintext.addHeaderPlaintext(productName)
         licenseHtml.addHeaderHtml(productName)
-        for ((coordinates, chosenLicense) in entries.values) {
-            licensePlaintext.addLinePlaintext(coordinates, chosenLicense)
-            licenseHtml.addLineHtml(coordinates, chosenLicense)
+        for ((coordinates, licenses) in entries.values) {
+            licensePlaintext.addLinePlaintext(coordinates, licenses)
+            licenseHtml.addLineHtml(coordinates, licenses)
         }
         licensePlaintext.addFooterPlaintext()
         licenseHtml.addFooterHtml()
@@ -146,24 +114,31 @@ abstract class UpdateThirdPartyLicensesTask : DefaultTask() {
         """.trimIndent()
     )
 
-    private fun StringBuilder.addLinePlaintext(coordinates: Coordinates, license: KnownLicense) =
+    // a dependency under several licenses at once is listed as "MIT AND ISC", with one URL per license that has one
+    private fun StringBuilder.addLinePlaintext(coordinates: Coordinates, licenses: List<KnownLicense>) =
         //@formatter:off
-        append(" ${"%-74s".format(coordinates.moduleId)} | ${"%-41s".format(coordinates.version)} | ${"%-13s".format(license.id)} | ${license.url}\n")
+        append(" ${"%-74s".format(coordinates.moduleId)} | ${"%-41s".format(coordinates.version)} | ${"%-13s".format(licenses.joinToString(" AND ") { it.id })} | ${licenses.urls().joinToString(", ")}\n")
         //@formatter:on
 
-    private fun StringBuilder.addLineHtml(coordinates: Coordinates, license: KnownLicense) = append(
-        """
-        |    <tr>
-        |        <td>${coordinates.moduleId}</td>
-        |        <td>${coordinates.version}</td>
-        |        <td>${license.id}</td>
-        |        <td>
-        |            <a href="${license.url}">${license.url}</a>
-        |        </td>
-        |    </tr>
-        |
-        """.trimMargin()
-    )
+    private fun List<KnownLicense>.urls() = map { it.url }.filter { it.isNotBlank() }
+
+    // every link on its own line, and a license without a URL leaves the cell empty
+    private fun StringBuilder.addLineHtml(coordinates: Coordinates, licenses: List<KnownLicense>) {
+        val links = licenses.urls().map { """<a href="$it">$it</a>""" }
+        val lines = listOf(
+            "    <tr>",
+            "        <td>${coordinates.moduleId}</td>",
+            "        <td>${coordinates.version}</td>",
+            "        <td>${licenses.joinToString(" AND ") { it.id }}</td>",
+            "        <td>",
+        ) + links.mapIndexed { index, link ->
+            "            $link" + if (index < links.lastIndex) "<br>" else ""
+        } + listOf(
+            "        </td>",
+            "    </tr>",
+        )
+        append(lines.joinToString("\n", postfix = "\n"))
+    }
 
     private fun StringBuilder.addFooterPlaintext() = append(
         """

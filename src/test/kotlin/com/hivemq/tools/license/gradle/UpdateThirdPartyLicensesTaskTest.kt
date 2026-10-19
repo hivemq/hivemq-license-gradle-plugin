@@ -46,7 +46,7 @@ class UpdateThirdPartyLicensesTaskTest {
         bomDir.resolve("bom.json").writeText(json)
     }
 
-    private fun overrideDependencyLicense() {
+    private fun overrideDependencyLicense(reportDirectory: String = """layout.buildDirectory.dir("tmp/third-party-licenses")""") {
         projectDir.resolve("build.gradle.kts").writeText(
             """
             plugins {
@@ -54,7 +54,7 @@ class UpdateThirdPartyLicensesTaskTest {
                 id("com.hivemq.tools.license")
             }
             hivemqLicense {
-                thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+                thirdPartyLicenseDirectory.set($reportDirectory)
             }
             tasks.named<com.hivemq.tools.license.gradle.UpdateThirdPartyLicensesTask>("updateThirdPartyLicenses") {
                 dependencyLicense.set(file("build/reports/cyclonedx/bom.json"))
@@ -63,9 +63,9 @@ class UpdateThirdPartyLicensesTaskTest {
         )
     }
 
-    private fun gradleRunner(vararg args: String) = GradleRunner.create()
+    private fun gradleRunner() = GradleRunner.create()
         .withProjectDir(projectDir)
-        .withArguments(*args)
+        .withArguments("updateThirdPartyLicenses")
         .withPluginClasspath()
 
     // --- Plaintext output format ---
@@ -91,7 +91,7 @@ class UpdateThirdPartyLicensesTaskTest {
         )
         overrideDependencyLicense()
 
-        gradleRunner("updateThirdPartyLicenses").build()
+        gradleRunner().build()
 
         val plaintext = projectDir.resolve("build/tmp/third-party-licenses/licenses").readText()
         assertThat(plaintext)
@@ -125,14 +125,70 @@ class UpdateThirdPartyLicensesTaskTest {
         )
         overrideDependencyLicense()
 
-        gradleRunner("updateThirdPartyLicenses").build()
+        gradleRunner().build()
 
         val plaintext = projectDir.resolve("build/tmp/third-party-licenses/licenses").readText()
-        assertThat(plaintext)
-            .contains("com.google.guava:guava")
-            .contains("32.1.3-jre")
-            .contains("Apache-2.0")
-            .contains("https://spdx.org/licenses/Apache-2.0.html")
+        assertThat(plaintext).contains(
+            " com.google.guava:guava                                                     | 32.1.3-jre                                | Apache-2.0    | https://spdx.org/licenses/Apache-2.0.html\n"
+        )
+    }
+
+    @Test
+    fun `plaintext output lists every license of a dependency under several licenses at once`() {
+        setup()
+        writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "dual-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT AND ISC" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        overrideDependencyLicense()
+
+        gradleRunner().build()
+
+        val plaintext = projectDir.resolve("build/tmp/third-party-licenses/licenses").readText()
+        assertThat(plaintext).contains(
+            " com.example:dual-lib                                                       | 1.0.0                                     | MIT AND ISC   | https://spdx.org/licenses/MIT.html, https://spdx.org/licenses/ISC.html\n"
+        )
+    }
+
+    @Test
+    fun `plaintext output leaves out the URL of a license that has none`() {
+        setup()
+        writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "free-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT AND Public Domain" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        overrideDependencyLicense()
+
+        gradleRunner().build()
+
+        val plaintext = projectDir.resolve("build/tmp/third-party-licenses/licenses").readText()
+        assertThat(plaintext).contains(
+            " com.example:free-lib                                                       | 1.0.0                                     | MIT AND Public Domain | https://spdx.org/licenses/MIT.html\n"
+        )
     }
 
     @Test
@@ -156,7 +212,7 @@ class UpdateThirdPartyLicensesTaskTest {
         )
         overrideDependencyLicense()
 
-        gradleRunner("updateThirdPartyLicenses").build()
+        gradleRunner().build()
 
         val plaintext = projectDir.resolve("build/tmp/third-party-licenses/licenses").readText()
         assertThat(plaintext).contains("legal@hivemq.com")
@@ -191,7 +247,7 @@ class UpdateThirdPartyLicensesTaskTest {
         )
         overrideDependencyLicense()
 
-        gradleRunner("updateThirdPartyLicenses").build()
+        gradleRunner().build()
 
         val plaintext = projectDir.resolve("build/tmp/third-party-licenses/licenses").readText()
         val guavaIndex = plaintext.indexOf("com.google.guava:guava")
@@ -222,7 +278,7 @@ class UpdateThirdPartyLicensesTaskTest {
         )
         overrideDependencyLicense()
 
-        gradleRunner("updateThirdPartyLicenses").build()
+        gradleRunner().build()
 
         val html = projectDir.resolve("build/tmp/third-party-licenses/licenses.html").readText()
         assertThat(html)
@@ -258,14 +314,135 @@ class UpdateThirdPartyLicensesTaskTest {
         )
         overrideDependencyLicense()
 
-        gradleRunner("updateThirdPartyLicenses").build()
+        gradleRunner().build()
 
         val html = projectDir.resolve("build/tmp/third-party-licenses/licenses.html").readText()
-        assertThat(html)
-            .contains("<td>com.google.guava:guava</td>")
-            .contains("<td>32.1.3-jre</td>")
-            .contains("<td>Apache-2.0</td>")
-            .contains("""<a href="https://spdx.org/licenses/Apache-2.0.html">""")
+        assertThat(html).contains(
+            """
+            |    <tr>
+            |        <td>com.google.guava:guava</td>
+            |        <td>32.1.3-jre</td>
+            |        <td>Apache-2.0</td>
+            |        <td>
+            |            <a href="https://spdx.org/licenses/Apache-2.0.html">https://spdx.org/licenses/Apache-2.0.html</a>
+            |        </td>
+            |    </tr>
+            |
+            """.trimMargin()
+        )
+    }
+
+    @Test
+    fun `html output lists every license of a dependency under several licenses at once`() {
+        setup()
+        writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "dual-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT AND ISC" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        overrideDependencyLicense()
+
+        gradleRunner().build()
+
+        val html = projectDir.resolve("build/tmp/third-party-licenses/licenses.html").readText()
+        assertThat(html).contains(
+            """
+            |    <tr>
+            |        <td>com.example:dual-lib</td>
+            |        <td>1.0.0</td>
+            |        <td>MIT AND ISC</td>
+            |        <td>
+            |            <a href="https://spdx.org/licenses/MIT.html">https://spdx.org/licenses/MIT.html</a><br>
+            |            <a href="https://spdx.org/licenses/ISC.html">https://spdx.org/licenses/ISC.html</a>
+            |        </td>
+            |    </tr>
+            |
+            """.trimMargin()
+        )
+    }
+
+    @Test
+    fun `html output leaves out the link of a license that has none`() {
+        setup()
+        writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "free-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "expression": "MIT AND Public Domain" }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        overrideDependencyLicense()
+
+        gradleRunner().build()
+
+        val html = projectDir.resolve("build/tmp/third-party-licenses/licenses.html").readText()
+        assertThat(html).contains(
+            """
+            |        <td>MIT AND Public Domain</td>
+            |        <td>
+            |            <a href="https://spdx.org/licenses/MIT.html">https://spdx.org/licenses/MIT.html</a>
+            |        </td>
+            """.trimMargin()
+        )
+        assertThat(html).doesNotContain("""href=""""")
+    }
+
+    @Test
+    fun `html output has an empty link cell for a license that has no URL`() {
+        setup()
+        writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "free-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "license": { "id": "Public Domain" } }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        overrideDependencyLicense()
+
+        gradleRunner().build()
+
+        val html = projectDir.resolve("build/tmp/third-party-licenses/licenses.html").readText()
+        assertThat(html).contains(
+            """
+            |    <tr>
+            |        <td>com.example:free-lib</td>
+            |        <td>1.0.0</td>
+            |        <td>Public Domain</td>
+            |        <td>
+            |        </td>
+            |    </tr>
+            |
+            """.trimMargin()
+        )
     }
 
     @Test
@@ -289,7 +466,7 @@ class UpdateThirdPartyLicensesTaskTest {
         )
         overrideDependencyLicense()
 
-        gradleRunner("updateThirdPartyLicenses").build()
+        gradleRunner().build()
 
         val html = projectDir.resolve("build/tmp/third-party-licenses/licenses.html").readText()
         assertThat(html).contains("test-project uses the following third party libraries")
@@ -316,7 +493,7 @@ class UpdateThirdPartyLicensesTaskTest {
         )
         overrideDependencyLicense()
 
-        gradleRunner("updateThirdPartyLicenses").build()
+        gradleRunner().build()
 
         val html = projectDir.resolve("build/tmp/third-party-licenses/licenses.html").readText()
         assertThat(html).contains("""<a href="mailto:legal@hivemq.com">legal@hivemq.com</a>""")
@@ -359,7 +536,7 @@ class UpdateThirdPartyLicensesTaskTest {
             """.trimIndent()
         )
 
-        gradleRunner("updateThirdPartyLicenses").build()
+        gradleRunner().build()
 
         val plaintext = projectDir.resolve("build/tmp/third-party-licenses/licenses").readText()
         assertThat(plaintext).contains("My Custom Product uses the following third party libraries")
@@ -375,7 +552,7 @@ class UpdateThirdPartyLicensesTaskTest {
         writeBom("""{ "components": [] }""")
         overrideDependencyLicense()
 
-        val result = gradleRunner("updateThirdPartyLicenses").build()
+        val result = gradleRunner().build()
 
         assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         val plaintext = projectDir.resolve("build/tmp/third-party-licenses/licenses").readText()
@@ -408,7 +585,7 @@ class UpdateThirdPartyLicensesTaskTest {
         )
         overrideDependencyLicense()
 
-        gradleRunner("updateThirdPartyLicenses").build()
+        gradleRunner().build()
 
         // Update BOM with a different dependency
         writeBom(
@@ -428,7 +605,7 @@ class UpdateThirdPartyLicensesTaskTest {
             """.trimIndent()
         )
 
-        gradleRunner("updateThirdPartyLicenses").build()
+        gradleRunner().build()
 
         val plaintext = projectDir.resolve("build/tmp/third-party-licenses/licenses").readText()
         assertThat(plaintext)
@@ -476,7 +653,7 @@ class UpdateThirdPartyLicensesTaskTest {
         )
         overrideDependencyLicense()
 
-        gradleRunner("updateThirdPartyLicenses").build()
+        gradleRunner().build()
 
         val plaintext = projectDir.resolve("build/tmp/third-party-licenses/licenses").readText()
         assertThat(plaintext)
@@ -512,9 +689,40 @@ class UpdateThirdPartyLicensesTaskTest {
         )
         overrideDependencyLicense()
 
-        val result = gradleRunner("updateThirdPartyLicenses").buildAndFail()
+        val result = gradleRunner().buildAndFail()
 
         assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.FAILED)
+    }
+
+    @Test
+    fun `keeps the existing reports when a license cannot be resolved`() {
+        setup()
+        writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "no-license-lib",
+                  "version": "1.0.0",
+                  "licenses": []
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        // checked-in reports live outside the build directory, where Gradle does not clean stale outputs
+        overrideDependencyLicense(reportDirectory = """layout.projectDirectory.dir("third-party-licenses")""")
+        val outputDir = projectDir.resolve("third-party-licenses")
+        outputDir.mkdirs()
+        outputDir.resolve("licenses").writeText("previous plaintext report")
+        outputDir.resolve("licenses.html").writeText("previous html report")
+
+        val result = gradleRunner().buildAndFail()
+
+        assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(outputDir.resolve("licenses")).hasContent("previous plaintext report")
+        assertThat(outputDir.resolve("licenses.html")).hasContent("previous html report")
     }
 
     // --- Custom ignored prefixes ---
@@ -562,7 +770,7 @@ class UpdateThirdPartyLicensesTaskTest {
             """.trimIndent()
         )
 
-        gradleRunner("updateThirdPartyLicenses").build()
+        gradleRunner().build()
 
         val plaintext = projectDir.resolve("build/tmp/third-party-licenses/licenses").readText()
         assertThat(plaintext)
