@@ -30,7 +30,6 @@ The `hivemqLicense` extension provides the following properties:
 | `ignoredGroupPrefixes`       | `SetProperty<String>`         | `["com.hivemq"]`                    | No       | Group ID prefixes to exclude from reports (internal dependencies)      |
 | `allowedArtifacts`           | `SetProperty<String>`         | `["com.hivemq:hivemq-mqtt-client"]` | No       | Specific artifacts to include despite matching an ignored group prefix |
 | `additionalConfigurations`   | `SetProperty<String>`         | `[]`                                | No       | Extra Gradle configurations to include in the CycloneDX BOM            |
-| `excludedDependencies`       | `SetProperty<String>`         | `[]`                                | No       | Dependencies (`group:artifact`) to exclude from CycloneDX scanning     |
 | `overriddenLicenses`         | `MapProperty<String, String>` | `{}`                                | No       | Override license SPDX IDs for specific artifacts                       |
 
 ### Advanced Example
@@ -41,7 +40,6 @@ hivemqLicense {
     thirdPartyLicenseDirectory = layout.buildDirectory.dir("third-party-licenses")
     ignoredGroupPrefixes.set(setOf("com.hivemq", "com.mycompany"))
     allowedArtifacts.set(setOf("com.hivemq:hivemq-mqtt-client", "com.mycompany:public-lib"))
-    excludedDependencies.set(setOf("org.jline:jline", "org.jline:jline-picocli"))
     overriddenLicenses.set(mapOf(
         "org.example:some-lib" to "Apache-2.0",
         "org.jline:jline" to "BSD-3-Clause",
@@ -185,27 +183,9 @@ Some well-known artifacts don't report license metadata in CycloneDX. The plugin
 These can be overridden using the `overriddenLicenses` configuration. An override must name an SPDX ID from the
 approved table exactly, and every override is checked, whether or not its module turns up in the BOM.
 
-## Excluded Dependencies
-
-Some dependencies are built with Maven 4, which produces POM files that the CycloneDX Gradle Plugin cannot parse ([CycloneDX #793](https://github.com/CycloneDX/cyclonedx-gradle-plugin/issues/793)). To work around this, you can exclude these dependencies from CycloneDX scanning using `excludedDependencies`.
-
-Excluded dependencies are removed from the configuration that CycloneDX scans (including their transitives). Their licenses are still included in the report, resolved from `overriddenLicenses` or `BUILT_IN_LICENSES`. The task fails if an excluded dependency has no license defined in either source.
-
-```kotlin
-hivemqLicense {
-    projectName = "My Application"
-    thirdPartyLicenseDirectory = layout.buildDirectory.dir("third-party-licenses")
-    excludedDependencies.set(setOf("org.jline:jline", "org.jline:jline-picocli"))
-    overriddenLicenses.set(mapOf(
-        "org.jline:jline" to "BSD-3-Clause",
-        "org.jline:jline-picocli" to "BSD-3-Clause",
-    ))
-}
-```
-
 ## How It Works
 
-1. The plugin applies the [CycloneDX Gradle Plugin](https://github.com/CycloneDX/cyclonedx-gradle-plugin) and configures it to generate a `bom.json` from the `runtimeClasspath` (or a filtered copy if `excludedDependencies` is set).
+1. The plugin applies the [CycloneDX Gradle Plugin](https://github.com/CycloneDX/cyclonedx-gradle-plugin) and configures it to generate a `bom.json` from the `runtimeClasspath`.
 2. Both tasks parse the generated BOM (or pnpm JSON) and resolve licenses using SPDX IDs, license name patterns, and URL-based matching.
 3. Dependencies matching the configured `ignoredGroupPrefixes` are excluded (unless listed in `allowedArtifacts`).
 
