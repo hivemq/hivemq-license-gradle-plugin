@@ -33,8 +33,6 @@ abstract class HivemqLicenseExtensionImpl @Inject constructor(
         .convention(setOf("com.hivemq:hivemq-mqtt-client"))
     override val additionalConfigurations: SetProperty<String> = objectFactory.setProperty(String::class.java)
         .convention(emptySet())
-    override val excludedDependencies: SetProperty<String> = objectFactory.setProperty(String::class.java)
-        .convention(emptySet())
     override val overriddenLicenses: MapProperty<String, String> =
         objectFactory.mapProperty(String::class.java, String::class.java).convention(emptyMap())
 }

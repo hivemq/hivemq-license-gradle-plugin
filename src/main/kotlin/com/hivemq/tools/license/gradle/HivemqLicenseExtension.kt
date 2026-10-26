@@ -26,6 +26,5 @@ interface HivemqLicenseExtension {
     val ignoredGroupPrefixes: SetProperty<String>
     val allowedArtifacts: SetProperty<String>
     val additionalConfigurations: SetProperty<String>
-    val excludedDependencies: SetProperty<String>
     val overriddenLicenses: MapProperty<String, String>
 }

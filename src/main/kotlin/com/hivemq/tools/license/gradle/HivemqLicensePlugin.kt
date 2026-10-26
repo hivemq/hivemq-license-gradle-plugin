@@ -50,20 +50,7 @@ abstract class HivemqLicensePlugin @Inject constructor(
             }
         }
 
-        val filteredConfigName = "hivemqLicenseRuntimeClasspath"
         project.afterEvaluate {
-            val excludedDependencies = extension.excludedDependencies.get()
-            if (excludedDependencies.isNotEmpty()) {
-                project.configurations.create(filteredConfigName) {
-                    isCanBeConsumed = false
-                    isCanBeResolved = true
-                    extendsFrom(project.configurations.getByName("runtimeClasspath"))
-                    for (dep in excludedDependencies) {
-                        val parts = dep.split(":")
-                        exclude(mapOf("group" to parts[0], "module" to parts[1]))
-                    }
-                }
-            }
             for (configName in extension.additionalConfigurations.get()) {
                 project.configurations.create("hivemqLicense_$configName") {
                     isCanBeConsumed = false
@@ -73,29 +60,12 @@ abstract class HivemqLicensePlugin @Inject constructor(
             }
         }
 
-        val resolvedExcludedDependencies = extension.excludedDependencies.map { excludedDeps ->
-            if (excludedDeps.isEmpty()) return@map emptyMap()
-            val runtimeClasspath = project.configurations.getByName("runtimeClasspath")
-            val resolvedVersions = mutableMapOf<String, String>()
-            runtimeClasspath.resolvedConfiguration.resolvedArtifacts.forEach { artifact ->
-                val moduleId = "${artifact.moduleVersion.id.group}:${artifact.moduleVersion.id.name}"
-                if (moduleId in excludedDeps) {
-                    resolvedVersions[moduleId] = artifact.moduleVersion.id.version
-                }
-            }
-            resolvedVersions.toMap()
-        }
-
         val cyclonedxDirectBom = project.tasks.named(BOM_TASK_NAME, CyclonedxDirectTask::class.java)
         cyclonedxDirectBom.configure {
             projectType.set(org.cyclonedx.model.Component.Type.APPLICATION)
             includeConfigs.set(
-                extension.excludedDependencies.zip(extension.additionalConfigurations) { excludedDeps, additionalConfigs ->
-                    val configs = mutableListOf(
-                        if (excludedDeps.isNotEmpty()) filteredConfigName else "runtimeClasspath"
-                    )
-                    configs.addAll(additionalConfigs.map { "hivemqLicense_$it" })
-                    configs.toList()
+                extension.additionalConfigurations.map { additionalConfigs ->
+                    listOf("runtimeClasspath") + additionalConfigs.map { "hivemqLicense_$it" }
                 }
             )
         }
@@ -127,7 +97,6 @@ abstract class HivemqLicensePlugin @Inject constructor(
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
             allowedArtifacts.set(extension.allowedArtifacts)
             overriddenLicenses.set(extension.overriddenLicenses)
-            excludedDependencies.set(resolvedExcludedDependencies)
         }
 
         project.tasks.register("checkApprovedLicenses", CheckApprovedLicensesTask::class.java).configure {

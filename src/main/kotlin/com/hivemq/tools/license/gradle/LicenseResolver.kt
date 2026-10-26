@@ -90,7 +90,6 @@ object LicenseResolver {
         ignoredGroupPrefixes: Set<String>,
         allowedArtifacts: Set<String>,
         overriddenLicenses: Map<String, String> = emptyMap(),
-        excludedDependencies: Map<String, String> = emptyMap(),
         dependencyLicenseOrigin: () -> String? = { null },
     ): TreeMap<String, ResolvedDependency> {
         val objectMapper = ObjectMapper()
@@ -150,17 +149,6 @@ object LicenseResolver {
                 continue
             }
             entries[coordinates.moduleId] = ResolvedDependency(coordinates, chosenLicenses)
-        }
-        for ((moduleId, version) in excludedDependencies) {
-            if (moduleId in invalidOverrides) continue
-            val parts = moduleId.split(":")
-            val coordinates = Coordinates(parts[0], parts[1], version)
-            val resolvedLicense = resolveOverriddenOrBuiltIn(moduleId, overriddenLicenses)
-            if (resolvedLicense == null) {
-                problems += "Excluded dependency '$coordinates' has no license defined in overriddenLicenses or BUILT_IN_LICENSES"
-                continue
-            }
-            entries[moduleId] = ResolvedDependency(coordinates, listOf(resolvedLicense))
         }
         failOnProblems(source, problems)
         return entries

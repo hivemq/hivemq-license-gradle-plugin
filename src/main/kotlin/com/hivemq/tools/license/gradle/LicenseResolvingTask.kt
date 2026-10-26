@@ -62,15 +62,11 @@ abstract class LicenseResolvingTask : DefaultTask() {
     @get:Input
     abstract val overriddenLicenses: MapProperty<String, String>
 
-    @get:Input
-    abstract val excludedDependencies: MapProperty<String, String>
-
     protected fun resolveLicenses(): TreeMap<String, ResolvedDependency> = LicenseResolver.resolveLicenses(
         dependencyLicenseFile = dependencyLicense.get().asFile.absoluteFile,
         ignoredGroupPrefixes = ignoredGroupPrefixes.get(),
         allowedArtifacts = allowedArtifacts.get(),
         overriddenLicenses = overriddenLicenses.get(),
-        excludedDependencies = excludedDependencies.get(),
         dependencyLicenseOrigin = ::dependencyLicenseOrigin,
     )
 
