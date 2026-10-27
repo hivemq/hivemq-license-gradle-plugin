@@ -16,43 +16,46 @@
 package com.hivemq.tools.license.gradle
 
 import org.assertj.core.api.Assertions.assertThat
-import org.gradle.api.Action
+import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.gradle.api.GradleException
 import org.gradle.process.ExecOperations
-import org.gradle.process.ExecResult
 import org.gradle.process.ExecSpec
 import org.gradle.testfixtures.ProjectBuilder
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.time.Instant
-import javax.inject.Inject
 
 class SbomTimestampSourceTest {
 
     @TempDir
     lateinit var projectDir: File
 
+    private val project by lazy { ProjectBuilder.builder().withProjectDir(projectDir).build() }
+
+    /** Runs the value source on Gradle's real exec, outside a build, with [adjust] applied to every git command. */
+    private fun obtain(sourceDateEpoch: String? = null, adjust: ExecSpec.() -> Unit = {}): Instant {
+        val sourceParameters = project.objects.newInstance(SbomTimestampSource.Parameters::class.java).apply {
+            this.sourceDateEpoch.set(sourceDateEpoch)
+            projectDirectory.set(projectDir)
+            projectPath.set(project.path)
+        }
+        return object : SbomTimestampSource() {
+            override val execOperations: ExecOperations = GitTestRepository.isolatedExec(project, projectDir, adjust)
+
+            override fun getParameters() = sourceParameters
+        }.obtain()
+    }
+
+    // --- Git ---
+
     @Test
     fun `falls back to the current time when git is not installed`() {
         // TestKit cannot take git away: with PATH set to an empty directory through withEnvironment, the Gradle daemon
         // still started git. So the value source runs here on Gradle's real exec, pointed at a binary that is missing.
         GitTestRepository.commitAt(projectDir, "2024-05-06T07:08:09Z", "file.txt")
-        val project = ProjectBuilder.builder().withProjectDir(projectDir).build()
-        val exec = project.objects.newInstance(ExecHolder::class.java).execOperations
-        val parameters = project.objects.newInstance(SbomTimestampSource.Parameters::class.java).apply {
-            projectDirectory.set(projectDir)
-            projectPath.set(project.path)
-        }
-        fun obtain(adjust: ExecSpec.() -> Unit) = object : SbomTimestampSource() {
-            override val execOperations: ExecOperations = AdjustedExec(exec) {
-                setEnvironment(GitTestRepository.isolatedEnv(projectDir))
-                adjust()
-            }
-
-            override fun getParameters() = parameters
-        }.obtain()
         // the same setup finds the commit while git can be started
-        assertThat(obtain {}).isEqualTo(Instant.parse("2024-05-06T07:08:09Z"))
+        assertThat(obtain()).isEqualTo(Instant.parse("2024-05-06T07:08:09Z"))
         val before = Instant.now()
 
         val timestamp = obtain { executable = projectDir.resolve("missing/git").absolutePath }
@@ -60,14 +63,25 @@ class SbomTimestampSourceTest {
         assertThat(timestamp).isBetween(before, Instant.now())
     }
 
-    abstract class ExecHolder @Inject constructor(val execOperations: ExecOperations)
+    // --- SOURCE_DATE_EPOCH ---
 
-    /** Gradle's exec with [adjust] applied to every command after the caller configured it. */
-    private class AdjustedExec(private val delegate: ExecOperations, private val adjust: ExecSpec.() -> Unit) :
-        ExecOperations by delegate {
-        override fun exec(action: Action<in ExecSpec>): ExecResult = delegate.exec {
-            action.execute(this)
-            adjust()
-        }
+    @Test
+    fun `a blank SOURCE_DATE_EPOCH counts as unset`() {
+        GitTestRepository.commitAt(projectDir, "2024-05-06T07:08:09Z", "file.txt")
+
+        val timestamp = obtain(sourceDateEpoch = " ")
+
+        assertThat(timestamp).isEqualTo(Instant.parse("2024-05-06T07:08:09Z"))
+    }
+
+    @Test
+    fun `a SOURCE_DATE_EPOCH that is not a number fails`() {
+        GitTestRepository.commitAt(projectDir, "2024-05-06T07:08:09Z", "file.txt")
+
+        assertThatThrownBy { obtain(sourceDateEpoch = "yesterday") }
+            .isInstanceOf(GradleException::class.java)
+            .hasMessage(
+                "SOURCE_DATE_EPOCH must be the number of seconds since 1970-01-01T00:00:00Z, but is 'yesterday'"
+            )
     }
 }

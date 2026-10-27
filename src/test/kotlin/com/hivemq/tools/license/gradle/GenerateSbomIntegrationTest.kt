@@ -34,8 +34,8 @@ class GenerateSbomIntegrationTest {
         .withEnvironment(GitTestRepository.isolatedEnv(projectDir))
 
     /** A project with two real dependencies; [hivemqLicense] goes into the extension block. */
-    private fun setup(hivemqLicense: String = "", settings: String = """rootProject.name = "sbom-project"""") {
-        projectDir.resolve("settings.gradle.kts").writeText(settings)
+    private fun setup(hivemqLicense: String = "") {
+        projectDir.resolve("settings.gradle.kts").writeText("""rootProject.name = "sbom-project"""")
         projectDir.resolve("build.gradle.kts").writeText(
             """
             import java.time.Instant
@@ -92,24 +92,23 @@ class GenerateSbomIntegrationTest {
     // --- Reproducibility ---
 
     @Test
-    fun `generateSbom is restored from the build cache`() {
-        setup(
-            fixedTimestamp,
-            settings = """
-                rootProject.name = "sbom-project"
-                buildCache {
-                    local {
-                        directory = file("build-cache")
-                    }
-                }
-            """.trimIndent()
-        )
-        gradleRunner("generateSbom", "--build-cache").build()
-        check(projectDir.resolve("build").deleteRecursively())
+    fun `replaces the CI references with the project's origin remote`() {
+        setup(fixedTimestamp)
+        GitTestRepository.commitAt(projectDir, "2024-05-06T07:08:09Z", "build.gradle.kts")
+        GitTestRepository.setRemote(projectDir, "git@github.com:hivemq/x.git")
+        val ci = mapOf("BUILD_URL" to "https://ci.example.com/job/1/", "GIT_URL" to "git@github.com:other/wrong.git")
 
-        val result = gradleRunner("generateSbom", "--build-cache").build()
+        gradleRunner("generateSbom").withEnvironment(GitTestRepository.isolatedEnv(projectDir, ci)).build()
 
-        assertThat(result.task(":generateSbom")?.outcome).isEqualTo(TaskOutcome.FROM_CACHE)
+        // CycloneDX wrote both references from the environment; on GitHub Actions its run URL wins over BUILD_URL
+        assertThat(projectDir.resolve("build/reports/cyclonedx-direct/bom.json").readText())
+            .contains("build-system")
+            .contains("other/wrong")
+        assertThat(sbom().readText())
+            .doesNotContain("build-system")
+            .doesNotContain("ci.example.com")
+            .doesNotContain("other/wrong")
+            .contains(""""url" : "https://github.com/hivemq/x"""")
     }
 
     @Test
@@ -145,7 +144,9 @@ class GenerateSbomIntegrationTest {
 
         val result = gradleRunner("generateSbom").build()
 
-        assertThat(result.output).contains("SBOM timestamp is the current time")
+        assertThat(result.output)
+            .contains("project ':', the SBOM timestamp is the current time")
+            .contains("exited with 128: fatal: not a git repository")
         assertThat(sbom()).exists()
     }
 
@@ -184,7 +185,7 @@ class GenerateSbomIntegrationTest {
     }
 
     @Test
-    fun `the configuration cache stores the commit time without a warning`() {
+    fun `the configuration cache reads the commit time on reuse without a warning`() {
         setup()
         GitTestRepository.commitAt(projectDir, "2024-05-06T07:08:09Z", "build.gradle.kts")
         // Compiles the build script first: compiling it during a configuration-cache run records system properties
@@ -194,15 +195,15 @@ class GenerateSbomIntegrationTest {
         val first = gradleRunner(*args).build()
         assertThat(first.output).doesNotContain("SBOM timestamp is the current time")
         assertThat(sbom().readText()).contains(""""timestamp" : "2024-05-06T07:08:09Z"""")
-        // the second run writes the file again from the stored entry
-        check(projectDir.resolve("build").deleteRecursively())
+        // git runs when the task runs, not when the entry is stored, so a later commit changes the timestamp
+        GitTestRepository.commitAt(projectDir, "2024-06-07T08:09:10Z", "second.txt")
 
         val second = gradleRunner(*args).build()
 
         assertThat(second.output)
             .contains("Reusing configuration cache")
             .doesNotContain("SBOM timestamp is the current time")
-        assertThat(sbom().readText()).contains(""""timestamp" : "2024-05-06T07:08:09Z"""")
+        assertThat(sbom().readText()).contains(""""timestamp" : "2024-06-07T08:09:10Z"""")
     }
 
     @Test
@@ -309,5 +310,7 @@ class GenerateSbomIntegrationTest {
         val result = gradleRunner(":app:compileJava").build()
 
         assertThat(result.task(":app:compileJava")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":lib:generateSbom")).isNull()
+        assertThat(result.task(":lib:cyclonedxDirectBom")).isNull()
     }
 }

@@ -62,6 +62,8 @@ class GenerateSbomTaskTest {
         )
     }
 
+    // --- Output ---
+
     @Test
     fun `fails naming the BOM file when the input is not a BOM`() {
         setup()
@@ -74,6 +76,21 @@ class GenerateSbomTaskTest {
             .contains("Cannot write an SBOM from '")
             .contains("bom.json': The BOM is not a JSON object")
     }
+
+    @Test
+    fun `writes the normalized BOM to the output file`() {
+        setup()
+
+        val result = gradleRunner().build()
+
+        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        val output = projectDir.resolve("build/sbom/app.cdx.json").readText()
+        assertThat(output)
+            .contains(""""timestamp" : "2026-01-02T03:04:05Z"""")
+            .doesNotContain("fcc72669-6094-47f1-a9fe-81e7c08e2d54")
+    }
+
+    // --- Up to date ---
 
     @Test
     fun `is up to date when nothing changed`() {
@@ -111,18 +128,5 @@ class GenerateSbomTaskTest {
 
         assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(projectDir.resolve("build/sbom/app.cdx.json").readText()).contains("2026-01-02T03:04:06Z")
-    }
-
-    @Test
-    fun `writes the normalized BOM to the output file`() {
-        setup()
-
-        val result = gradleRunner().build()
-
-        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
-        val output = projectDir.resolve("build/sbom/app.cdx.json").readText()
-        assertThat(output)
-            .contains(""""timestamp" : "2026-01-02T03:04:05Z"""")
-            .doesNotContain("fcc72669-6094-47f1-a9fe-81e7c08e2d54")
     }
 }

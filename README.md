@@ -87,16 +87,19 @@ Nothing ships it by itself: add it to a distribution or image where the product 
 `from(tasks.named("generateSbom")) { into("sbom") }` in a `Zip` task.
 
 The CycloneDX Gradle plugin writes a file that differs on every run (current time, random serial number, the CI run
-URL, the git remote in the form the clone used), which changes every archive that contains it and defeats the build
-cache. `generateSbom` writes the same bytes for the same dependencies and timestamp:
+URL, a `vcs` reference taken from the `GIT_URL` variable or from the directory Gradle was started in), which changes
+every archive that contains it and defeats the build cache. `generateSbom` writes the same bytes for the same
+dependencies and timestamp:
 
-- `metadata.timestamp` is `sbomTimestamp`. Without a value the plugin uses `SOURCE_DATE_EPOCH`, then the time of the
-  repository's HEAD commit (`git log -1` in the project directory), then the current time with a warning. A missing
-  `git` binary also falls back to the current time; a `SOURCE_DATE_EPOCH` that is not a number fails the build.
+- `metadata.timestamp` is `sbomTimestamp`, truncated to whole seconds. Without a value the plugin uses
+  `SOURCE_DATE_EPOCH`, then the time of the repository's HEAD commit (`git log -1` in the project directory), then the
+  current time with a warning. A missing `git` binary also falls back to the current time; a blank `SOURCE_DATE_EPOCH`
+  counts as unset, and one that is not a number fails the build.
 - `serialNumber` is a UUID computed from the content.
 - `dependencies` and their `dependsOn` lists are sorted.
-- The `build-system` external reference is dropped, and a GitHub `vcs` reference is written as
-  `https://github.com/<org>/<repo>`.
+- The `build-system` external reference is dropped, and the `vcs` reference is the project's own `origin` remote, as
+  `https://github.com/<org>/<repo>` for GitHub, with credentials removed; without a remote, or with one that is not
+  an http(s) or ssh URL, it is left out.
 
 In a Kotlin DSL build script, setting `sbomTimestamp` needs the import, because `java.time.Instant` written out in
 full does not resolve once the `java` plugin is applied:
@@ -109,7 +112,8 @@ hivemqLicense {
 }
 ```
 
-The file is also available to other builds as the `sbomElements` variant (attribute `Category=sbom`):
+The file is also available to other projects, or included builds, as the `sbomElements` variant (attribute
+`Category=sbom`):
 
 ```kotlin
 val sboms by configurations.creating {
@@ -123,6 +127,9 @@ dependencies {
     sboms(project(":some-component"))
 }
 ```
+
+A project without the `java` plugin that applies this plugin gains a consumable variant, so a dependency on it from a
+configuration that requests no attributes resolves this variant instead of the `default` configuration.
 
 ### Custom License Tasks
 

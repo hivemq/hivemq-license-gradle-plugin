@@ -15,8 +15,14 @@
  */
 package com.hivemq.tools.license.gradle
 
+import org.gradle.api.Action
+import org.gradle.api.Project
+import org.gradle.process.ExecOperations
+import org.gradle.process.ExecResult
+import org.gradle.process.ExecSpec
 import java.io.File
 import java.util.concurrent.TimeUnit
+import javax.inject.Inject
 
 /**
  * Runs git inside temporary test directories.
@@ -40,6 +46,8 @@ internal object GitTestRepository {
             "GIT_AUTHOR_EMAIL" to "test@example.com",
             "GIT_COMMITTER_NAME" to "test",
             "GIT_COMMITTER_EMAIL" to "test@example.com",
+            // untranslated git messages, which the tests assert on
+            "LC_ALL" to "C",
         ) + extra
 
     /** Runs `git [args]` in [dir] with the isolated environment plus [env]; fails with the output on error. */
@@ -74,4 +82,26 @@ internal object GitTestRepository {
             env = mapOf("GIT_AUTHOR_DATE" to timestamp, "GIT_COMMITTER_DATE" to timestamp),
         )
     }
+
+    /** Adds [url] as the `origin` remote of the repository in [dir]. */
+    fun setRemote(dir: File, url: String) {
+        git(dir, "remote", "add", "origin", url)
+    }
+
+    /**
+     * Gradle's real exec from [project], running every command in the isolated environment of [dir] and then applying
+     * [adjust]. Value sources start git through it, and a test that calls them without a build passes this one in.
+     */
+    fun isolatedExec(project: Project, dir: File, adjust: ExecSpec.() -> Unit = {}): ExecOperations {
+        val delegate = project.objects.newInstance(ExecHolder::class.java).execOperations
+        return object : ExecOperations by delegate {
+            override fun exec(action: Action<in ExecSpec>): ExecResult = delegate.exec {
+                action.execute(this)
+                setEnvironment(isolatedEnv(dir))
+                adjust()
+            }
+        }
+    }
+
+    abstract class ExecHolder @Inject constructor(val execOperations: ExecOperations)
 }

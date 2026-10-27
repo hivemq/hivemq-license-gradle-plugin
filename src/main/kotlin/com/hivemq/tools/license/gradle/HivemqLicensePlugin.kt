@@ -128,12 +128,17 @@ abstract class HivemqLicensePlugin @Inject constructor(
                 "Writes a reproducible CycloneDX SBOM (<sbomName>.cdx.json) from the cyclonedxDirectBom output."
             bom.set(cyclonedxJsonOutput)
             timestamp.set(extension.sbomTimestamp)
+            vcsUrl.set(
+                project.providers.of(SbomVcsUrlSource::class.java) {
+                    parameters.projectDirectory.set(project.layout.projectDirectory)
+                }
+            )
             outputFile.set(
                 extension.sbomName.flatMap { name -> project.layout.buildDirectory.file("sbom/$name.cdx.json") }
             )
         }
 
-        // other builds collect the SBOM through this variant, by its Category attribute
+        // other projects, or included builds, collect the SBOM through this variant, by its Category attribute
         project.configurations.create(SBOM_CONFIGURATION_NAME) {
             isCanBeConsumed = true
             isCanBeResolved = false

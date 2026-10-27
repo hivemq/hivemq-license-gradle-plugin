@@ -19,19 +19,23 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.Property
-import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
+import org.gradle.work.DisableCachingByDefault
 import java.time.Instant
 
 /**
  * Writes a reproducible CycloneDX SBOM from the JSON BOM of the `cyclonedxDirectBom` task, see [SbomNormalizer].
  */
-@CacheableTask
+@DisableCachingByDefault(
+    because = "Rewriting one file is cheaper than a cache round trip, and the random serial number in the CycloneDX " +
+        "output makes a hit unlikely"
+)
 abstract class GenerateSbomTask : DefaultTask() {
 
     @get:InputFile
@@ -42,17 +46,23 @@ abstract class GenerateSbomTask : DefaultTask() {
     @get:Input
     abstract val timestamp: Property<Instant>
 
+    /** Written as the only `vcs` reference; without a value the SBOM has none. */
+    @get:Input
+    @get:Optional
+    abstract val vcsUrl: Property<String>
+
     @get:OutputFile
     abstract val outputFile: RegularFileProperty
 
     @TaskAction
     protected fun run() {
         val bomFile = bom.get().asFile
+        val sbomFile = outputFile.get().asFile
         val normalized = try {
-            SbomNormalizer.normalize(bomFile.readBytes(), timestamp.get())
+            SbomNormalizer.normalize(bomFile.readBytes(), timestamp.get(), vcsUrl.orNull)
         } catch (e: IllegalArgumentException) {
             throw GradleException("Cannot write an SBOM from '$bomFile': ${e.message}", e)
         }
-        outputFile.get().asFile.writeBytes(normalized)
+        sbomFile.writeBytes(normalized)
     }
 }

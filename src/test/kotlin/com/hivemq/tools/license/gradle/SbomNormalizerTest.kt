@@ -30,7 +30,6 @@ class SbomNormalizerTest {
     private fun bom(
         serial: String = "urn:uuid:fcc72669-6094-47f1-a9fe-81e7c08e2d54",
         timestamp: String = "2026-10-16T10:01:10Z",
-        vcs: String = "ssh://git@github.com:hivemq/hivemq-kafka-extension.git",
         dependsOn: String = """["pkg:maven/b/b@1", "pkg:maven/a/a@1"]""",
     ) = """
         {
@@ -47,7 +46,7 @@ class SbomNormalizerTest {
               "version": "1.0.0",
               "externalReferences": [
                 { "type": "build-system", "url": "https://github.com/hivemq/app/actions/runs/39618439086" },
-                { "type": "vcs", "url": "$vcs" }
+                { "type": "vcs", "url": "ssh://git@github.com:other/wrong.git" }
               ]
             }
           },
@@ -62,9 +61,36 @@ class SbomNormalizerTest {
         }
     """.trimIndent().toByteArray()
 
-    private fun normalize(input: ByteArray = bom()) = SbomNormalizer.normalize(input, timestamp)
+    private fun normalize(input: ByteArray = bom(), vcsUrl: String? = null) =
+        SbomNormalizer.normalize(input, timestamp, vcsUrl)
+
+    private fun references(bytes: ByteArray) = tree(bytes)["metadata"]["component"]["externalReferences"]
 
     private fun tree(bytes: ByteArray) = mapper.readTree(bytes)
+
+    // --- Input ---
+
+    @Test
+    fun `rejects input that is not a JSON object`() {
+        assertThatThrownBy { normalize("[]".toByteArray()) }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessageContaining("JSON object")
+    }
+
+    @Test
+    fun `rejects input that is not valid JSON`() {
+        assertThatThrownBy { normalize("{".toByteArray()) }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessageStartingWith("The BOM is not valid JSON: Unexpected end-of-input")
+            .hasMessageContaining("at line 1")
+    }
+
+    @Test
+    fun `rejects metadata that is not a JSON object`() {
+        assertThatThrownBy { normalize("""{"metadata":[]}""".toByteArray()) }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessageContaining("metadata is not a JSON object")
+    }
 
     // --- Timestamp ---
 
@@ -77,7 +103,7 @@ class SbomNormalizerTest {
 
     @Test
     fun `truncates a timestamp with nanoseconds to seconds`() {
-        val result = tree(SbomNormalizer.normalize(bom(), Instant.parse("2026-01-02T03:04:05.678Z")))
+        val result = tree(SbomNormalizer.normalize(bom(), Instant.parse("2026-01-02T03:04:05.678Z"), null))
 
         assertThat(result["metadata"]["timestamp"].asText()).isEqualTo("2026-01-02T03:04:05Z")
     }
@@ -141,61 +167,36 @@ class SbomNormalizerTest {
     // --- External references ---
 
     @Test
-    fun `canonicalizes a GitHub https remote with a git suffix`() {
-        val result = tree(normalize(bom(vcs = "https://github.com/hivemq/hivemq-kafka-extension.git")))
+    fun `drops the vcs reference when the project has no remote`() {
+        val website = """{"type":"website","url":"https://www.hivemq.com"}"""
+        val vcs = """{"type":"vcs","url":"git@github.com:a/b.git"}"""
+        val input = """{"metadata":{"component":{"externalReferences":[$website,$vcs]}}}"""
 
-        assertThat(result["metadata"]["component"]["externalReferences"][0]["url"].asText())
-            .isEqualTo("https://github.com/hivemq/hivemq-kafka-extension")
+        val result = normalize(input.toByteArray(), vcsUrl = null)
+
+        assertThat(references(result).map { it["type"].asText() }).containsExactly("website")
     }
 
     @Test
-    fun `canonicalizes a GitHub ssh remote to https`() {
-        val result = tree(normalize())
+    fun `removes an empty externalReferences list`() {
+        val result = tree(normalize(vcsUrl = null))
 
-        assertThat(result["metadata"]["component"]["externalReferences"].map { it["url"].asText() })
-            .containsExactly("https://github.com/hivemq/hivemq-kafka-extension")
-    }
-
-    @Test
-    fun `canonicalizes a plain git ssh remote`() {
-        val result = tree(normalize(bom(vcs = "git@github.com:hivemq/hivemq-kafka-extension.git")))
-
-        assertThat(result["metadata"]["component"]["externalReferences"][0]["url"].asText())
-            .isEqualTo("https://github.com/hivemq/hivemq-kafka-extension")
-    }
-
-    @Test
-    fun `leaves a non-GitHub vcs url alone`() {
-        val result = tree(normalize(bom(vcs = "https://gitlab.example.com/team/app.git")))
-
-        assertThat(result["metadata"]["component"]["externalReferences"][0]["url"].asText())
-            .isEqualTo("https://gitlab.example.com/team/app.git")
-    }
-
-    @Test
-    fun `leaves a vcs reference with a non-text url alone`() {
-        val input = """{"metadata":{"component":{"externalReferences":[{"type":"vcs","url":5}]}}}"""
-
-        val result = tree(normalize(input.toByteArray()))
-
-        assertThat(result["metadata"]["component"]["externalReferences"][0]["url"].isInt).isTrue()
-    }
-
-    @Test
-    fun `leaves a vcs reference without a url alone`() {
-        val input = """{"metadata":{"component":{"externalReferences":[{"type":"vcs"}]}}}"""
-
-        val result = tree(normalize(input.toByteArray()))
-
-        assertThat(result["metadata"]["component"]["externalReferences"][0].has("url")).isFalse()
+        assertThat(result["metadata"]["component"].has("externalReferences")).isFalse()
     }
 
     @Test
     fun `removes the build-system reference`() {
-        val result = tree(normalize())
+        val result = normalize(vcsUrl = "git@github.com:hivemq/app.git")
 
-        assertThat(result["metadata"]["component"]["externalReferences"].map { it["type"].asText() })
-            .containsExactly("vcs")
+        assertThat(references(result).map { it["type"].asText() }).containsExactly("vcs")
+    }
+
+    @Test
+    fun `replaces the vcs reference CycloneDX wrote`() {
+        val result = normalize(vcsUrl = "git@github.com:hivemq/app.git")
+
+        assertThat(references(result).map { "${it["type"].asText()} ${it["url"].asText()}" })
+            .containsExactly("vcs https://github.com/hivemq/app")
     }
 
     @Test
@@ -213,43 +214,152 @@ class SbomNormalizerTest {
         val vcs = """{"type":"vcs","url":"git@github.com:a/b.git"}"""
         val input = """{"metadata":{"component":{"externalReferences":["text",$vcs]}}}"""
 
-        val result = tree(normalize(input.toByteArray()))
+        val result = normalize(input.toByteArray(), vcsUrl = "git@github.com:a/b.git")
 
-        val references = result["metadata"]["component"]["externalReferences"]
-        assertThat(references[0].asText()).isEqualTo("text")
-        assertThat(references[1]["url"].asText()).isEqualTo("https://github.com/a/b")
+        val kept = references(result)
+        assertThat(kept).hasSize(2)
+        assertThat(kept[0].asText()).isEqualTo("text")
+        assertThat(kept[1]["url"].asText()).isEqualTo("https://github.com/a/b")
+    }
+
+    // --- Remote URL ---
+
+    @Test
+    fun `canonicalizes a GitHub https remote with a git suffix`() {
+        val result = normalize(vcsUrl = "https://github.com/hivemq/hivemq-kafka-extension.git")
+
+        assertThat(references(result).map { it["url"].asText() })
+            .containsExactly("https://github.com/hivemq/hivemq-kafka-extension")
+    }
+
+    @Test
+    fun `canonicalizes a GitHub https remote with a token`() {
+        val result = normalize(vcsUrl = "https://token@github.com/hivemq/x.git")
+
+        assertThat(references(result).map { it["url"].asText() }).containsExactly("https://github.com/hivemq/x")
+    }
+
+    @Test
+    fun `canonicalizes a GitHub remote with a password`() {
+        val result = normalize(vcsUrl = "ssh://git:secret@github.com/hivemq/x.git")
+
+        assertThat(references(result).map { it["url"].asText() }).containsExactly("https://github.com/hivemq/x")
+    }
+
+    @Test
+    fun `canonicalizes a GitHub remote with a query`() {
+        val result = normalize(vcsUrl = "https://github.com/hivemq/x.git?ref=main")
+
+        assertThat(references(result).map { it["url"].asText() }).containsExactly("https://github.com/hivemq/x")
+    }
+
+    @Test
+    fun `canonicalizes a GitHub ssh remote to https`() {
+        val result = normalize(vcsUrl = "ssh://git@github.com/hivemq/hivemq-kafka-extension.git")
+
+        assertThat(references(result).map { it["url"].asText() })
+            .containsExactly("https://github.com/hivemq/hivemq-kafka-extension")
+    }
+
+    @Test
+    fun `canonicalizes a GitHub ssh remote with a colon after the host`() {
+        val result = normalize(vcsUrl = "ssh://git@github.com:hivemq/x.git")
+
+        assertThat(references(result).map { it["url"].asText() }).containsExactly("https://github.com/hivemq/x")
+    }
+
+    @Test
+    fun `canonicalizes a plain git ssh remote`() {
+        val result = normalize(vcsUrl = "git@github.com:hivemq/hivemq-kafka-extension.git")
+
+        assertThat(references(result).map { it["url"].asText() })
+            .containsExactly("https://github.com/hivemq/hivemq-kafka-extension")
+    }
+
+    @Test
+    fun `drops the password from an ssh remote`() {
+        val result = normalize(vcsUrl = "ssh://user:secret@host/x.git")
+
+        assertThat(references(result).map { it["url"].asText() }).containsExactly("ssh://user@host/x.git")
+    }
+
+    @Test
+    fun `drops the user info from an https remote`() {
+        val result = normalize(vcsUrl = "https://u:p@gitlab.example.com/t/a.git")
+
+        assertThat(references(result).map { it["url"].asText() }).containsExactly("https://gitlab.example.com/t/a.git")
+    }
+
+    @Test
+    fun `gives no vcs reference for a file URL`() {
+        val result = tree(normalize(vcsUrl = "file:///tmp/repo"))
+
+        assertThat(result["metadata"]["component"].has("externalReferences")).isFalse()
+    }
+
+    @Test
+    fun `gives no vcs reference for a host Java cannot parse`() {
+        // the authority stays unsplit, user info included, so nothing of it may be written
+        val result = tree(normalize(vcsUrl = "https://u:secret@my_host.internal/r.git"))
+
+        assertThat(result["metadata"]["component"].has("externalReferences")).isFalse()
+    }
+
+    @Test
+    fun `gives no vcs reference for a local path`() {
+        val result = tree(normalize(vcsUrl = "/tmp/repo"))
+
+        assertThat(result["metadata"]["component"].has("externalReferences")).isFalse()
+    }
+
+    @Test
+    fun `gives no vcs reference for an unparsable remote`() {
+        val result = tree(normalize(vcsUrl = "https://u:p@gitlab example.com/t/a.git"))
+
+        assertThat(result["metadata"]["component"].has("externalReferences")).isFalse()
+    }
+
+    @Test
+    fun `keeps an ssh remote with a login name`() {
+        val result = normalize(vcsUrl = "ssh://git@gitlab.example.com:2222/t/a.git")
+
+        assertThat(references(result).map { it["url"].asText() })
+            .containsExactly("ssh://git@gitlab.example.com:2222/t/a.git")
+    }
+
+    @Test
+    fun `keeps the port and drops the query and fragment of an https remote`() {
+        val result = normalize(vcsUrl = "https://gitlab.example.com:8443/t/a.git?private_token=secret#main")
+
+        assertThat(references(result).map { it["url"].asText() })
+            .containsExactly("https://gitlab.example.com:8443/t/a.git")
+    }
+
+    @Test
+    fun `leaves a non-GitHub remote alone`() {
+        val result = normalize(vcsUrl = "https://gitlab.example.com/team/app.git")
+
+        assertThat(references(result).map { it["url"].asText() })
+            .containsExactly("https://gitlab.example.com/team/app.git")
+    }
+
+    @Test
+    fun `turns an scp-style remote into an ssh URL`() {
+        val result = normalize(vcsUrl = "git@gitlab.example.com:t/a.git")
+
+        assertThat(references(result).map { it["url"].asText() })
+            .containsExactly("ssh://git@gitlab.example.com/t/a.git")
     }
 
     // --- Output ---
 
     @Test
     fun `is idempotent`() {
-        val once = normalize()
+        val once = normalize(vcsUrl = "git@github.com:hivemq/app.git")
 
-        val twice = SbomNormalizer.normalize(once, timestamp)
+        val twice = SbomNormalizer.normalize(once, timestamp, "git@github.com:hivemq/app.git")
 
         assertThat(twice).isEqualTo(once)
-    }
-
-    @Test
-    fun `rejects input that is not a JSON object`() {
-        assertThatThrownBy { normalize("[]".toByteArray()) }
-            .isInstanceOf(IllegalArgumentException::class.java)
-            .hasMessageContaining("JSON object")
-    }
-
-    @Test
-    fun `rejects input that is not valid JSON`() {
-        assertThatThrownBy { normalize("{".toByteArray()) }
-            .isInstanceOf(IllegalArgumentException::class.java)
-            .hasMessageContaining("not valid JSON")
-    }
-
-    @Test
-    fun `rejects metadata that is not a JSON object`() {
-        assertThatThrownBy { normalize("""{"metadata":[]}""".toByteArray()) }
-            .isInstanceOf(IllegalArgumentException::class.java)
-            .hasMessageContaining("metadata is not a JSON object")
     }
 
     @Test

@@ -22,6 +22,8 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ArrayNode
 import com.fasterxml.jackson.databind.node.ObjectNode
+import java.net.URI
+import java.net.URISyntaxException
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
@@ -31,8 +33,10 @@ import java.util.UUID
  * Turns the JSON BOM written by the CycloneDX Gradle plugin into a file that is identical for identical inputs.
  *
  * The CycloneDX plugin writes the current time as `metadata.timestamp`, a random `serialNumber`, a `build-system`
- * reference taken from CI environment variables and the `vcs` remote in whatever form the clone used, so two builds of
- * the same commit never produce the same bytes. Every rule here removes one of those differences.
+ * reference taken from CI environment variables and a `vcs` reference from `GIT_URL` or the remote of the Gradle
+ * daemon's working directory, in whatever form the clone used, so two builds of the same commit never produce the
+ * same bytes. Every rule here removes one of those differences: the `vcs` reference is replaced by the project's own
+ * remote, which the caller passes in.
  */
 object SbomNormalizer {
 
@@ -43,10 +47,19 @@ object SbomNormalizer {
         .withObjectIndenter(DefaultIndenter("  ", "\n"))
         .withArrayIndenter(DefaultIndenter("  ", "\n"))
 
-    private val gitHubSsh = Regex("""^(?:ssh://)?git@github\.com[:/]([^/]+/[^/]+?)(?:\.git)?/?$""")
-    private val gitHubHttps = Regex("""^https://github\.com/([^/]+/[^/]+?)(?:\.git)?/?$""")
+    // every GitHub form, by host: any scheme, any user info, a colon or a slash after the host, an optional .git,
+    // query or fragment
+    private val gitHub =
+        Regex("""^(?:[\w+]+://)?(?:[^@/]+@)?github\.com[:/]([^/?#]+/[^/?#]+?)(?:\.git)?/?(?:[?#].*)?$""")
 
-    fun normalize(bom: ByteArray, timestamp: Instant): ByteArray {
+    // like git, a remote without a scheme whose first colon comes before any slash
+    private val scpStyle = Regex("""^([^@/:]+)@([^@/:]+):(.+)$""")
+
+    /**
+     * [vcsUrl], without credentials, becomes the only `vcs` reference; null, or a value that is not a network remote,
+     * leaves the SBOM without one.
+     */
+    fun normalize(bom: ByteArray, timestamp: Instant, vcsUrl: String?): ByteArray {
         val root = read(bom) as? ObjectNode
             ?: throw IllegalArgumentException("The BOM is not a JSON object")
 
@@ -56,7 +69,7 @@ object SbomNormalizer {
             else -> throw IllegalArgumentException("The BOM's metadata is not a JSON object")
         }
         metadata.put("timestamp", DateTimeFormatter.ISO_INSTANT.format(timestamp.truncatedTo(ChronoUnit.SECONDS)))
-        (metadata.get("component") as? ObjectNode)?.let(::normalizeExternalReferences)
+        (metadata.get("component") as? ObjectNode)?.let { normalizeExternalReferences(it, vcsUrl) }
         (root.get("dependencies") as? ArrayNode)?.let(::sortDependencies)
 
         // the serial number names the content, so it is computed over everything else
@@ -69,36 +82,60 @@ object SbomNormalizer {
     private fun read(bom: ByteArray): JsonNode = try {
         mapper.readTree(bom)
     } catch (e: JsonProcessingException) {
-        throw IllegalArgumentException("The BOM is not valid JSON", e)
+        val location = e.location?.let { " at line ${it.lineNr}, column ${it.columnNr}" }.orEmpty()
+        throw IllegalArgumentException("The BOM is not valid JSON: ${e.originalMessage}$location", e)
     }
 
-    private fun normalizeExternalReferences(component: ObjectNode) {
-        val references = component.get("externalReferences") as? ArrayNode ?: return
+    private fun normalizeExternalReferences(component: ObjectNode, vcsUrl: String?) {
+        val references = when (val existing = component.get("externalReferences")) {
+            null -> mapper.createArrayNode()
+            is ArrayNode -> existing
+            else -> return
+        }
         val kept = mapper.createArrayNode()
         for (reference in references) {
             when (reference.get("type")?.asText()) {
                 // points at the CI run that built it and is not even a task input, so it differs per build
                 "build-system" -> continue
-                "vcs" -> rewriteVcsUrl(reference)
+                // CycloneDX's guess, replaced by the project's own remote below
+                "vcs" -> continue
             }
             kept.add(reference)
         }
-        component.set<JsonNode>("externalReferences", kept)
-    }
-
-    private fun rewriteVcsUrl(reference: JsonNode) {
-        val url = reference.get("url")
-        if (reference is ObjectNode && url?.isTextual == true) {
-            reference.put("url", canonicalVcsUrl(url.asText()))
+        vcsUrl?.let(::canonicalVcsUrl)?.let { kept.addObject().put("type", "vcs").put("url", it) }
+        // whether CycloneDX wrote references that were dropped above must not show in the output
+        if (kept.isEmpty) {
+            component.remove("externalReferences")
+        } else {
+            component.set("externalReferences", kept)
         }
     }
 
-    // CI clones over https, developers over ssh; the repository is the same
-    private fun canonicalVcsUrl(url: String): String {
-        val repository = gitHubSsh.find(url)?.groupValues?.get(1)
-            ?: gitHubHttps.find(url)?.groupValues?.get(1)
-            ?: return url
-        return "https://github.com/$repository"
+    // The SBOM ships, so no credential may reach it: GitHub becomes https://github.com/org/repo, http(s) drops user
+    // info, query and fragment, ssh drops a password, scp-style becomes ssh://, anything else gives no reference.
+    // SbomVcsUrlSource applies it too, so the raw remote never becomes a task input.
+    internal fun canonicalVcsUrl(url: String): String? {
+        gitHub.find(url)?.groupValues?.get(1)?.let { return "https://github.com/$it" }
+        val candidate = scpStyle.matchEntire(url)?.destructured
+            ?.let { (user, host, path) -> "ssh://$user@$host/${path.removePrefix("/")}" }
+            ?: url
+        val uri = try {
+            URI(candidate)
+        } catch (_: URISyntaxException) {
+            return null
+        }
+        // a host Java cannot parse leaves the authority, user info included, unsplit
+        val host = uri.host ?: return null
+        val port = if (uri.port == -1) "" else ":${uri.port}"
+        return when (val scheme = uri.scheme?.lowercase()) {
+            "http", "https" -> "$scheme://$host$port${uri.rawPath}"
+            "ssh" -> {
+                // the user of an ssh remote is a login name like git, only a password after it is a secret
+                val user = uri.rawUserInfo?.substringBefore(':')?.let { "$it@" }.orEmpty()
+                "ssh://$user$host$port${uri.rawPath}"
+            }
+            else -> null
+        }
     }
 
     private fun sortDependencies(dependencies: ArrayNode) {

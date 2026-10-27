@@ -23,7 +23,6 @@ import org.gradle.api.provider.Property
 import org.gradle.api.provider.ValueSource
 import org.gradle.api.provider.ValueSourceParameters
 import org.gradle.process.ExecOperations
-import java.io.ByteArrayOutputStream
 import java.time.Instant
 import javax.inject.Inject
 
@@ -47,11 +46,21 @@ abstract class SbomTimestampSource : ValueSource<Instant, SbomTimestampSource.Pa
     abstract val execOperations: ExecOperations
 
     override fun obtain(): Instant {
-        parameters.sourceDateEpoch.orNull?.let { return parseSourceDateEpoch(it) }
-        lastCommitTime()?.let { return it }
+        // a CI template that passes on an unset variable exports it empty
+        parameters.sourceDateEpoch.orNull?.takeIf { it.isNotBlank() }?.let { return parseSourceDateEpoch(it) }
+        val directory = parameters.projectDirectory.get().asFile
+        // log.showSignature=true would print the signature check before the time
+        val git = GitCommand.run(execOperations, directory, "log", "-1", "--no-show-signature", "--format=%ct")
+        val reason = when {
+            git == null -> "git could not be started in $directory"
+            git.exitCode != 0 -> "git log in $directory exited with ${git.exitCode}: ${git.stderr}"
+            else -> git.stdout.toLongOrNull()?.let { return Instant.ofEpochSecond(it) }
+                ?: "git log in $directory printed '${git.stdout}' instead of a commit time"
+        }
+        val project = parameters.projectPath.get()
         logger.warn(
-            "Neither SOURCE_DATE_EPOCH nor a git commit time is available for ${parameters.projectPath.get()}, the " +
-                "SBOM timestamp is the current time and the file is not reproducible; set " +
+            "Neither SOURCE_DATE_EPOCH nor a git commit time is available for project '$project', the SBOM " +
+                "timestamp is the current time and the file is not reproducible ($reason); set " +
                 "hivemqLicense.sbomTimestamp to fix it"
         )
         return Instant.now()
@@ -61,31 +70,6 @@ abstract class SbomTimestampSource : ValueSource<Instant, SbomTimestampSource.Pa
         raw.trim().toLongOrNull()?.let(Instant::ofEpochSecond) ?: throw GradleException(
             "SOURCE_DATE_EPOCH must be the number of seconds since 1970-01-01T00:00:00Z, but is '$raw'"
         )
-
-    /** The committer time of HEAD, null when the directory is not in a repository, has no commit or git is missing. */
-    private fun lastCommitTime(): Instant? {
-        val directory = parameters.projectDirectory.get().asFile
-        val output = ByteArrayOutputStream()
-        val result = try {
-            execOperations.exec {
-                workingDir = directory
-                commandLine("git", "log", "-1", "--format=%ct")
-                standardOutput = output
-                errorOutput = ByteArrayOutputStream()
-                isIgnoreExitValue = true
-            }
-        } catch (e: GradleException) {
-            // A process that cannot be started fails with a GradleException. The subclass Gradle 9 throws,
-            // ProcessExecutionException, does not exist in Gradle 8, so catching it would break there. A non-zero
-            // exit value does not throw because it is ignored above.
-            logger.info("git is not available in $directory, falling back: ${e.message}")
-            return null
-        }
-        if (result.exitValue != 0) {
-            return null
-        }
-        return output.toString().trim().toLongOrNull()?.let(Instant::ofEpochSecond)
-    }
 
     private companion object {
         val logger: Logger = Logging.getLogger(SbomTimestampSource::class.java)
