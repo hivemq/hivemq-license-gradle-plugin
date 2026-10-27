@@ -168,7 +168,7 @@ class HivemqLicensePluginIntegrationTest {
 
         assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output)
-            .contains("No license found for 'com.example:pomless-lib:1.0.0', its Maven metadata is incomplete (pom-unresolved)")
+            .contains("No license found for 'com.example:pomless-lib:1.0.0' (its Maven metadata is incomplete: pom-unresolved)")
     }
 
     // --- BOM origin in the failure message ---
