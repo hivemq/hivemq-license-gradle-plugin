@@ -85,6 +85,16 @@ object LicenseResolver {
         }
     }
 
+    private val SPDX_IDS_IGNORING_CASE = buildMap {
+        for ((id, license) in SPDX_ID_MAP) {
+            putIfAbsent(id.lowercase(), license)
+        }
+    }
+
+    // the approved license with this SPDX ID, matched regardless of case, or null
+    private fun knownLicense(spdxId: String): KnownLicense? =
+        SPDX_ID_MAP[spdxId] ?: SPDX_IDS_IGNORING_CASE[spdxId.lowercase()]
+
     fun resolveLicenses(
         dependencyLicenseFile: File,
         ignoredGroupPrefixes: Set<String>,
@@ -96,7 +106,7 @@ object LicenseResolver {
         val tree = objectMapper.readTree(dependencyLicenseFile)
         val source = LicenseSource(dependencyLicenseFile, dependencyLicenseOrigin)
         // an override naming an unknown license is a problem of its own, and its module is not resolved any further
-        val invalidOverrides = overriddenLicenses.filterValues { it !in SPDX_ID_MAP }
+        val invalidOverrides = overriddenLicenses.filterValues { knownLicense(it) == null }
         val problems = invalidOverrides.map { (moduleId, spdxId) ->
             "Overridden license '$spdxId' for '$moduleId' is not a known SPDX license ID"
         }.toMutableList()
@@ -235,7 +245,9 @@ object LicenseResolver {
 
     // the caller has already set aside modules whose override names an unknown license, so one here is a bug
     private fun resolveOverriddenOrBuiltIn(moduleId: String, overriddenLicenses: Map<String, String>): KnownLicense? =
-        overriddenLicenses[moduleId]?.let { SPDX_ID_MAP.getValue(it) } ?: BUILT_IN_LICENSES[moduleId]
+        overriddenLicenses[moduleId]?.let { spdxId ->
+            checkNotNull(knownLicense(spdxId)) { "Overridden license '$spdxId' for '$moduleId' was not set aside" }
+        } ?: BUILT_IN_LICENSES[moduleId]
 
     // Evaluates an SPDX license expression such as "(CDDL-1.0 OR GPL-2.0-with-classpath-exception)" to the licenses
     // that apply when it is satisfied, or to the reason when the expression itself is at fault. "A OR B" is satisfied
@@ -339,9 +351,6 @@ object LicenseResolver {
             return if (license == null) emptyList() else listOf(setOf(license))
         }
 
-        // SPDX ids match regardless of case
-        private fun knownLicense(token: String) = SPDX_ID_MAP[token] ?: SPDX_IDS_IGNORING_CASE[token.lowercase()]
-
         // a known id, or what the SPDX grammar allows as a simple expression: a license reference, or a license id
         // with an optional "+"; "Public Domain" is known and not SPDX
         private fun isLicense(token: String) = when {
@@ -373,11 +382,6 @@ object LicenseResolver {
                     """[()]|[^\s()]+""",
                 RegexOption.IGNORE_CASE,
             )
-            val SPDX_IDS_IGNORING_CASE = buildMap {
-                for ((id, license) in SPDX_ID_MAP) {
-                    putIfAbsent(id.lowercase(), license)
-                }
-            }
             val ID_STRING = Regex("""[A-Za-z0-9.-]+""")
             val REFERENCE_PREFIX = Regex("""^(LicenseRef|DocumentRef)-""", RegexOption.IGNORE_CASE)
             val LICENSE_REFERENCE =
@@ -400,7 +404,7 @@ object LicenseResolver {
         // CycloneDX provides SPDX IDs directly when available
         val spdxId = license.id
         if (spdxId != null) {
-            val known = SPDX_ID_MAP[spdxId]
+            val known = knownLicense(spdxId)
             if (known != null) return known
             return UnknownLicense(spdxId, license.url)
         }

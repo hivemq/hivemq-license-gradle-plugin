@@ -37,6 +37,12 @@ class LicenseResolverConvertLicenseTest {
     }
 
     @Test
+    fun `converts a known SPDX ID regardless of case`() {
+        val entry = DependencyReport.LicenseEntry(id = "mit")
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.MIT)
+    }
+
+    @Test
     fun `converts known SPDX ID EPL-2_0`() {
         val entry = DependencyReport.LicenseEntry(id = "EPL-2.0")
         assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.EPL_2_0)

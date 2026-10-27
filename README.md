@@ -114,9 +114,10 @@ Expressions follow these rules:
   licenses.
 - An `AND` needs every operand approved, and the report lists all of them in priority order, as `MIT AND ISC` with
   one URL per license that has one.
-- License ids match regardless of case. An id that is not on the approved list, a license reference (`LicenseRef-`),
-  an id with a `+` suffix and a license `WITH` an exception are not approved, so a dependency under
-  `Apache-2.0 WITH LLVM-exception` needs an entry in `overriddenLicenses`.
+- License ids match regardless of case, in expressions as in single license entries and overrides. An id that is
+  not on the approved list, a license reference (`LicenseRef-`), an id with a `+` suffix and a license `WITH` an
+  exception are not approved, so a dependency under `Apache-2.0 WITH LLVM-exception` needs an entry in
+  `overriddenLicenses`.
 - A malformed expression, or one with more alternatives or deeper nesting than the plugin evaluates, satisfies
   nothing, and the message says so when no other entry of the component is approved.
 
@@ -181,7 +182,8 @@ Some well-known artifacts don't report license metadata in CycloneDX. The plugin
 | `org.w3c.css:sac`                            | W3C-19980720 |
 
 These can be overridden using the `overriddenLicenses` configuration. An override must name an SPDX ID from the
-approved table exactly, and every override is checked, whether or not its module turns up in the BOM.
+approved table, matched regardless of case, and every override is checked, whether or not its module turns up in the
+BOM.
 
 ## How It Works
 

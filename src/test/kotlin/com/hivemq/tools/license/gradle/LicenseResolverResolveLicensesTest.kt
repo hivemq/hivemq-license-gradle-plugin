@@ -500,6 +500,59 @@ class LicenseResolverResolveLicensesTest {
         assertThat(result["com.example:some-lib"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
     }
 
+    // --- license ids regardless of case ---
+
+    @Test
+    fun `matches a single license id regardless of case`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "lower-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "license": { "id": "mit" } }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:lower-lib"]!!.licenses).containsExactly(KnownLicense.MIT)
+    }
+
+    @Test
+    fun `accepts an overridden license id regardless of case`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "lower-lib",
+                  "version": "1.0.0",
+                  "licenses": []
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            overriddenLicenses = mapOf("com.example:lower-lib" to "apache-2.0"),
+        )
+
+        assertThat(result["com.example:lower-lib"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
+    }
+
     // --- SPDX expressions ---
 
     @Test
