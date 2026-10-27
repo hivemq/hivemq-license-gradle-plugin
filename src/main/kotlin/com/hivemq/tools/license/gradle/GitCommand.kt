@@ -35,6 +35,8 @@ internal object GitCommand {
             exec.exec {
                 workingDir = dir
                 commandLine("git", *args)
+                // git's messages are matched and logged, so they must not be translated
+                environment("LC_ALL", "C")
                 standardOutput = stdout
                 errorOutput = stderr
                 isIgnoreExitValue = true

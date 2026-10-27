@@ -37,9 +37,12 @@ internal object GitTestRepository {
      * This JVM's environment without the machine's git settings and `SOURCE_DATE_EPOCH`, plus [extra]. The ceiling
      * keeps git from treating a temporary directory inside some repository as part of it.
      */
-    fun isolatedEnv(projectDir: File, extra: Map<String, String> = emptyMap()): Map<String, String> =
-        System.getenv().filterKeys { !it.startsWith("GIT_") && it != "SOURCE_DATE_EPOCH" } + mapOf(
-            "GIT_CONFIG_GLOBAL" to "/dev/null",
+    fun isolatedEnv(projectDir: File, extra: Map<String, String> = emptyMap()): Map<String, String> {
+        // an empty home hides the global config from any git version, GIT_CONFIG_GLOBAL needs git 2.32 or later
+        val home = projectDir.resolve(".home").apply { mkdirs() }
+        return System.getenv().filterKeys { !it.startsWith("GIT_") && it != "SOURCE_DATE_EPOCH" } + mapOf(
+            "HOME" to home.absolutePath,
+            "XDG_CONFIG_HOME" to home.resolve(".config").absolutePath,
             "GIT_CONFIG_NOSYSTEM" to "1",
             "GIT_CEILING_DIRECTORIES" to projectDir.parent,
             "GIT_AUTHOR_NAME" to "test",
@@ -49,6 +52,7 @@ internal object GitTestRepository {
             // untranslated git messages, which the tests assert on
             "LC_ALL" to "C",
         ) + extra
+    }
 
     /** Runs `git [args]` in [dir] with the isolated environment plus [env]; fails with the output on error. */
     fun git(dir: File, vararg args: String, env: Map<String, String> = emptyMap()) {

@@ -47,10 +47,16 @@ object SbomNormalizer {
         .withObjectIndenter(DefaultIndenter("  ", "\n"))
         .withArrayIndenter(DefaultIndenter("  ", "\n"))
 
-    // every GitHub form, by host: any scheme, any user info, a colon or a slash after the host, an optional .git,
-    // query or fragment
+    // the owner/repo after a GitHub host, with an optional .git, trailing slash, query or fragment
+    private const val GITHUB_REPO = """([^/?#]+/[^/?#]+?)(?:\.git)?/?(?:[?#].*)?$"""
+
+    // GitHub over https, also with the default port written out, which the form below does not accept
+    private val gitHubHttps =
+        Regex("""^https://(?:[^@/]+@)?github\.com(?::443)?/$GITHUB_REPO""", RegexOption.IGNORE_CASE)
+
+    // every other GitHub form, by host: any scheme, any user info, a colon or a slash after the host
     private val gitHub =
-        Regex("""^(?:[\w+]+://)?(?:[^@/]+@)?github\.com[:/]([^/?#]+/[^/?#]+?)(?:\.git)?/?(?:[?#].*)?$""")
+        Regex("""^(?:[\w+]+://)?(?:[^@/]+@)?github\.com[:/]$GITHUB_REPO""", RegexOption.IGNORE_CASE)
 
     // like git, a remote without a scheme whose first colon comes before any slash
     private val scpStyle = Regex("""^([^@/:]+)@([^@/:]+):(.+)$""")
@@ -115,7 +121,7 @@ object SbomNormalizer {
     // info, query and fragment, ssh drops a password, scp-style becomes ssh://, anything else gives no reference.
     // SbomVcsUrlSource applies it too, so the raw remote never becomes a task input.
     internal fun canonicalVcsUrl(url: String): String? {
-        gitHub.find(url)?.groupValues?.get(1)?.let { return "https://github.com/$it" }
+        (gitHubHttps.find(url) ?: gitHub.find(url))?.groupValues?.get(1)?.let { return "https://github.com/$it" }
         val candidate = scpStyle.matchEntire(url)?.destructured
             ?.let { (user, host, path) -> "ssh://$user@$host/${path.removePrefix("/")}" }
             ?: url

@@ -94,12 +94,14 @@ dependencies and timestamp:
 - `metadata.timestamp` is `sbomTimestamp`, truncated to whole seconds. Without a value the plugin uses
   `SOURCE_DATE_EPOCH`, then the time of the repository's HEAD commit (`git log -1` in the project directory), then the
   current time with a warning. A missing `git` binary also falls back to the current time; a blank `SOURCE_DATE_EPOCH`
-  counts as unset, and one that is not a number fails the build.
+  counts as unset, and one that is not a number of seconds within the range of Java's `Instant` fails the build.
 - `serialNumber` is a UUID computed from the content.
 - `dependencies` and their `dependsOn` lists are sorted.
 - The `build-system` external reference is dropped, and the `vcs` reference is the project's own `origin` remote, as
   `https://github.com/<org>/<repo>` for GitHub, with credentials removed; without a remote, or with one that is not
-  an http(s) or ssh URL, it is left out.
+  an http(s) or ssh URL, it is left out. Only a GitHub remote gives the same URL whatever protocol the repository was
+  cloned with; for other hosts an ssh and an https clone write different SBOMs. `vcs` and `build-system` references
+  configured through `cyclonedxDirectBom.externalReferences` are dropped as well.
 
 In a Kotlin DSL build script, setting `sbomTimestamp` needs the import, because `java.time.Instant` written out in
 full does not resolve once the `java` plugin is applied:
@@ -128,8 +130,8 @@ dependencies {
 }
 ```
 
-A project without the `java` plugin that applies this plugin gains a consumable variant, so a dependency on it from a
-configuration that requests no attributes resolves this variant instead of the `default` configuration.
+The variant exists only in projects with the `java` plugin. In other projects it would be their only variant with
+attributes, so Gradle would match their consumers against it instead of handing out the `default` configuration.
 
 ### Custom License Tasks
 

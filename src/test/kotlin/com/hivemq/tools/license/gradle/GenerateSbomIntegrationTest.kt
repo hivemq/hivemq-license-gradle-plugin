@@ -33,11 +33,13 @@ class GenerateSbomIntegrationTest {
         .withArguments(*args)
         .withEnvironment(GitTestRepository.isolatedEnv(projectDir))
 
-    /** A project with two real dependencies; [hivemqLicense] goes into the extension block. */
-    private fun setup(hivemqLicense: String = "") {
+    /**
+     * A project with two real dependencies, or with none for a test that does not need Maven Central;
+     * [hivemqLicense] goes into the extension block.
+     */
+    private fun setup(hivemqLicense: String = "", externalDependencies: Boolean = true) {
         projectDir.resolve("settings.gradle.kts").writeText("""rootProject.name = "sbom-project"""")
-        projectDir.resolve("build.gradle.kts").writeText(
-            """
+        val buildScript = """
             import java.time.Instant
 
             plugins {
@@ -48,6 +50,8 @@ class GenerateSbomIntegrationTest {
                 thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
                 $hivemqLicense
             }
+            """.trimIndent()
+        val dependencies = """
             repositories {
                 mavenCentral()
             }
@@ -56,7 +60,8 @@ class GenerateSbomIntegrationTest {
                 implementation("org.slf4j:slf4j-api:2.0.16")
             }
             """.trimIndent()
-        )
+        projectDir.resolve("build.gradle.kts")
+            .writeText(if (externalDependencies) "$buildScript\n$dependencies" else buildScript)
     }
 
     private val fixedTimestamp = """sbomTimestamp.set(Instant.parse("2026-01-02T03:04:05Z"))"""
@@ -112,24 +117,35 @@ class GenerateSbomIntegrationTest {
     }
 
     @Test
-    fun `two clean builds write identical bytes`() {
-        setup(fixedTimestamp)
-        gradleRunner("generateSbom").build()
-        val first = sbom().readBytes()
-        check(projectDir.resolve("build").deleteRecursively())
+    fun `two machines write identical bytes`(@TempDir otherMachine: File) {
+        setup()
+        GitTestRepository.commitAt(projectDir, "2024-05-06T07:08:09Z", "build.gradle.kts")
+        GitTestRepository.setRemote(projectDir, "git@github.com:hivemq/x.git")
+        for (name in listOf("settings.gradle.kts", "build.gradle.kts", ".git")) {
+            projectDir.resolve(name).copyRecursively(otherMachine.resolve(name))
+        }
+        // the other machine cloned the same commit over https and builds it in another CI job
+        GitTestRepository.git(otherMachine, "remote", "set-url", "origin", "https://github.com/hivemq/x.git")
+        val ci = mapOf("BUILD_URL" to "https://ci.example.com/job/1/", "GIT_URL" to "git@github.com:hivemq/x.git")
+        val otherCi = mapOf("BUILD_URL" to "https://ci2.example.com/job/2/", "GIT_URL" to "https://github.com/hivemq/x")
+        gradleRunner("generateSbom").withEnvironment(GitTestRepository.isolatedEnv(projectDir, ci)).build()
 
-        val result = gradleRunner("generateSbom").build()
+        gradleRunner("generateSbom")
+            .withProjectDir(otherMachine)
+            .withEnvironment(GitTestRepository.isolatedEnv(otherMachine, otherCi))
+            .build()
 
-        // the CycloneDX task ran again and wrote a new serial number and timestamp, the normalized file did not change
-        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
-        assertThat(sbom().readBytes()).isEqualTo(first)
+        // CycloneDX wrote a different serial number, timestamp and references, the normalized files are the same
+        val bom = "build/reports/cyclonedx-direct/bom.json"
+        assertThat(otherMachine.resolve(bom).readBytes()).isNotEqualTo(projectDir.resolve(bom).readBytes())
+        assertThat(otherMachine.resolve("build/sbom/sbom-project.cdx.json").readBytes()).isEqualTo(sbom().readBytes())
     }
 
     // --- Timestamp defaults ---
 
     @Test
     fun `a malformed SOURCE_DATE_EPOCH fails with a clear message`() {
-        setup()
+        setup(externalDependencies = false)
 
         val result = gradleRunner("generateSbom")
             .withEnvironment(GitTestRepository.isolatedEnv(projectDir, mapOf("SOURCE_DATE_EPOCH" to "yesterday")))
@@ -140,19 +156,21 @@ class GenerateSbomIntegrationTest {
 
     @Test
     fun `falls back to the current time with a warning outside a git repository`() {
-        setup()
+        setup(externalDependencies = false)
 
         val result = gradleRunner("generateSbom").build()
 
         assertThat(result.output)
             .contains("project ':', the SBOM timestamp is the current time")
             .contains("exited with 128: fatal: not a git repository")
+            // the missing vcs reference is logged at info level here, so there is no second warning
+            .doesNotContain("has no vcs reference")
         assertThat(sbom()).exists()
     }
 
     @Test
     fun `sbomTimestamp beats SOURCE_DATE_EPOCH`() {
-        setup(fixedTimestamp)
+        setup(fixedTimestamp, externalDependencies = false)
 
         gradleRunner("generateSbom")
             .withEnvironment(GitTestRepository.isolatedEnv(projectDir, mapOf("SOURCE_DATE_EPOCH" to "1700000000")))
@@ -163,7 +181,7 @@ class GenerateSbomIntegrationTest {
 
     @Test
     fun `SOURCE_DATE_EPOCH beats the commit time`() {
-        setup()
+        setup(externalDependencies = false)
         GitTestRepository.commitAt(projectDir, "2024-05-06T07:08:09Z", "build.gradle.kts")
 
         gradleRunner("generateSbom")
@@ -174,19 +192,8 @@ class GenerateSbomIntegrationTest {
     }
 
     @Test
-    fun `SOURCE_DATE_EPOCH sets the timestamp`() {
-        setup()
-
-        gradleRunner("generateSbom")
-            .withEnvironment(GitTestRepository.isolatedEnv(projectDir, mapOf("SOURCE_DATE_EPOCH" to "1700000000")))
-            .build()
-
-        assertThat(sbom().readText()).contains(""""timestamp" : "2023-11-14T22:13:20Z"""")
-    }
-
-    @Test
     fun `the configuration cache reads the commit time on reuse without a warning`() {
-        setup()
+        setup(externalDependencies = false)
         GitTestRepository.commitAt(projectDir, "2024-05-06T07:08:09Z", "build.gradle.kts")
         // Compiles the build script first: compiling it during a configuration-cache run records system properties
         // the embedded Kotlin compiler reads, which change between TestKit runs and would discard the entry.
@@ -208,7 +215,7 @@ class GenerateSbomIntegrationTest {
 
     @Test
     fun `the last commit time is the timestamp when SOURCE_DATE_EPOCH is not set`() {
-        setup()
+        setup(externalDependencies = false)
         GitTestRepository.commitAt(projectDir, "2024-05-06T07:08:09Z", "build.gradle.kts")
 
         gradleRunner("generateSbom").build()
@@ -217,6 +224,56 @@ class GenerateSbomIntegrationTest {
     }
 
     // --- Variant ---
+
+    @Test
+    fun `a producer without the java plugin keeps its default configuration`() {
+        projectDir.resolve("settings.gradle.kts").writeText(
+            """
+            rootProject.name = "plain-project"
+            include("plain", "app")
+            """.trimIndent()
+        )
+        projectDir.resolve("plain").mkdirs()
+        projectDir.resolve("plain/payload.txt").writeText("payload")
+        projectDir.resolve("plain/build.gradle.kts").writeText(
+            """
+            plugins {
+                base
+                id("com.hivemq.tools.license")
+            }
+            hivemqLicense {
+                thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+            }
+            tasks.register<Zip>("payload") {
+                from("payload.txt")
+                archiveFileName.set("payload.zip")
+            }
+            artifacts {
+                add("default", tasks.named("payload"))
+            }
+            """.trimIndent()
+        )
+        projectDir.resolve("app").mkdirs()
+        projectDir.resolve("app/build.gradle.kts").writeText(
+            """
+            plugins {
+                java
+            }
+            dependencies {
+                runtimeOnly(project(":plain"))
+            }
+            tasks.register<Copy>("copyRuntime") {
+                from(configurations.runtimeClasspath)
+                into(layout.buildDirectory.dir("runtime"))
+            }
+            """.trimIndent()
+        )
+
+        val result = gradleRunner(":app:copyRuntime").build()
+
+        assertThat(result.task(":app:copyRuntime")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(projectDir.resolve("app/build/runtime/payload.zip")).exists()
+    }
 
     @Test
     fun `another project resolves the sbom variant`() {
@@ -271,6 +328,27 @@ class GenerateSbomIntegrationTest {
 
         assertThat(result.task(":lib:generateSbom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(projectDir.resolve("collector/build/sboms/lib.cdx.json")).exists()
+    }
+
+    @Test
+    fun `assemble does not run generateSbom`() {
+        setup(externalDependencies = false)
+
+        // Gradle 8 builds the artifacts of every visible configuration as part of assemble
+        // TestKit downloads the distribution into ~/.gradle/wrapper/dists, which CI caches, so this costs the
+        // download once per cache key
+        val result = gradleRunner("assemble", "--dry-run").withGradleVersion("8.14").build()
+
+        assertThat(result.output).contains(":jar SKIPPED").doesNotContain(":generateSbom")
+    }
+
+    @Test
+    fun `assemble does not run generateSbom on the current Gradle`() {
+        setup(externalDependencies = false)
+
+        val result = gradleRunner("assemble", "--dry-run").build()
+
+        assertThat(result.output).contains(":jar SKIPPED").doesNotContain(":generateSbom")
     }
 
     @Test

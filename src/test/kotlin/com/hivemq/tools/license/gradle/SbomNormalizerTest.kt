@@ -233,8 +233,22 @@ class SbomNormalizerTest {
     }
 
     @Test
+    fun `canonicalizes a GitHub https remote with a mixed-case host`() {
+        val result = normalize(vcsUrl = "https://GitHub.com/hivemq/x.git")
+
+        assertThat(references(result).map { it["url"].asText() }).containsExactly("https://github.com/hivemq/x")
+    }
+
+    @Test
     fun `canonicalizes a GitHub https remote with a token`() {
         val result = normalize(vcsUrl = "https://token@github.com/hivemq/x.git")
+
+        assertThat(references(result).map { it["url"].asText() }).containsExactly("https://github.com/hivemq/x")
+    }
+
+    @Test
+    fun `canonicalizes a GitHub https remote with the default port`() {
+        val result = normalize(vcsUrl = "https://github.com:443/hivemq/x.git")
 
         assertThat(references(result).map { it["url"].asText() }).containsExactly("https://github.com/hivemq/x")
     }

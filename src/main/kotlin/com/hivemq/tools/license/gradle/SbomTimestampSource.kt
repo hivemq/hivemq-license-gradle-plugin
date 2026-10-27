@@ -23,6 +23,7 @@ import org.gradle.api.provider.Property
 import org.gradle.api.provider.ValueSource
 import org.gradle.api.provider.ValueSourceParameters
 import org.gradle.process.ExecOperations
+import java.time.DateTimeException
 import java.time.Instant
 import javax.inject.Inject
 
@@ -66,10 +67,17 @@ abstract class SbomTimestampSource : ValueSource<Instant, SbomTimestampSource.Pa
         return Instant.now()
     }
 
-    private fun parseSourceDateEpoch(raw: String): Instant =
-        raw.trim().toLongOrNull()?.let(Instant::ofEpochSecond) ?: throw GradleException(
+    private fun parseSourceDateEpoch(raw: String): Instant {
+        val instant = try {
+            raw.trim().toLongOrNull()?.let(Instant::ofEpochSecond)
+        } catch (_: DateTimeException) {
+            // a value in nanoseconds lies beyond the last instant Java can represent
+            null
+        }
+        return instant ?: throw GradleException(
             "SOURCE_DATE_EPOCH must be the number of seconds since 1970-01-01T00:00:00Z, but is '$raw'"
         )
+    }
 
     private companion object {
         val logger: Logger = Logging.getLogger(SbomTimestampSource::class.java)

@@ -21,6 +21,7 @@ import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.attributes.Category
 import org.gradle.build.event.BuildEventsListenerRegistry
+import org.gradle.util.GradleVersion
 import javax.inject.Inject
 
 abstract class HivemqLicensePlugin @Inject constructor(
@@ -138,15 +139,24 @@ abstract class HivemqLicensePlugin @Inject constructor(
             )
         }
 
-        // other projects, or included builds, collect the SBOM through this variant, by its Category attribute
-        project.configurations.create(SBOM_CONFIGURATION_NAME) {
-            isCanBeConsumed = true
-            isCanBeResolved = false
-            attributes.attribute(
-                Category.CATEGORY_ATTRIBUTE,
-                project.objects.named(Category::class.java, SBOM_CATEGORY)
-            )
-            outgoing.artifact(generateSbom.flatMap { it.outputFile })
+        // Without the java plugin, an attributed consumable configuration would switch the project's consumers from
+        // the default configuration to attribute matching, which then finds no library.
+        project.pluginManager.withPlugin("java") {
+            // other projects, or included builds, collect the SBOM through this variant, by its Category attribute
+            project.configurations.create(SBOM_CONFIGURATION_NAME) {
+                isCanBeConsumed = true
+                isCanBeResolved = false
+                // Gradle 8 lets assemble build the artifacts of every visible configuration, Gradle 9 does not
+                if (GradleVersion.current().baseVersion < GradleVersion.version("9.0")) {
+                    @Suppress("DEPRECATION")
+                    isVisible = false
+                }
+                attributes.attribute(
+                    Category.CATEGORY_ATTRIBUTE,
+                    project.objects.named(Category::class.java, SBOM_CATEGORY)
+                )
+                outgoing.artifact(generateSbom.flatMap { it.outputFile })
+            }
         }
     }
 

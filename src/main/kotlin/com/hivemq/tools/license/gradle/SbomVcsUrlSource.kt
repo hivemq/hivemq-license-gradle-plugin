@@ -40,9 +40,18 @@ abstract class SbomVcsUrlSource : ValueSource<String, SbomVcsUrlSource.Parameter
     override fun obtain(): String? {
         val directory = parameters.projectDirectory.get().asFile
         val git = GitCommand.run(execOperations, directory, "remote", "get-url", "origin")
+        // a source tree outside any repository is expected, the timestamp source already warns about it
+        val outsideRepository = git != null && git.exitCode != 0 && git.stderr.contains("not a git repository")
+        if (git == null || (git.exitCode != 0 && git.exitCode != NO_SUCH_REMOTE && !outsideRepository)) {
+            val failure = git?.let { "git remote get-url origin exited with ${it.exitCode}: ${it.stderr}" }
+                ?: "git could not be started"
+            // the SBOM ships without a vcs reference, and nothing else would show that
+            logger.warn("The SBOM of $directory has no vcs reference: $failure")
+            return null
+        }
         val reason = when {
-            git == null -> "git could not be started"
-            git.exitCode != 0 -> "git remote get-url origin exited with ${git.exitCode}: ${git.stderr}"
+            outsideRepository -> "not in a git repository"
+            git.exitCode == NO_SUCH_REMOTE -> "no origin remote"
             git.stdout.isEmpty() -> "git remote get-url origin printed nothing"
             // the remote may carry a token, so it is neither returned as it is nor logged
             else -> SbomNormalizer.canonicalVcsUrl(git.stdout)?.let { return it }
@@ -54,5 +63,8 @@ abstract class SbomVcsUrlSource : ValueSource<String, SbomVcsUrlSource.Parameter
 
     private companion object {
         val logger: Logger = Logging.getLogger(SbomVcsUrlSource::class.java)
+
+        // what git remote get-url exits with when the remote does not exist
+        const val NO_SUCH_REMOTE = 2
     }
 }

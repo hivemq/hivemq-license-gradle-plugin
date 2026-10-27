@@ -75,6 +75,17 @@ class SbomTimestampSourceTest {
     }
 
     @Test
+    fun `a SOURCE_DATE_EPOCH in nanoseconds fails`() {
+        // fits in a long, but as seconds it lies beyond the last instant Java can represent
+        assertThatThrownBy { obtain(sourceDateEpoch = "1700000000000000000") }
+            .isInstanceOf(GradleException::class.java)
+            .hasMessage(
+                "SOURCE_DATE_EPOCH must be the number of seconds since 1970-01-01T00:00:00Z, but is " +
+                    "'1700000000000000000'"
+            )
+    }
+
+    @Test
     fun `a SOURCE_DATE_EPOCH that is not a number fails`() {
         GitTestRepository.commitAt(projectDir, "2024-05-06T07:08:09Z", "file.txt")
 
