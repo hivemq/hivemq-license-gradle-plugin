@@ -265,8 +265,9 @@ object LicenseResolver {
     // ranks them once the whole expression is read, so an alternative is never chosen before an enclosing AND adds
     // to it. An unknown license satisfies nothing; a syntax error is tracked apart, so "MIT OR )" is not satisfied
     // by its MIT. An alternative that adds licenses to another can never rank better, so it is dropped as soon as it
-    // appears, and an expression that produces more candidates than MAX_CANDIDATES, keeps more alternatives than
-    // MAX_OPTIONS, or nests parentheses deeper than MAX_DEPTH, is not evaluated.
+    // appears. A candidate seen before, and an AND operand every alternative already includes, cost nothing; an
+    // expression that produces more candidates than MAX_CANDIDATES, keeps more alternatives than MAX_OPTIONS, or
+    // nests parentheses deeper than MAX_DEPTH, is not evaluated.
     private class SpdxExpression(expression: String) {
         private val tokens = TOKEN.findAll(expression).map { it.value }.toList()
         private var position = 0
@@ -288,13 +289,20 @@ object LicenseResolver {
 
         // disjunction := conjunction ("OR" conjunction)*
         private fun disjunction(): List<Set<KnownLicense>> {
-            val options = conjunction().toMutableList()
-            while (acceptOperator("OR")) {
-                for (alternative in conjunction()) {
-                    add(options, alternative)
-                }
+            val first = conjunction()
+            // a lone conjunction already holds no option that covers another
+            if (!acceptOperator("OR")) return first
+            // the alternatives were produced, and charged where they were products, by their conjunctions
+            val options = Options()
+            for (alternative in first) {
+                options.add(alternative, charged = false)
             }
-            return options
+            do {
+                for (alternative in conjunction()) {
+                    options.add(alternative, charged = false)
+                }
+            } while (acceptOperator("OR"))
+            return options.list
         }
 
         // conjunction := term ("AND" term)*
@@ -302,31 +310,40 @@ object LicenseResolver {
             var options = term()
             while (acceptOperator("AND")) {
                 val operand = term()
-                val combined = mutableListOf<Set<KnownLicense>>()
+                // an operand every alternative already includes leaves them as they are
+                if (operand.isNotEmpty() && options.all { left -> operand.all(left::containsAll) }) continue
+                val combined = Options()
                 for (left in options) {
                     if (!withinBudget) break
                     for (right in operand) {
-                        add(combined, left + right)
+                        combined.add(left + right, charged = true)
                     }
                 }
-                options = combined
+                options = combined.list
             }
             return options
         }
 
-        // Adds a candidate unless an option it covers exists already, and drops the options that cover it. Gives up
-        // once the candidates or the options kept exceed the budget.
-        private fun add(options: MutableList<Set<KnownLicense>>, candidate: Set<KnownLicense>) {
-            if (!withinBudget) return
-            if (++candidates > MAX_CANDIDATES) {
-                withinBudget = false
-                return
-            }
-            if (options.any { candidate.containsAll(it) }) return
-            options.removeAll { it.containsAll(candidate) }
-            options += candidate
-            if (options.size > MAX_OPTIONS) {
-                withinBudget = false
+        // The alternatives collected so far. A candidate is kept unless an option it covers exists already, and it
+        // drops the options that cover it. A candidate seen before costs nothing; a charged one, which is every
+        // product of a conjunction, counts against the budget, and the expression is given up once the candidates or
+        // the options kept exceed it.
+        private inner class Options {
+            val list = mutableListOf<Set<KnownLicense>>()
+            private val seen = HashSet<Set<KnownLicense>>()
+
+            fun add(candidate: Set<KnownLicense>, charged: Boolean) {
+                if (!withinBudget || !seen.add(candidate)) return
+                if (charged && ++candidates > MAX_CANDIDATES) {
+                    withinBudget = false
+                    return
+                }
+                if (list.any { candidate.containsAll(it) }) return
+                list.removeAll { it.containsAll(candidate) }
+                list += candidate
+                if (list.size > MAX_OPTIONS) {
+                    withinBudget = false
+                }
             }
         }
 
