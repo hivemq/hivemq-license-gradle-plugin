@@ -18,6 +18,7 @@ package com.hivemq.tools.license.gradle
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 
@@ -1024,6 +1025,49 @@ class LicenseResolverResolveLicensesTest {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
         }.isInstanceOf(IllegalStateException::class.java)
             .hasMessageContaining(": $expression (SPDX expression too complex to evaluate)")
+    }
+
+    @Test
+    fun `resolves an SPDX disjunction that repeats one license beyond the candidate budget`() {
+        val bom = writeExpressionBom(List(20_000) { "MIT" }.joinToString(" OR "))
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.MIT)
+    }
+
+    @Test
+    fun `resolves an SPDX conjunction that repeats one license beyond the candidate budget`() {
+        val bom = writeExpressionBom(List(20_000) { "(MIT)" }.joinToString(" AND "))
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.MIT)
+    }
+
+    @Test
+    @Timeout(10)
+    fun `resolves an SPDX conjunction that repeats an operand its alternatives contain in bounded time`() {
+        // ten pairs without MIT give 1024 alternatives; every further "AND MIT" must not rescan them all
+        val ids = LicenseResolver.SPDX_ID_MAP.keys.filter { ' ' !in it && it != "MIT" }.take(20)
+        val pairs = ids.chunked(2).joinToString(" AND ") { (a, b) -> "($a OR $b)" }
+        val bom = writeExpressionBom("MIT AND $pairs AND " + List(1_000) { "MIT" }.joinToString(" AND "))
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).hasSize(11).contains(KnownLicense.MIT)
+    }
+
+    @Test
+    @Timeout(10)
+    fun `resolves an SPDX expression nested in many parentheses in bounded time`() {
+        val ids = LicenseResolver.SPDX_ID_MAP.keys.filter { ' ' !in it }.take(20)
+        val pairs = ids.chunked(2).joinToString(" AND ") { (a, b) -> "($a OR $b)" }
+        val bom = writeExpressionBom("(".repeat(30) + pairs + ")".repeat(30))
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result["com.example:expr-lib"]!!.licenses).hasSize(10)
     }
 
     @Test
