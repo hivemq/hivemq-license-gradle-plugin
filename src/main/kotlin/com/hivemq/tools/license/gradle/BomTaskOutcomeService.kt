@@ -76,6 +76,10 @@ abstract class BomTaskOutcomeService : BuildService<BuildServiceParameters.None>
         originFuture(taskPath).get(eventWait.toMillis(), TimeUnit.MILLISECONDS)
     } catch (_: TimeoutException) {
         null
+    } catch (_: InterruptedException) {
+        // a cancelled build: the failure message is still worth more than this detail
+        Thread.currentThread().interrupt()
+        null
     }
 
     companion object {

@@ -129,6 +129,16 @@ class BomTaskOutcomeServiceTest {
     }
 
     @Test
+    fun `an interrupted wait has no origin and keeps the interrupt flag`() {
+        Thread.currentThread().interrupt()
+
+        val origin = service.originOf(":cyclonedxDirectBom")
+
+        assertThat(Thread.interrupted()).isTrue()
+        assertThat(origin).isNull()
+    }
+
+    @Test
     fun `only the BOM task is recorded`() {
         service.onFinish(taskFinished(":compileJava", success(fromCache = true, upToDate = true)))
         service.onFinish(taskFinished(":cyclonedxDirectBom", success(fromCache = false, upToDate = false)))
