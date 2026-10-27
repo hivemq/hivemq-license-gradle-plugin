@@ -1,0 +1,77 @@
+/*
+ * Copyright 2020-present HiveMQ and the HiveMQ Community
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.hivemq.tools.license.gradle
+
+import java.io.File
+import java.util.concurrent.TimeUnit
+
+/**
+ * Runs git inside temporary test directories.
+ *
+ * The environment is isolated because the machine's global git config, hooks, inherited `GIT_*` variables and an
+ * enclosing repository (a temporary directory may lie inside one) would otherwise leak into the tests and change
+ * their outcome.
+ */
+internal object GitTestRepository {
+
+    /**
+     * This JVM's environment without the machine's git settings and `SOURCE_DATE_EPOCH`, plus [extra]. The ceiling
+     * keeps git from treating a temporary directory inside some repository as part of it.
+     */
+    fun isolatedEnv(projectDir: File, extra: Map<String, String> = emptyMap()): Map<String, String> =
+        System.getenv().filterKeys { !it.startsWith("GIT_") && it != "SOURCE_DATE_EPOCH" } + mapOf(
+            "GIT_CONFIG_GLOBAL" to "/dev/null",
+            "GIT_CONFIG_NOSYSTEM" to "1",
+            "GIT_CEILING_DIRECTORIES" to projectDir.parent,
+            "GIT_AUTHOR_NAME" to "test",
+            "GIT_AUTHOR_EMAIL" to "test@example.com",
+            "GIT_COMMITTER_NAME" to "test",
+            "GIT_COMMITTER_EMAIL" to "test@example.com",
+        ) + extra
+
+    /** Runs `git [args]` in [dir] with the isolated environment plus [env]; fails with the output on error. */
+    fun git(dir: File, vararg args: String, env: Map<String, String> = emptyMap()) {
+        val process = ProcessBuilder("git", *args)
+            .directory(dir)
+            .redirectErrorStream(true)
+            .apply {
+                environment().clear()
+                environment().putAll(isolatedEnv(dir, env))
+            }
+            .start()
+        val output = process.inputStream.bufferedReader().readText()
+        check(process.waitFor(1, TimeUnit.MINUTES) && process.exitValue() == 0) {
+            "git ${args.joinToString(" ")} failed: $output"
+        }
+    }
+
+    /**
+     * Turns [dir] into a repository (if needed) with one commit of [fileName], authored and committed at [timestamp].
+     * The file is written with placeholder content when it does not exist yet.
+     */
+    fun commitAt(dir: File, timestamp: String, fileName: String) {
+        val file = dir.resolve(fileName)
+        if (!file.exists()) {
+            file.writeText("content")
+        }
+        git(dir, "init", "-q")
+        git(dir, "add", fileName)
+        git(
+            dir, "commit", "-q", "-m", "init",
+            env = mapOf("GIT_AUTHOR_DATE" to timestamp, "GIT_COMMITTER_DATE" to timestamp),
+        )
+    }
+}

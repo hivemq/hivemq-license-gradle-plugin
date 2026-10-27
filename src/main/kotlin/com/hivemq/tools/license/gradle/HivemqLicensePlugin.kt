@@ -19,6 +19,7 @@ import org.cyclonedx.gradle.CyclonedxDirectTask
 import org.cyclonedx.gradle.CyclonedxPlugin
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.gradle.api.attributes.Category
 import org.gradle.build.event.BuildEventsListenerRegistry
 import javax.inject.Inject
 
@@ -29,6 +30,14 @@ abstract class HivemqLicensePlugin @Inject constructor(
     override fun apply(project: Project) {
         val extension = project.extensions.create("hivemqLicense", HivemqLicenseExtensionImpl::class.java)
         extension.projectName.convention(project.name)
+        extension.sbomName.convention(project.name)
+        extension.sbomTimestamp.convention(
+            project.providers.of(SbomTimestampSource::class.java) {
+                parameters.sourceDateEpoch.set(project.providers.environmentVariable("SOURCE_DATE_EPOCH"))
+                parameters.projectDirectory.set(project.layout.projectDirectory)
+                parameters.projectPath.set(project.path)
+            }
+        )
 
         project.plugins.apply(CyclonedxPlugin::class.java)
 
@@ -112,11 +121,38 @@ abstract class HivemqLicensePlugin @Inject constructor(
             outputFileNamePrefix.convention("")
             outputDirectory.set(extension.thirdPartyLicenseDirectory)
         }
+
+        val generateSbom = project.tasks.register(SBOM_TASK_NAME, GenerateSbomTask::class.java) {
+            group = TASK_GROUP
+            description =
+                "Writes a reproducible CycloneDX SBOM (<sbomName>.cdx.json) from the cyclonedxDirectBom output."
+            bom.set(cyclonedxJsonOutput)
+            timestamp.set(extension.sbomTimestamp)
+            outputFile.set(
+                extension.sbomName.flatMap { name -> project.layout.buildDirectory.file("sbom/$name.cdx.json") }
+            )
+        }
+
+        // other builds collect the SBOM through this variant, by its Category attribute
+        project.configurations.create(SBOM_CONFIGURATION_NAME) {
+            isCanBeConsumed = true
+            isCanBeResolved = false
+            attributes.attribute(
+                Category.CATEGORY_ATTRIBUTE,
+                project.objects.named(Category::class.java, SBOM_CATEGORY)
+            )
+            outgoing.artifact(generateSbom.flatMap { it.outputFile })
+        }
     }
 
     companion object {
         /** The CycloneDX task whose BOM the license tasks read. */
         const val BOM_TASK_NAME = "cyclonedxDirectBom"
+
+        /** The task that writes the reproducible SBOM and the variant that carries it. */
+        const val SBOM_TASK_NAME = "generateSbom"
+        const val SBOM_CONFIGURATION_NAME = "sbomElements"
+        const val SBOM_CATEGORY = "sbom"
 
         private const val TASK_GROUP = "hivemq license"
     }

@@ -19,6 +19,7 @@ import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
+import java.time.Instant
 
 interface HivemqLicenseExtension {
     val projectName: Property<String>
@@ -27,4 +28,13 @@ interface HivemqLicenseExtension {
     val allowedArtifacts: SetProperty<String>
     val additionalConfigurations: SetProperty<String>
     val overriddenLicenses: MapProperty<String, String>
+
+    /** File name of the SBOM written by `generateSbom`, without the `.cdx.json` suffix; the project name by default. */
+    val sbomName: Property<String>
+
+    /**
+     * `metadata.timestamp` of that SBOM. Defaults to `SOURCE_DATE_EPOCH`, else the time of the repository's HEAD
+     * commit (`git log -1`), else the current time (with a warning, because the file is then not reproducible).
+     */
+    val sbomTimestamp: Property<Instant>
 }
