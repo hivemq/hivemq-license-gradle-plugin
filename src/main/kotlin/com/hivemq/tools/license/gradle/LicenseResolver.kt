@@ -154,8 +154,8 @@ object LicenseResolver {
             }
             val chosenLicenses = chooseOption(options.map { it.licenses })
             if (chosenLicenses == null) {
-                problems += "License not on the approved list for '$coordinates': ${options.joinToString { it.name }}" +
-                        describeUnresolvedMetadata(component)
+                problems += "License not on the approved list for '$coordinates'${describeUnresolvedMetadata(component)}: " +
+                        options.joinToString { it.name }
                 continue
             }
             entries[coordinates.moduleId] = ResolvedDependency(coordinates, chosenLicenses)
@@ -181,7 +181,7 @@ object LicenseResolver {
             ?.firstOrNull { it.name == METADATA_UNRESOLVED_PROPERTY }
             ?.value
             ?: return ""
-        return ", its Maven metadata is incomplete ($reason)"
+        return " (its Maven metadata is incomplete: $reason)"
     }
 
     private fun failOnProblems(source: LicenseSource, problems: List<String>) {

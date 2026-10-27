@@ -1131,7 +1131,7 @@ class LicenseResolverResolveLicensesTest {
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
         }.isInstanceOf(IllegalStateException::class.java)
-            .hasMessageContaining("No license found for 'com.example:unreadable-lib:1.0.0', its Maven metadata is incomplete (pom-unparseable)")
+            .hasMessageContaining("No license found for 'com.example:unreadable-lib:1.0.0' (its Maven metadata is incomplete: pom-unparseable)")
     }
 
     @Test
@@ -1159,7 +1159,7 @@ class LicenseResolverResolveLicensesTest {
         assertThatThrownBy {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
         }.isInstanceOf(IllegalStateException::class.java)
-            .hasMessageContaining("License not on the approved list for 'com.example:partial-lib:1.0.0': Some Proprietary License, its Maven metadata is incomplete (parent-unresolved)")
+            .hasMessageContaining("License not on the approved list for 'com.example:partial-lib:1.0.0' (its Maven metadata is incomplete: parent-unresolved): Some Proprietary License")
     }
 
     @Test
