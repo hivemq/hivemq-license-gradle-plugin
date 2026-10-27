@@ -68,9 +68,13 @@ signing {
     if (!signingKey.isNullOrBlank()) {
         useInMemoryPgpKeys(signingKey, signingPassword.orEmpty())
     }
-    // A release must be signed, so publishing to the Plugin Portal fails without a key. Every other publication,
-    // the test repository the tests depend on included, is left unsigned when there is no key.
-    isRequired = gradle.startParameter.taskNames.any { it.substringAfterLast(':') == "publishPlugins" }
+}
+
+// Only a Plugin Portal release is signed, and it must be: signing stays required, so a release without a key fails at
+// the Sign tasks. The publish to the test repository the tests depend on never runs them, with or without a key.
+gradle.taskGraph.whenReady {
+    val pluginPortalRelease = hasTask(":publishPlugins")
+    allTasks.filterIsInstance<Sign>().forEach { it.enabled = pluginPortalRelease }
 }
 
 @Suppress("UnstableApiUsage")
