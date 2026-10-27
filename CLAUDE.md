@@ -18,13 +18,16 @@ Gradle plugin that generates and validates third-party license reports from Cycl
 - `src/main/kotlin/com/hivemq/tools/license/gradle/HivemqLicensePlugin.kt` — Plugin entry point
 - `src/main/kotlin/com/hivemq/tools/license/gradle/LicenseResolvingTask.kt`, shared inputs of both tasks and the license resolution call
 - `src/main/kotlin/com/hivemq/tools/license/gradle/BomTaskOutcomeService.kt`, build service recording how the BOM task finished, so a failure can say where the BOM came from
+- `src/main/kotlin/com/hivemq/tools/license/gradle/SbomNormalizer.kt`, rewrites the CycloneDX JSON so identical inputs give identical bytes (timestamp, serial number, ordering, CI references)
+- `src/main/kotlin/com/hivemq/tools/license/gradle/GenerateSbomTask.kt`, the cacheable task around it; the plugin registers it as `generateSbom` and exposes the file as the `sbomElements` variant
+- `src/main/kotlin/com/hivemq/tools/license/gradle/SbomTimestampSource.kt`, the value source behind the default `sbomTimestamp` (`SOURCE_DATE_EPOCH`, then the HEAD commit time, then now with a warning)
 
 ## Conventions
 
 - `KnownLicense` enum entries are sorted alphabetically
 - `LICENSE_ORDER` defines priority (not alphabetical) — higher priority = earlier in list
 - Tests are organized by section with comment headers (e.g., `// --- Section ---`) and sorted alphabetically within sections
-- Test classes touched when adding a license: `LicenseTest`, `LicenseResolverMetadataTest`, `LicenseResolverConvertLicenseTest`, `LicenseResolverChooseLicenseTest`; the resolver, the build service and the plugin wiring have their own (`LicenseResolverResolveLicensesTest`, `BomTaskOutcomeServiceTest`, `HivemqLicensePluginIntegrationTest`)
+- Test classes touched when adding a license: `LicenseTest`, `LicenseResolverMetadataTest`, `LicenseResolverConvertLicenseTest`, `LicenseResolverChooseLicenseTest`; the resolver, the build service and the plugin wiring have their own (`LicenseResolverResolveLicensesTest`, `BomTaskOutcomeServiceTest`, `HivemqLicensePluginIntegrationTest`); the SBOM has `SbomNormalizerTest`, `GenerateSbomTaskTest`, `GenerateSbomIntegrationTest` and `SbomTimestampSourceTest`
 
 ## Adding a New License
 

@@ -31,6 +31,8 @@ The `hivemqLicense` extension provides the following properties:
 | `allowedArtifacts`           | `SetProperty<String>`         | `["com.hivemq:hivemq-mqtt-client"]` | No       | Specific artifacts to include despite matching an ignored group prefix |
 | `additionalConfigurations`   | `SetProperty<String>`         | `[]`                                | No       | Extra Gradle configurations to include in the CycloneDX BOM            |
 | `overriddenLicenses`         | `MapProperty<String, String>` | `{}`                                | No       | Override license SPDX IDs for specific artifacts                       |
+| `sbomName`                   | `Property<String>`            | `project.name`                      | No       | File name of the SBOM written by `generateSbom` (without `.cdx.json`)  |
+| `sbomTimestamp`              | `Property<Instant>`           | see `generateSbom`                  | No       | `metadata.timestamp` of that SBOM                                      |
 
 ### Advanced Example
 
@@ -54,6 +56,7 @@ hivemqLicense {
 |----------------------------|--------------------------------------------------------------|
 | `checkApprovedLicenses`    | Validates that all dependencies have approved licenses       |
 | `updateThirdPartyLicenses` | Generates third-party license reports from the CycloneDX BOM |
+| `generateSbom`             | Writes a reproducible CycloneDX SBOM from the CycloneDX BOM  |
 
 ### checkApprovedLicenses
 
@@ -76,6 +79,50 @@ an unapproved or unknown license.
 Both reports contain a table with the following columns: Module, Version, License ID, and License URL.
 
 The `outputFileNamePrefix` property can be set to prefix the output file names, which is useful when generating multiple reports (e.g. backend and frontend) into the same directory.
+
+### generateSbom
+
+Writes `build/sbom/<sbomName>.cdx.json`, a CycloneDX JSON SBOM derived from the `cyclonedxDirectBom` output.
+Nothing ships it by itself: add it to a distribution or image where the product is assembled, for example
+`from(tasks.named("generateSbom")) { into("sbom") }` in a `Zip` task.
+
+The CycloneDX Gradle plugin writes a file that differs on every run (current time, random serial number, the CI run
+URL, the git remote in the form the clone used), which changes every archive that contains it and defeats the build
+cache. `generateSbom` writes the same bytes for the same dependencies and timestamp:
+
+- `metadata.timestamp` is `sbomTimestamp`. Without a value the plugin uses `SOURCE_DATE_EPOCH`, then the time of the
+  repository's HEAD commit (`git log -1` in the project directory), then the current time with a warning. A missing
+  `git` binary also falls back to the current time; a `SOURCE_DATE_EPOCH` that is not a number fails the build.
+- `serialNumber` is a UUID computed from the content.
+- `dependencies` and their `dependsOn` lists are sorted.
+- The `build-system` external reference is dropped, and a GitHub `vcs` reference is written as
+  `https://github.com/<org>/<repo>`.
+
+In a Kotlin DSL build script, setting `sbomTimestamp` needs the import, because `java.time.Instant` written out in
+full does not resolve once the `java` plugin is applied:
+
+```kotlin
+import java.time.Instant
+
+hivemqLicense {
+    sbomTimestamp.set(Instant.parse("2026-01-02T03:04:05Z"))
+}
+```
+
+The file is also available to other builds as the `sbomElements` variant (attribute `Category=sbom`):
+
+```kotlin
+val sboms by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    attributes {
+        attribute(Category.CATEGORY_ATTRIBUTE, objects.named("sbom"))
+    }
+}
+dependencies {
+    sboms(project(":some-component"))
+}
+```
 
 ### Custom License Tasks
 
