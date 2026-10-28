@@ -19,7 +19,11 @@ import org.cyclonedx.gradle.CyclonedxDirectTask
 import org.cyclonedx.gradle.CyclonedxPlugin
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.result.ResolvedArtifactResult
 import org.gradle.api.attributes.Category
+import org.gradle.api.provider.Provider
+import org.gradle.api.tasks.bundling.Jar
 import org.gradle.build.event.BuildEventsListenerRegistry
 import org.gradle.util.GradleVersion
 import javax.inject.Inject
@@ -39,6 +43,13 @@ abstract class HivemqLicensePlugin @Inject constructor(
                 parameters.projectPath.set(project.path)
             }
         )
+        extension.sbomCreatorName.convention("HiveMQ GmbH")
+        extension.sbomCreator.convention("security@hivemq.com")
+        project.pluginManager.withPlugin("java") {
+            extension.sbomArtifactFileName.convention(
+                project.tasks.named("jar", Jar::class.java).flatMap { it.archiveFileName }
+            )
+        }
 
         project.plugins.apply(CyclonedxPlugin::class.java)
 
@@ -62,7 +73,7 @@ abstract class HivemqLicensePlugin @Inject constructor(
 
         project.afterEvaluate {
             for (configName in extension.additionalConfigurations.get()) {
-                project.configurations.create("hivemqLicense_$configName") {
+                project.configurations.create("$WRAPPER_CONFIGURATION_PREFIX$configName") {
                     isCanBeConsumed = false
                     isCanBeResolved = true
                     extendsFrom(project.configurations.getByName(configName))
@@ -73,11 +84,7 @@ abstract class HivemqLicensePlugin @Inject constructor(
         val cyclonedxDirectBom = project.tasks.named(BOM_TASK_NAME, CyclonedxDirectTask::class.java)
         cyclonedxDirectBom.configure {
             projectType.set(org.cyclonedx.model.Component.Type.APPLICATION)
-            includeConfigs.set(
-                extension.additionalConfigurations.map { additionalConfigs ->
-                    listOf("runtimeClasspath") + additionalConfigs.map { "hivemqLicense_$it" }
-                }
-            )
+            includeConfigs.set(bomConfigurationNames(extension))
         }
 
         val cyclonedxJsonOutput = cyclonedxDirectBom.flatMap { it.jsonOutput }
@@ -134,6 +141,13 @@ abstract class HivemqLicensePlugin @Inject constructor(
                     parameters.projectDirectory.set(project.layout.projectDirectory)
                 }
             )
+            creatorName.set(extension.sbomCreatorName)
+            creator.set(extension.sbomCreator)
+            artifactFileName.set(extension.sbomArtifactFileName)
+            artifactFileNames.set(resolvedArtifactFileNames(project, extension))
+            ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
+            allowedArtifacts.set(extension.allowedArtifacts)
+            overriddenLicenses.set(extension.overriddenLicenses)
             outputFile.set(
                 extension.sbomName.flatMap { name -> project.layout.buildDirectory.file("sbom/$name.cdx.json") }
             )
@@ -160,6 +174,51 @@ abstract class HivemqLicensePlugin @Inject constructor(
         }
     }
 
+    /**
+     * Names of the configurations the BOM is built from: `runtimeClasspath`, then the wrapper of each additional
+     * configuration. The wrappers are only created after evaluation, so this is a provider of names, not of
+     * configurations.
+     */
+    private fun bomConfigurationNames(extension: HivemqLicenseExtension): Provider<List<String>> =
+        extension.additionalConfigurations.map { additionalConfigs ->
+            listOf("runtimeClasspath") + additionalConfigs.map { "$WRAPPER_CONFIGURATION_PREFIX$it" }
+        }
+
+    /**
+     * `group:name:version` to file name of the module artifacts of the configurations the BOM is built from. The
+     * configurations are looked up when Gradle queries the value, after evaluation, because the wrappers are only
+     * created then.
+     */
+    private fun resolvedArtifactFileNames(
+        project: Project,
+        extension: HivemqLicenseExtension,
+    ): Provider<Map<String, String>> {
+        val configurations = project.configurations
+        val noArtifacts = project.provider { emptyList<ResolvedArtifactResult>() }
+        return bomConfigurationNames(extension).flatMap { names ->
+            // in name order, keeping the first file of a component: that is how CycloneDX picks the file it hashes
+            names.sorted()
+                .mapNotNull { configurations.findByName(it) }
+                .map { configuration ->
+                    configuration.incoming.artifactView {
+                        // modules only, like CycloneDX: the artifact of a project or a file may have to be built
+                        componentFilter { it is ModuleComponentIdentifier }
+                        // like CycloneDX too, which leaves out what fails to resolve instead of failing
+                        lenient(true)
+                    }.artifacts.resolvedArtifacts
+                }
+                .fold(noArtifacts) { all, artifacts -> all.zip(artifacts) { left, right -> left + right } }
+                .map { artifacts ->
+                    buildMap {
+                        for (artifact in artifacts) {
+                            val id = artifact.id.componentIdentifier as? ModuleComponentIdentifier ?: continue
+                            putIfAbsent(Coordinates(id.group, id.module, id.version).toString(), artifact.file.name)
+                        }
+                    }
+                }
+        }
+    }
+
     companion object {
         /** The CycloneDX task whose BOM the license tasks read. */
         const val BOM_TASK_NAME = "cyclonedxDirectBom"
@@ -170,5 +229,8 @@ abstract class HivemqLicensePlugin @Inject constructor(
         const val SBOM_CATEGORY = "sbom"
 
         private const val TASK_GROUP = "hivemq license"
+
+        /** Prefix of the resolvable wrapper the plugin creates for each additional configuration. */
+        private const val WRAPPER_CONFIGURATION_PREFIX = "hivemqLicense_"
     }
 }

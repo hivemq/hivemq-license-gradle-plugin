@@ -15,6 +15,7 @@
  */
 package com.hivemq.tools.license.gradle
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.assertj.core.api.Assertions.assertThat
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
@@ -67,6 +68,178 @@ class GenerateSbomIntegrationTest {
     private val fixedTimestamp = """sbomTimestamp.set(Instant.parse("2026-01-02T03:04:05Z"))"""
 
     private fun sbom() = projectDir.resolve("build/sbom/sbom-project.cdx.json")
+
+    private val mapper = ObjectMapper()
+
+    // --- Content ---
+
+    @Test
+    fun `describes the dependencies with their files, licenses and creators`() {
+        setup(fixedTimestamp)
+
+        gradleRunner("generateSbom").build()
+
+        val sbom = mapper.readTree(sbom())
+        val guava = sbom["components"].first { it["name"].asText() == "guava" }
+        assertThat(guava["properties"].map { it["name"].asText() to it["value"].asText() })
+            .contains(
+                "bsi:component:filename" to "guava-33.4.0-jre.jar",
+                "bsi:component:executable" to "executable",
+                "bsi:component:archive" to "archive",
+                "bsi:component:structured" to "structured",
+            )
+        assertThat(guava["licenses"].map { it["license"]["id"].asText() to it["license"]["acknowledgement"].asText() })
+            .containsExactly("Apache-2.0" to "declared", "Apache-2.0" to "concluded")
+        // The creator reference comes from the <organization> and <scm> elements of a component's own POM. Guava's POM
+        // has neither, only a project <url>, which is not used, so the creator is asserted on checker-qual instead.
+        val checkerQual = sbom["components"].first { it["name"].asText() == "checker-qual" }
+        assertThat(checkerQual["manufacturer"]["url"][0].asText())
+            .startsWith("https://github.com/typetools/checker-framework")
+        assertThat(sbom["metadata"]["manufacturer"]["name"].asText()).isEqualTo("HiveMQ GmbH")
+        assertThat(sbom["metadata"]["manufacturer"]["contact"][0]["email"].asText()).isEqualTo("security@hivemq.com")
+        assertThat(sbom["metadata"]["component"]["properties"].map { it["value"].asText() })
+            .contains("sbom-project.jar")
+        assertThat(sbom["compositions"][0]["aggregate"].asText()).isEqualTo("complete")
+    }
+
+    @Test
+    fun `describes the files of the additional configurations`() {
+        setup("additionalConfigurations.add(\"extra\")\n$fixedTimestamp", externalDependencies = false)
+        // the plugin creates the configuration it resolves, hivemqLicense_extra, only after the build script ran
+        projectDir.resolve("build.gradle.kts").appendText(
+            "\n" + """
+            val extra by configurations.creating
+            repositories {
+                mavenCentral()
+            }
+            dependencies {
+                extra("org.slf4j:slf4j-api:2.0.16")
+            }
+            """.trimIndent()
+        )
+
+        gradleRunner("generateSbom").build()
+
+        val slf4j = mapper.readTree(sbom())["components"].first { it["name"].asText() == "slf4j-api" }
+        assertThat(slf4j["properties"].map { it["name"].asText() to it["value"].asText() })
+            .contains("bsi:component:filename" to "slf4j-api-2.0.16.jar")
+    }
+
+    @Test
+    fun `does not build the jar or the jars of project dependencies`() {
+        projectDir.resolve("settings.gradle.kts").writeText(
+            """
+            rootProject.name = "multi-project"
+            include("lib", "app")
+            """.trimIndent()
+        )
+        projectDir.resolve("lib").mkdirs()
+        projectDir.resolve("lib/build.gradle.kts").writeText(
+            """
+            plugins {
+                java
+            }
+            """.trimIndent()
+        )
+        projectDir.resolve("app").mkdirs()
+        projectDir.resolve("app/build.gradle.kts").writeText(
+            """
+            import java.time.Instant
+
+            plugins {
+                java
+                id("com.hivemq.tools.license")
+            }
+            hivemqLicense {
+                thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+                $fixedTimestamp
+            }
+            dependencies {
+                implementation(project(":lib"))
+            }
+            """.trimIndent()
+        )
+
+        val result = gradleRunner(":app:generateSbom").build()
+
+        assertThat(result.task(":app:generateSbom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":app:jar")).isNull()
+        assertThat(result.task(":lib:jar")).isNull()
+        val sbom = mapper.readTree(projectDir.resolve("app/build/sbom/app.cdx.json"))
+        assertThat(sbom["metadata"]["component"].path("properties").map { it["value"].asText() }).contains("app.jar")
+        // a project has no Maven coordinates, so its component gets no file
+        val lib = sbom["components"].first { it["name"].asText() == "lib" }
+        assertThat(lib.path("properties").map { it["name"].asText() }).doesNotContain("bsi:component:filename")
+    }
+
+    @Test
+    fun `keeps the file names when the configuration cache is reused`() {
+        setup(fixedTimestamp)
+        // Compiles the build script first: compiling it in a configuration-cache run records system properties that
+        // change between TestKit runs, which would discard the entry.
+        gradleRunner("help").build()
+        val args = arrayOf("generateSbom", "--configuration-cache")
+        gradleRunner(*args).build()
+        // without its output the task runs again, with the inputs read from the stored entry
+        projectDir.resolve("build/sbom").deleteRecursively()
+
+        val result = gradleRunner(*args).build()
+
+        assertThat(result.output).contains("Reusing configuration cache")
+        assertThat(result.task(":generateSbom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        val guava = mapper.readTree(sbom())["components"].first { it["name"].asText() == "guava" }
+        assertThat(guava["properties"].map { it["name"].asText() to it["value"].asText() })
+            .contains("bsi:component:filename" to "guava-33.4.0-jre.jar")
+    }
+
+    @Test
+    fun `names no file without the java plugin`() {
+        projectDir.resolve("settings.gradle.kts").writeText("""rootProject.name = "plain-project"""")
+        projectDir.resolve("build.gradle.kts").writeText(
+            """
+            import java.time.Instant
+
+            plugins {
+                base
+                id("com.hivemq.tools.license")
+            }
+            hivemqLicense {
+                thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+                $fixedTimestamp
+            }
+            """.trimIndent()
+        )
+
+        val result = gradleRunner("generateSbom").build()
+
+        assertThat(result.task(":generateSbom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        val sbom = mapper.readTree(projectDir.resolve("build/sbom/plain-project.cdx.json"))
+        assertThat(sbom["metadata"]["component"].path("properties").map { it["name"].asText() })
+            .doesNotContain("bsi:component:filename")
+    }
+
+    @Test
+    fun `overriddenLicenses sets the concluded license of a dependency`() {
+        setup("overriddenLicenses.put(\"com.google.guava:guava\", \"MIT\")\n$fixedTimestamp")
+
+        gradleRunner("generateSbom").build()
+
+        val guava = mapper.readTree(sbom())["components"].first { it["name"].asText() == "guava" }
+        val concluded = guava["licenses"].filter { it["license"]["acknowledgement"].asText() == "concluded" }
+        assertThat(concluded)
+            .containsExactly(mapper.readTree("""{ "license": { "id": "MIT", "acknowledgement": "concluded" } }"""))
+    }
+
+    @Test
+    fun `sbomCreator and sbomArtifactFileName override the defaults`() {
+        setup("sbomCreator.set(\"security@example.com\")\nsbomArtifactFileName.set(\"hivemq.jar\")\n$fixedTimestamp")
+
+        gradleRunner("generateSbom").build()
+
+        val sbom = mapper.readTree(sbom())
+        assertThat(sbom["metadata"]["manufacturer"]["contact"][0]["email"].asText()).isEqualTo("security@example.com")
+        assertThat(sbom["metadata"]["component"]["properties"].map { it["value"].asText() }).contains("hivemq.jar")
+    }
 
     // --- Output ---
 

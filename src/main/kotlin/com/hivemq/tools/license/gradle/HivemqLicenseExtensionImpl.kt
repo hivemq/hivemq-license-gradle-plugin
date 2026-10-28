@@ -38,4 +38,7 @@ abstract class HivemqLicenseExtensionImpl @Inject constructor(
         objectFactory.mapProperty(String::class.java, String::class.java).convention(emptyMap())
     override val sbomName: Property<String> = objectFactory.property(String::class.java)
     override val sbomTimestamp: Property<Instant> = objectFactory.property(Instant::class.java)
+    override val sbomCreatorName: Property<String> = objectFactory.property(String::class.java)
+    override val sbomCreator: Property<String> = objectFactory.property(String::class.java)
+    override val sbomArtifactFileName: Property<String> = objectFactory.property(String::class.java)
 }

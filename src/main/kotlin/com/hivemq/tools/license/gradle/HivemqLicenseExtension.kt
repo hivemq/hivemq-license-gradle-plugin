@@ -37,4 +37,16 @@ interface HivemqLicenseExtension {
      * commit (`git log -1`), else the current time (with a warning, because the file is then not reproducible).
      */
     val sbomTimestamp: Property<Instant>
+
+    /** Who creates the SBOM and ships the component, written as the manufacturer; "HiveMQ GmbH" by default. */
+    val sbomCreatorName: Property<String>
+
+    /** Email address or URL of that organisation; `security@hivemq.com` by default. */
+    val sbomCreator: Property<String>
+
+    /**
+     * File name of the shipped top-level artifact. The default is the archive file name of the `jar` task, and it
+     * exists only when the `java` plugin is applied; without that, the SBOM names no file unless this is set.
+     */
+    val sbomArtifactFileName: Property<String>
 }

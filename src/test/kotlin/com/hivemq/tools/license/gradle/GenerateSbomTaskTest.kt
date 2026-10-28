@@ -42,20 +42,37 @@ class GenerateSbomTaskTest {
               "serialNumber": "urn:uuid:fcc72669-6094-47f1-a9fe-81e7c08e2d54",
               "version": 1,
               "metadata": { "timestamp": "2026-10-16T10:01:10Z", "component": { "name": "app" } },
-              "components": []
+              "components": [
+                {
+                  "group": "org.example",
+                  "name": "lib",
+                  "version": "1.0",
+                  "purl": "pkg:maven/org.example/lib@1.0?type=jar",
+                  "licenses": [ { "license": { "id": "Apache-2.0" } } ]
+                }
+              ],
+              "dependencies": [ { "ref": "pkg:maven/org.example/lib@1.0?type=jar", "dependsOn": [] } ]
             }
             """.trimIndent()
         )
         projectDir.resolve("build.gradle.kts").writeText(
             """
             import com.hivemq.tools.license.gradle.GenerateSbomTask
+            import java.time.Instant
 
             plugins {
                 id("com.hivemq.tools.license")
             }
             tasks.register<GenerateSbomTask>("sbomFromFile") {
                 bom.set(layout.projectDirectory.file("bom.json"))
-                timestamp.set(java.time.Instant.parse("2026-01-02T03:04:05Z"))
+                timestamp.set(Instant.parse("2026-01-02T03:04:05Z"))
+                creatorName.set("HiveMQ GmbH")
+                creator.set("https://www.hivemq.com/")
+                artifactFileName.set("app-1.0.0.jar")
+                artifactFileNames.set(mapOf("org.example:lib:1.0" to "lib-1.0.jar"))
+                ignoredGroupPrefixes.set(setOf("com.hivemq"))
+                allowedArtifacts.set(emptySet())
+                overriddenLicenses.set(mapOf("org.example:lib" to "MIT"))
                 outputFile.set(layout.buildDirectory.file("sbom/app.cdx.json"))
             }
             """.trimIndent()
@@ -63,6 +80,37 @@ class GenerateSbomTaskTest {
     }
 
     // --- Output ---
+
+    @Test
+    fun `does not fail on a license that is not approved`() {
+        setup()
+        projectDir.resolve("bom.json").writeText(
+            projectDir.resolve("bom.json").readText().replace("Apache-2.0", "Proprietary-9.9")
+        )
+        projectDir.resolve("build.gradle.kts").writeText(
+            projectDir.resolve("build.gradle.kts").readText()
+                .replace("""mapOf("org.example:lib" to "MIT")""", "emptyMap()")
+        )
+
+        val result = gradleRunner().build()
+
+        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(projectDir.resolve("build/sbom/app.cdx.json").readText()).doesNotContain("concluded")
+    }
+
+    @Test
+    fun `fails naming the BOM file when a component cannot be read`() {
+        setup()
+        // valid JSON, but a component without a name and a version is not one the license resolver can map
+        projectDir.resolve("bom.json").writeText("""{ "components": [ { "group": "org.example" } ] }""")
+
+        val result = gradleRunner().buildAndFail()
+
+        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output)
+            .contains("Cannot write an SBOM from '")
+            .contains("bom.json': ")
+    }
 
     @Test
     fun `fails naming the BOM file when the input is not a BOM`() {
@@ -75,6 +123,35 @@ class GenerateSbomTaskTest {
         assertThat(result.output)
             .contains("Cannot write an SBOM from '")
             .contains("bom.json': The BOM is not a JSON object")
+    }
+
+    @Test
+    fun `fails naming the BOM file when the input is not valid JSON`() {
+        setup()
+        projectDir.resolve("bom.json").writeText("{")
+
+        val result = gradleRunner().buildAndFail()
+
+        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output)
+            .contains("Cannot write an SBOM from '")
+            .contains("bom.json': The BOM is not valid JSON: ")
+    }
+
+    @Test
+    fun `writes the creator, the file description and the concluded license`() {
+        setup()
+
+        gradleRunner().build()
+
+        val output = projectDir.resolve("build/sbom/app.cdx.json").readText()
+        assertThat(output)
+            .contains(""""name" : "HiveMQ GmbH"""")
+            .contains(""""bsi:component:filename"""")
+            .contains(""""value" : "lib-1.0.jar"""")
+            .contains(""""acknowledgement" : "declared"""")
+            .contains(""""id" : "MIT"""")
+            .contains(""""aggregate" : "complete"""")
     }
 
     @Test
