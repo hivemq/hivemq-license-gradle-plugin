@@ -15,7 +15,6 @@
  */
 package com.hivemq.tools.license.gradle
 
-import com.fasterxml.jackson.core.JsonProcessingException
 import com.fasterxml.jackson.core.util.DefaultIndenter
 import com.fasterxml.jackson.core.util.DefaultPrettyPrinter
 import com.fasterxml.jackson.databind.JsonNode
@@ -36,7 +35,7 @@ import java.util.UUID
  * reference taken from CI environment variables and a `vcs` reference from `GIT_URL` or the remote of the Gradle
  * daemon's working directory, in whatever form the clone used, so two builds of the same commit never produce the
  * same bytes. Every rule here removes one of those differences: the `vcs` reference is replaced by the project's own
- * remote, which the caller passes in.
+ * remote, which the caller passes in, and that repository URL is written as the `source-distribution` reference too.
  */
 object SbomNormalizer {
 
@@ -62,12 +61,11 @@ object SbomNormalizer {
     private val scpStyle = Regex("""^([^@/:]+)@([^@/:]+):(.+)$""")
 
     /**
-     * [vcsUrl], without credentials, becomes the only `vcs` reference; null, or a value that is not a network remote,
-     * leaves the SBOM without one.
+     * [vcsUrl], without credentials, becomes the only `vcs` reference and also the only `source-distribution` one;
+     * null, or a value that is not a network remote, leaves the SBOM without either.
      */
     fun normalize(bom: ByteArray, timestamp: Instant, vcsUrl: String?): ByteArray {
-        val root = read(bom) as? ObjectNode
-            ?: throw IllegalArgumentException("The BOM is not a JSON object")
+        val root = BomJson.read(bom)
 
         val metadata = when (val existing = root.get("metadata")) {
             null -> root.putObject("metadata")
@@ -85,13 +83,6 @@ object SbomNormalizer {
         return write(withSerialNumber(root, "urn:uuid:$serial"))
     }
 
-    private fun read(bom: ByteArray): JsonNode = try {
-        mapper.readTree(bom)
-    } catch (e: JsonProcessingException) {
-        val location = e.location?.let { " at line ${it.lineNr}, column ${it.columnNr}" }.orEmpty()
-        throw IllegalArgumentException("The BOM is not valid JSON: ${e.originalMessage}$location", e)
-    }
-
     private fun normalizeExternalReferences(component: ObjectNode, vcsUrl: String?) {
         val references = when (val existing = component.get("externalReferences")) {
             null -> mapper.createArrayNode()
@@ -105,10 +96,16 @@ object SbomNormalizer {
                 "build-system" -> continue
                 // CycloneDX's guess, replaced by the project's own remote below
                 "vcs" -> continue
+                // written below from the same remote, so a document that is normalized again must not collect another
+                "source-distribution" -> continue
             }
             kept.add(reference)
         }
-        vcsUrl?.let(::canonicalVcsUrl)?.let { kept.addObject().put("type", "vcs").put("url", it) }
+        vcsUrl?.let(::canonicalVcsUrl)?.let { url ->
+            kept.addObject().put("type", "vcs").put("url", url)
+            // the source of the project itself is its repository
+            kept.addObject().put("type", "source-distribution").put("url", url)
+        }
         // whether CycloneDX wrote references that were dropped above must not show in the output
         if (kept.isEmpty) {
             component.remove("externalReferences")

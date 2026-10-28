@@ -47,9 +47,9 @@ abstract class GenerateSbomTask : DefaultTask() {
     abstract val timestamp: Property<Instant>
 
     /**
-     * Written as the only `vcs` reference, canonicalized first by [SbomNormalizer]; without a value the SBOM has none.
-     * In a custom registration the raw value is a task input, which Gradle keeps in its task history, so it must not
-     * contain credentials.
+     * Written as the `vcs` and the `source-distribution` reference, canonicalized first by [SbomNormalizer]; without a
+     * value the SBOM has neither. In a custom registration the raw value is a task input, which Gradle keeps in its
+     * task history, so it must not contain credentials.
      */
     @get:Input
     @get:Optional

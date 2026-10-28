@@ -66,6 +66,10 @@ class SbomNormalizerTest {
 
     private fun references(bytes: ByteArray) = tree(bytes)["metadata"]["component"]["externalReferences"]
 
+    // The URL of every reference, each once. vcs and source-distribution carry the same remote, so a credential that
+    // reaches either one makes the list longer than the one URL the tests expect.
+    private fun referenceUrls(bytes: ByteArray) = references(bytes).map { it["url"].asText() }.distinct()
+
     private fun tree(bytes: ByteArray) = mapper.readTree(bytes)
 
     // --- Input ---
@@ -167,10 +171,11 @@ class SbomNormalizerTest {
     // --- External references ---
 
     @Test
-    fun `drops the vcs reference when the project has no remote`() {
+    fun `drops the vcs and source distribution references when the project has no remote`() {
         val website = """{"type":"website","url":"https://www.hivemq.com"}"""
         val vcs = """{"type":"vcs","url":"git@github.com:a/b.git"}"""
-        val input = """{"metadata":{"component":{"externalReferences":[$website,$vcs]}}}"""
+        val source = """{"type":"source-distribution","url":"git@github.com:a/b.git"}"""
+        val input = """{"metadata":{"component":{"externalReferences":[$website,$vcs,$source]}}}"""
 
         val result = normalize(input.toByteArray(), vcsUrl = null)
 
@@ -188,15 +193,14 @@ class SbomNormalizerTest {
     fun `removes the build-system reference`() {
         val result = normalize(vcsUrl = "git@github.com:hivemq/app.git")
 
-        assertThat(references(result).map { it["type"].asText() }).containsExactly("vcs")
+        assertThat(references(result).map { it["type"].asText() }).containsExactly("vcs", "source-distribution")
     }
 
     @Test
     fun `replaces the vcs reference CycloneDX wrote`() {
         val result = normalize(vcsUrl = "git@github.com:hivemq/app.git")
 
-        assertThat(references(result).map { "${it["type"].asText()} ${it["url"].asText()}" })
-            .containsExactly("vcs https://github.com/hivemq/app")
+        assertThat(referenceUrls(result)).containsExactly("https://github.com/hivemq/app")
     }
 
     @Test
@@ -217,9 +221,18 @@ class SbomNormalizerTest {
         val result = normalize(input.toByteArray(), vcsUrl = "git@github.com:a/b.git")
 
         val kept = references(result)
-        assertThat(kept).hasSize(2)
+        assertThat(kept).hasSize(3)
         assertThat(kept[0].asText()).isEqualTo("text")
         assertThat(kept[1]["url"].asText()).isEqualTo("https://github.com/a/b")
+        assertThat(kept[2]["type"].asText()).isEqualTo("source-distribution")
+    }
+
+    @Test
+    fun `writes the vcs url as the source distribution too`() {
+        val result = normalize(vcsUrl = "git@github.com:hivemq/app.git")
+
+        assertThat(references(result).map { "${it["type"].asText()} ${it["url"].asText()}" })
+            .containsExactly("vcs https://github.com/hivemq/app", "source-distribution https://github.com/hivemq/app")
     }
 
     // --- Remote URL ---
@@ -228,80 +241,77 @@ class SbomNormalizerTest {
     fun `canonicalizes a GitHub https remote with a git suffix`() {
         val result = normalize(vcsUrl = "https://github.com/hivemq/hivemq-kafka-extension.git")
 
-        assertThat(references(result).map { it["url"].asText() })
-            .containsExactly("https://github.com/hivemq/hivemq-kafka-extension")
+        assertThat(referenceUrls(result)).containsExactly("https://github.com/hivemq/hivemq-kafka-extension")
     }
 
     @Test
     fun `canonicalizes a GitHub https remote with a mixed-case host`() {
         val result = normalize(vcsUrl = "https://GitHub.com/hivemq/x.git")
 
-        assertThat(references(result).map { it["url"].asText() }).containsExactly("https://github.com/hivemq/x")
+        assertThat(referenceUrls(result)).containsExactly("https://github.com/hivemq/x")
     }
 
     @Test
     fun `canonicalizes a GitHub https remote with a token`() {
         val result = normalize(vcsUrl = "https://token@github.com/hivemq/x.git")
 
-        assertThat(references(result).map { it["url"].asText() }).containsExactly("https://github.com/hivemq/x")
+        assertThat(referenceUrls(result)).containsExactly("https://github.com/hivemq/x")
     }
 
     @Test
     fun `canonicalizes a GitHub https remote with the default port`() {
         val result = normalize(vcsUrl = "https://github.com:443/hivemq/x.git")
 
-        assertThat(references(result).map { it["url"].asText() }).containsExactly("https://github.com/hivemq/x")
+        assertThat(referenceUrls(result)).containsExactly("https://github.com/hivemq/x")
     }
 
     @Test
     fun `canonicalizes a GitHub remote with a password`() {
         val result = normalize(vcsUrl = "ssh://git:secret@github.com/hivemq/x.git")
 
-        assertThat(references(result).map { it["url"].asText() }).containsExactly("https://github.com/hivemq/x")
+        assertThat(referenceUrls(result)).containsExactly("https://github.com/hivemq/x")
     }
 
     @Test
     fun `canonicalizes a GitHub remote with a query`() {
         val result = normalize(vcsUrl = "https://github.com/hivemq/x.git?ref=main")
 
-        assertThat(references(result).map { it["url"].asText() }).containsExactly("https://github.com/hivemq/x")
+        assertThat(referenceUrls(result)).containsExactly("https://github.com/hivemq/x")
     }
 
     @Test
     fun `canonicalizes a GitHub ssh remote to https`() {
         val result = normalize(vcsUrl = "ssh://git@github.com/hivemq/hivemq-kafka-extension.git")
 
-        assertThat(references(result).map { it["url"].asText() })
-            .containsExactly("https://github.com/hivemq/hivemq-kafka-extension")
+        assertThat(referenceUrls(result)).containsExactly("https://github.com/hivemq/hivemq-kafka-extension")
     }
 
     @Test
     fun `canonicalizes a GitHub ssh remote with a colon after the host`() {
         val result = normalize(vcsUrl = "ssh://git@github.com:hivemq/x.git")
 
-        assertThat(references(result).map { it["url"].asText() }).containsExactly("https://github.com/hivemq/x")
+        assertThat(referenceUrls(result)).containsExactly("https://github.com/hivemq/x")
     }
 
     @Test
     fun `canonicalizes a plain git ssh remote`() {
         val result = normalize(vcsUrl = "git@github.com:hivemq/hivemq-kafka-extension.git")
 
-        assertThat(references(result).map { it["url"].asText() })
-            .containsExactly("https://github.com/hivemq/hivemq-kafka-extension")
+        assertThat(referenceUrls(result)).containsExactly("https://github.com/hivemq/hivemq-kafka-extension")
     }
 
     @Test
     fun `drops the password from an ssh remote`() {
         val result = normalize(vcsUrl = "ssh://user:secret@host/x.git")
 
-        assertThat(references(result).map { it["url"].asText() }).containsExactly("ssh://user@host/x.git")
+        assertThat(referenceUrls(result)).containsExactly("ssh://user@host/x.git")
     }
 
     @Test
     fun `drops the user info from an https remote`() {
         val result = normalize(vcsUrl = "https://u:p@gitlab.example.com/t/a.git")
 
-        assertThat(references(result).map { it["url"].asText() }).containsExactly("https://gitlab.example.com/t/a.git")
+        assertThat(referenceUrls(result)).containsExactly("https://gitlab.example.com/t/a.git")
     }
 
     @Test
@@ -337,32 +347,28 @@ class SbomNormalizerTest {
     fun `keeps an ssh remote with a login name`() {
         val result = normalize(vcsUrl = "ssh://git@gitlab.example.com:2222/t/a.git")
 
-        assertThat(references(result).map { it["url"].asText() })
-            .containsExactly("ssh://git@gitlab.example.com:2222/t/a.git")
+        assertThat(referenceUrls(result)).containsExactly("ssh://git@gitlab.example.com:2222/t/a.git")
     }
 
     @Test
     fun `keeps the port and drops the query and fragment of an https remote`() {
         val result = normalize(vcsUrl = "https://gitlab.example.com:8443/t/a.git?private_token=secret#main")
 
-        assertThat(references(result).map { it["url"].asText() })
-            .containsExactly("https://gitlab.example.com:8443/t/a.git")
+        assertThat(referenceUrls(result)).containsExactly("https://gitlab.example.com:8443/t/a.git")
     }
 
     @Test
     fun `leaves a non-GitHub remote alone`() {
         val result = normalize(vcsUrl = "https://gitlab.example.com/team/app.git")
 
-        assertThat(references(result).map { it["url"].asText() })
-            .containsExactly("https://gitlab.example.com/team/app.git")
+        assertThat(referenceUrls(result)).containsExactly("https://gitlab.example.com/team/app.git")
     }
 
     @Test
     fun `turns an scp-style remote into an ssh URL`() {
         val result = normalize(vcsUrl = "git@gitlab.example.com:t/a.git")
 
-        assertThat(references(result).map { it["url"].asText() })
-            .containsExactly("ssh://git@gitlab.example.com/t/a.git")
+        assertThat(referenceUrls(result)).containsExactly("ssh://git@gitlab.example.com/t/a.git")
     }
 
     // --- Output ---
