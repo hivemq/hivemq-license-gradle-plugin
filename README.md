@@ -33,6 +33,9 @@ The `hivemqLicense` extension provides the following properties:
 | `overriddenLicenses`         | `MapProperty<String, String>` | `{}`                                | No       | Override license SPDX IDs for specific artifacts                       |
 | `sbomName`                   | `Property<String>`            | `project.name`                      | No       | File name of the SBOM written by `generateSbom` (without `.cdx.json`)  |
 | `sbomTimestamp`              | `Property<Instant>`           | see `generateSbom`                  | No       | `metadata.timestamp` of that SBOM                                      |
+| `sbomCreatorName`            | `Property<String>`            | `HiveMQ GmbH`                       | No       | Name of the organisation that creates the SBOM and ships the component |
+| `sbomCreator`                | `Property<String>`            | `security@hivemq.com`               | No       | Email address or URL of that organisation (a `contact` or `url` entry) |
+| `sbomArtifactFileName`       | `Property<String>`            | `jar` archive file name             | No       | Top-level component's file name; the default needs the `java` plugin   |
 
 ### Advanced Example
 
@@ -102,6 +105,33 @@ dependencies and timestamp:
   an http(s) or ssh URL, it is left out. Only a GitHub remote gives the same URL whatever protocol the repository was
   cloned with; for other hosts an ssh and an https clone write different SBOMs. `vcs` and `build-system` references
   configured through `cyclonedxDirectBom.externalReferences` are dropped as well.
+
+The file also carries what [BSI TR-03183-2](https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/TechGuidelines/TR03183/BSI-TR-03183-2_v2_1_0.pdf?__blob=publicationFile)
+requires beyond CycloneDX's defaults:
+
+- The creator of the SBOM and of the component, as `metadata.manufacturer` and `metadata.component.manufacturer`,
+  from `sbomCreatorName` and `sbomCreator` (an email address becomes a contact, a URL stays a URL).
+- Per component: the file name and whether it is executable, an archive and structured
+  (`bsi:component:filename`, `bsi:component:executable`, `bsi:component:archive`, `bsi:component:structured`),
+  from the resolved artifact; a JAR counts as an executable, structured archive, a ZIP as a non-executable one, and a
+  file of any other type gets only its name. Components without a file, such as Maven BOMs, get none. The top-level
+  component's file name comes from `sbomArtifactFileName`, by default the archive file name of the `jar` task; that
+  default exists only when the `java` plugin is applied, and without a value the top-level component gets no file
+  description.
+- The component creator as a URL, and the repository as a `source-distribution` reference. The creator is the URL of
+  the component's `website` reference, or else of its `vcs` reference; CycloneDX writes those from the `<organization>`
+  and `<scm>` elements of the component's own POM, so a library whose POM inherits them from a parent POM gets no
+  creator. A project of this build has no POM and gets the creator of the SBOM.
+- A `compositions` entry declaring the dependency graph complete.
+- Licenses: the entries CycloneDX wrote from the POM are tagged `declared`; the license this plugin resolves for the
+  reports (overrides included) is added as `concluded`, one entry per license when several apply. When a component's
+  declared license is a single SPDX expression and a concluded license is added, the expression is kept whole as the
+  `name` of the declared entry, because a CycloneDX license list holds either single licenses or one expression. A
+  component the plugin cannot resolve, or leaves out of the reports, keeps only the declared entries; `generateSbom`
+  never fails on a license problem, that is what `checkApprovedLicenses` is for.
+
+The SHA-512 hashes stay in `components[].hashes`, where CycloneDX writes them; the guideline's example places them on
+a `distribution` reference with a download URL, which Gradle does not know.
 
 In a Kotlin DSL build script, setting `sbomTimestamp` needs the import, because `java.time.Instant` written out in
 full does not resolve once the `java` plugin is applied:

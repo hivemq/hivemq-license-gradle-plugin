@@ -22,13 +22,16 @@ Gradle plugin that generates and validates third-party license reports from Cycl
 - `src/main/kotlin/com/hivemq/tools/license/gradle/GenerateSbomTask.kt`, the task around it; the plugin registers it as `generateSbom` and exposes the file as the `sbomElements` variant
 - `src/main/kotlin/com/hivemq/tools/license/gradle/SbomTimestampSource.kt`, the value source behind the default `sbomTimestamp` (`SOURCE_DATE_EPOCH`, then the HEAD commit time, then now with a warning)
 - `src/main/kotlin/com/hivemq/tools/license/gradle/SbomVcsUrlSource.kt`, the value source behind the SBOM's `vcs` reference (the project's own `origin` remote)
+- `src/main/kotlin/com/hivemq/tools/license/gradle/SbomEnricher.kt`, adds the BSI TR-03183-2 fields and the concluded licenses to the BOM before `SbomNormalizer` rewrites it
+- `src/main/kotlin/com/hivemq/tools/license/gradle/SbomDetails.kt`, what the build tells the enricher: the creator, the file names of the resolved artifacts and the concluded licenses
+- `src/main/kotlin/com/hivemq/tools/license/gradle/BomJson.kt`, reads the BOM so that the enricher, the normalizer and the task reject a bad file the same way
 
 ## Conventions
 
 - `KnownLicense` enum entries are sorted alphabetically
 - `LICENSE_ORDER` defines priority (not alphabetical) — higher priority = earlier in list
 - Tests are organized by section with comment headers (e.g., `// --- Section ---`) and sorted alphabetically within sections
-- Test classes touched when adding a license: `LicenseTest`, `LicenseResolverMetadataTest`, `LicenseResolverConvertLicenseTest`, `LicenseResolverChooseLicenseTest`; the resolver, the build service and the plugin wiring have their own (`LicenseResolverResolveLicensesTest`, `BomTaskOutcomeServiceTest`, `HivemqLicensePluginIntegrationTest`); the SBOM has `SbomNormalizerTest`, `GenerateSbomTaskTest`, `GenerateSbomIntegrationTest`, `SbomTimestampSourceTest` and `SbomVcsUrlSourceTest`
+- Test classes touched when adding a license: `LicenseTest`, `LicenseResolverMetadataTest`, `LicenseResolverConvertLicenseTest`, `LicenseResolverChooseLicenseTest`; the resolver, the build service and the plugin wiring have their own (`LicenseResolverResolveLicensesTest`, `BomTaskOutcomeServiceTest`, `HivemqLicensePluginIntegrationTest`); the SBOM has `SbomNormalizerTest`, `SbomEnricherTest`, `GenerateSbomTaskTest`, `GenerateSbomIntegrationTest`, `SbomTimestampSourceTest` and `SbomVcsUrlSourceTest`
 
 ## Adding a New License
 
