@@ -103,7 +103,10 @@ abstract class GenerateSbomTask : DefaultTask() {
             // a license problem is for checkApprovedLicenses to report, the SBOM takes what resolves
             val concluded = LicenseResolver.resolveKnownLicenses(
                 bomFile, ignoredGroupPrefixes.get(), allowedArtifacts.get(), overriddenLicenses.get()
-            ).mapValues { (_, dependency) -> dependency.licenses.joinToString(" AND ") { it.id } }
+            ).values.associate { dependency ->
+                // by the version the license was resolved for, which another version of the module may not share
+                dependency.coordinates.toString() to dependency.licenses.joinToString(" AND ") { it.id }
+            }
             val details = SbomDetails(
                 creatorName = creatorName.get(),
                 creator = creator.get(),

@@ -17,6 +17,8 @@ package com.hivemq.tools.license.gradle
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.assertj.core.api.Assertions.assertThat
+import org.cyclonedx.Version
+import org.cyclonedx.parsers.JsonParser
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
 import org.junit.jupiter.api.Test
@@ -167,7 +169,7 @@ class GenerateSbomIntegrationTest {
         assertThat(result.task(":lib:jar")).isNull()
         val sbom = mapper.readTree(projectDir.resolve("app/build/sbom/app.cdx.json"))
         assertThat(sbom["metadata"]["component"].path("properties").map { it["value"].asText() }).contains("app.jar")
-        // a project has no Maven coordinates, so its component gets no file
+        // lib's component gets no file: the artifact view keeps module artifacts only, so that no jar has to be built
         val lib = sbom["components"].first { it["name"].asText() == "lib" }
         assertThat(lib.path("properties").map { it["name"].asText() }).doesNotContain("bsi:component:filename")
     }
@@ -239,6 +241,19 @@ class GenerateSbomIntegrationTest {
         val sbom = mapper.readTree(sbom())
         assertThat(sbom["metadata"]["manufacturer"]["contact"][0]["email"].asText()).isEqualTo("security@example.com")
         assertThat(sbom["metadata"]["component"]["properties"].map { it["value"].asText() }).contains("hivemq.jar")
+    }
+
+    @Test
+    fun `writes a document that is valid for the spec version it declares`() {
+        setup(fixedTimestamp)
+
+        gradleRunner("generateSbom").build()
+
+        // What ships is CycloneDX's output for real dependencies, which the unit test fixtures only imitate, with the
+        // enricher's fields and the normalizer's rewrite on top; that whole file has to fit the schema it names.
+        val schema = Version.fromVersionString(mapper.readTree(sbom())["specVersion"].asText())
+        val errors = JsonParser().validate(sbom().readBytes(), schema)
+        assertThat(errors.map { it.message }).isEmpty()
     }
 
     // --- Output ---

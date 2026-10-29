@@ -106,33 +106,6 @@ dependencies and timestamp:
   cloned with; for other hosts an ssh and an https clone write different SBOMs. `vcs` and `build-system` references
   configured through `cyclonedxDirectBom.externalReferences` are dropped as well.
 
-The file also carries what [BSI TR-03183-2](https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/TechGuidelines/TR03183/BSI-TR-03183-2_v2_1_0.pdf?__blob=publicationFile)
-requires beyond CycloneDX's defaults:
-
-- The creator of the SBOM and of the component, as `metadata.manufacturer` and `metadata.component.manufacturer`,
-  from `sbomCreatorName` and `sbomCreator` (an email address becomes a contact, a URL stays a URL).
-- Per component: the file name and whether it is executable, an archive and structured
-  (`bsi:component:filename`, `bsi:component:executable`, `bsi:component:archive`, `bsi:component:structured`),
-  from the resolved artifact; a JAR counts as an executable, structured archive, a ZIP as a non-executable one, and a
-  file of any other type gets only its name. Components without a file, such as Maven BOMs, get none. The top-level
-  component's file name comes from `sbomArtifactFileName`, by default the archive file name of the `jar` task; that
-  default exists only when the `java` plugin is applied, and without a value the top-level component gets no file
-  description.
-- The component creator as a URL, and the repository as a `source-distribution` reference. The creator is the URL of
-  the component's `website` reference, or else of its `vcs` reference; CycloneDX writes those from the `<organization>`
-  and `<scm>` elements of the component's own POM, so a library whose POM inherits them from a parent POM gets no
-  creator. A project of this build has no POM and gets the creator of the SBOM.
-- A `compositions` entry declaring the dependency graph complete.
-- Licenses: the entries CycloneDX wrote from the POM are tagged `declared`; the license this plugin resolves for the
-  reports (overrides included) is added as `concluded`, one entry per license when several apply. When a component's
-  declared license is a single SPDX expression and a concluded license is added, the expression is kept whole as the
-  `name` of the declared entry, because a CycloneDX license list holds either single licenses or one expression. A
-  component the plugin cannot resolve, or leaves out of the reports, keeps only the declared entries; `generateSbom`
-  never fails on a license problem, that is what `checkApprovedLicenses` is for.
-
-The SHA-512 hashes stay in `components[].hashes`, where CycloneDX writes them; the guideline's example places them on
-a `distribution` reference with a download URL, which Gradle does not know.
-
 In a Kotlin DSL build script, setting `sbomTimestamp` needs the import, because `java.time.Instant` written out in
 full does not resolve once the `java` plugin is applied:
 
@@ -143,6 +116,42 @@ hivemqLicense {
     sbomTimestamp.set(Instant.parse("2026-01-02T03:04:05Z"))
 }
 ```
+
+The file also carries what [BSI TR-03183-2](https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/TechGuidelines/TR03183/BSI-TR-03183-2_v2_1_0.pdf?__blob=publicationFile)
+requires beyond CycloneDX's defaults:
+
+- The creator of the SBOM and of the component, as `metadata.manufacturer` and `metadata.component.manufacturer`,
+  from `sbomCreatorName` and `sbomCreator` (an email address becomes a contact, a URL stays a URL); a manufacturer
+  configured through `cyclonedxDirectBom.organizationalEntity` is replaced.
+- Per component: the file name and whether it is executable, an archive and structured
+  (`bsi:component:filename`, `bsi:component:executable`, `bsi:component:archive`, `bsi:component:structured`),
+  from the resolved artifact; a JAR counts as an executable, structured archive, a ZIP as a non-executable one, and a
+  file of any other type gets only its name. Components without a file, such as Maven BOMs, get none. Projects of
+  this build and of included builds get none either: only modules from a repository are resolved to files, so that no
+  jar has to be built for the SBOM. The top-level component's file name comes from `sbomArtifactFileName`, by default
+  the archive file name of the `jar` task; that default exists only when the `java` plugin is applied, and without a
+  value the top-level component gets no file description.
+- The component creator as a URL, and the repository as a `source-distribution` reference. The creator is the URL of
+  the component's `website` reference, or else of its `vcs` reference; CycloneDX writes those from the `<organization>`
+  and `<scm>` elements of the component's own POM, so a library whose POM inherits them from a parent POM gets no
+  creator. A project of this build has no POM and gets the creator of the SBOM.
+- A `compositions` entry declaring the dependency graph complete.
+- Licenses: the entries CycloneDX wrote from the POM are tagged `declared`; the license this plugin resolves for the
+  reports (overrides included) is added as `concluded`, one entry per license when several apply. When a component's
+  declared license is a single SPDX expression and a concluded license is added, the expression is kept whole as the
+  `name` of the declared entry, because a CycloneDX license list holds either single licenses or one expression. A
+  component the plugin cannot resolve, or leaves out of the reports, or in a version the reports do not list, keeps
+  only the declared entries; `generateSbom` never fails on a license problem, that is what
+  `checkApprovedLicenses` is for.
+
+The manufacturer fields, the license acknowledgements and the `source-distribution` reference exist from CycloneDX
+specification 1.6 on, which is what `cyclonedxDirectBom` writes by default; `generateSbom` fails on a BOM that
+declares an older `specVersion`.
+
+The guideline also asks for a SHA-512 hash of each component's file. CycloneDX writes the hashes of every resolved
+artifact, SHA-512 among them, to `components[].hashes`, and they stay there; projects of this build and of included
+builds, the top-level component among them, have no resolved artifact and so no hashes. The guideline's example
+places the hashes on a `distribution` reference with a download URL, which Gradle does not know.
 
 The file is also available to other projects, or included builds, as the `sbomElements` variant (attribute
 `Category=sbom`):

@@ -19,15 +19,18 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ArrayNode
 import com.fasterxml.jackson.databind.node.ObjectNode
+import java.math.BigInteger
 
 /**
  * Adds what BSI TR-03183-2 requires and CycloneDX does not write: who created the SBOM, the file behind each
  * component and what kind of file it is, the component creators, the source URI, whether the dependency graph is
  * complete, and our reviewed license next to the declared one. Everything is derived from [SbomDetails] and from
- * what the BOM already holds, so the result is the same for the same input. A value of an unexpected type, such as
- * a `licenses` that is not an array, is left as it is instead of being replaced or failing.
+ * what the BOM already holds, so the result is the same for the same input. The BOM has to declare CycloneDX 1.6 or
+ * later, the first spec version with the manufacturer fields and the acknowledgement of a license; any other value
+ * of an unexpected type, such as a `licenses` that is not an array, is left as it is instead of being replaced or
+ * failing.
  */
-object SbomEnricher {
+internal object SbomEnricher {
 
     private val mapper = ObjectMapper()
 
@@ -38,22 +41,60 @@ object SbomEnricher {
 
     private val mailto = Regex("^mailto:", RegexOption.IGNORE_CASE)
 
+    // major and minor, and a patch like the 1.6.1 that the schema gives as an example
+    private val specVersion = Regex("""(\d+)\.(\d+)(?:\.\d+)?""")
+
+    /**
+     * The CycloneDX specification in which the manufacturer fields, the license acknowledgements and the
+     * `source-distribution` reference first appear; a BOM of an older specification cannot carry them.
+     */
+    const val MINIMUM_SPEC_VERSION = "1.6"
+
+    private val minimumSpecVersion = requireNotNull(majorMinor(MINIMUM_SPEC_VERSION))
+
     fun enrich(bom: ByteArray, details: SbomDetails): ByteArray {
         val root = BomJson.read(bom)
+        requireSpecVersion(root)
         enrichMetadata(root, details)
         (root.get("components") as? ArrayNode)?.forEach { node ->
             val component = node as? ObjectNode ?: return@forEach
-            val coordinates = coordinates(component)
-            details.artifactFileNames[coordinates.toString()]?.let { describeFile(component, it) }
+            // with the version, because the BOM can hold a module in two versions, each with its own file and license
+            val coordinates = coordinates(component).toString()
+            details.artifactFileNames[coordinates]?.let { describeFile(component, it) }
             addCreator(component, details)
             addSourceDistribution(component)
-            acknowledgeLicenses(component, details.concludedLicenses[coordinates.moduleId])
+            acknowledgeLicenses(component, details.concludedLicenses[coordinates])
         }
         declareComplete(root)
         // compact, because the normalizer writes the final document and a pretty printer would put the system line
         // separator into these bytes
         return mapper.writeValueAsBytes(root)
     }
+
+    // cyclonedxDirectBom can be configured to write an older spec version, whose schema rejects the fields added here
+    private fun requireSpecVersion(root: ObjectNode) {
+        val declared = root.get("specVersion")
+        require(declared != null && declared.isTextual && isAtLeastMinimum(declared.asText())) {
+            val version = when {
+                declared == null -> "no CycloneDX specVersion"
+                declared.isTextual -> "CycloneDX specVersion ${declared.asText()}"
+                else -> "a CycloneDX specVersion that is not a string"
+            }
+            "The BOM declares $version, but the manufacturer, license acknowledgement and source-distribution " +
+                "fields need $MINIMUM_SPEC_VERSION or later"
+        }
+    }
+
+    private fun isAtLeastMinimum(version: String): Boolean {
+        val declared = majorMinor(version) ?: return false
+        return compareValuesBy(declared, minimumSpecVersion, { it.first }, { it.second }) >= 0
+    }
+
+    // as numbers, so that 1.10 is later than 1.6
+    private fun majorMinor(version: String): Pair<BigInteger, BigInteger>? =
+        specVersion.matchEntire(version)?.destructured?.let { (major, minor) ->
+            major.toBigInteger() to minor.toBigInteger()
+        }
 
     // A value of another type is not ours to replace: these return null for it and the caller leaves that part alone.
     private fun ObjectNode.objectOrNew(name: String): ObjectNode? = when (val existing = get(name)) {

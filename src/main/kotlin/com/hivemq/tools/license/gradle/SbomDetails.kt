@@ -16,7 +16,7 @@
 package com.hivemq.tools.license.gradle
 
 /** What the build knows about the SBOM's component and its dependencies beyond what CycloneDX writes. */
-data class SbomDetails(
+internal data class SbomDetails(
     /** Name of the organisation that created the SBOM and ships the component, e.g. "HiveMQ GmbH". */
     val creatorName: String,
     /** Email address or URL of that organisation. */
@@ -29,9 +29,11 @@ data class SbomDetails(
      */
     val artifactFileNames: Map<String, String>,
     /**
-     * The license we reviewed, for the components we could resolve, by the `group:name` that [Coordinates.moduleId]
-     * writes, for example `org.slf4j:slf4j-api` to `MIT`. The value is the resolved license ids joined with ` AND `;
-     * an id that contains a space, such as `Public Domain`, is not an SPDX id and is written as a `name`.
+     * The license we reviewed, for the components we could resolve, by the `group:name:version` that
+     * [Coordinates.toString] writes, for example `org.slf4j:slf4j-api:2.0.16` to `MIT`. The license tasks resolve one
+     * version of each module, so another version of it in the BOM has no entry. The value is the resolved license ids
+     * joined with ` AND `; an id that contains a space, such as `Public Domain`, is not an SPDX id and is written as a
+     * `name`.
      */
     val concludedLicenses: Map<String, String>,
 )

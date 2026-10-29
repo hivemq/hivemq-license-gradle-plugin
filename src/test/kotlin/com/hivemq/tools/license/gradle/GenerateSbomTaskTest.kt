@@ -113,6 +113,24 @@ class GenerateSbomTaskTest {
     }
 
     @Test
+    fun `fails naming the BOM file when the BOM declares a spec version before the minimum`() {
+        setup()
+        projectDir.resolve("bom.json").writeText(
+            projectDir.resolve("bom.json").readText().replace(""""specVersion": "1.6"""", """"specVersion": "1.5"""")
+        )
+
+        val result = gradleRunner().buildAndFail()
+
+        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output)
+            .contains("Cannot write an SBOM from '")
+            .contains(
+                "bom.json': The BOM declares CycloneDX specVersion 1.5, but the manufacturer, license " +
+                    "acknowledgement and source-distribution fields need ${SbomEnricher.MINIMUM_SPEC_VERSION} or later"
+            )
+    }
+
+    @Test
     fun `fails naming the BOM file when the input is not a BOM`() {
         setup()
         projectDir.resolve("bom.json").writeText("[]")

@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.Arguments
 import org.junit.jupiter.params.provider.MethodSource
+import org.junit.jupiter.params.provider.ValueSource
 
 class SbomEnricherTest {
 
@@ -39,14 +40,14 @@ class SbomEnricherTest {
             "org.example:zipped:2.0" to "zipped-2.0.zip",
             "org.example:other:3.0" to "other-3.0.so",
         ),
-        concludedLicenses = mapOf("org.example:lib" to "MIT", "org.example:dual" to "MIT AND ISC"),
+        concludedLicenses = mapOf("org.example:lib:1.0" to "MIT", "org.example:dual:1.0" to "MIT AND ISC"),
     )
 
     /** A BOM the way the CycloneDX Gradle plugin writes it, reduced to what the enricher touches. */
-    private fun bom(components: String = DEFAULT_COMPONENTS) = """
+    private fun bom(components: String = DEFAULT_COMPONENTS, specVersion: String = "1.6") = """
         {
           "bomFormat": "CycloneDX",
-          "specVersion": "1.6",
+          "specVersion": "$specVersion",
           "version": 1,
           "metadata": {
             "timestamp": "2026-10-16T10:01:10Z",
@@ -75,6 +76,38 @@ class SbomEnricherTest {
         this["properties"]?.firstOrNull { it["name"].asText() == name }?.get("value")?.asText()
 
     // --- Input ---
+
+    // The fields the enricher adds exist from SbomEnricher.MINIMUM_SPEC_VERSION on, so the BOM must declare at
+    // least that specification; a later one keeps every earlier field.
+    @ParameterizedTest
+    @ValueSource(strings = ["1.6.1", "1.7", "1.10"])
+    fun `accepts a spec version at or after the minimum`(specVersion: String) {
+        val result = enrich(bom(specVersion = specVersion))
+
+        assertThat(result["metadata"]["manufacturer"]["name"].asText()).isEqualTo("HiveMQ GmbH")
+    }
+
+    @ParameterizedTest
+    @MethodSource("missingOrMalformedSpecVersions")
+    fun `rejects a missing or malformed spec version`(document: String, declared: String) {
+        assertThatThrownBy { enrich(document.toByteArray()) }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessage(
+                "The BOM declares $declared, but the manufacturer, license acknowledgement and source-distribution " +
+                    "fields need ${SbomEnricher.MINIMUM_SPEC_VERSION} or later"
+            )
+    }
+
+    @Test
+    fun `rejects a spec version before the minimum`() {
+        // the cyclonedxDirectBom task can be configured to write an older spec version
+        assertThatThrownBy { enrich(bom(specVersion = "1.5")) }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessage(
+                "The BOM declares CycloneDX specVersion 1.5, but the manufacturer, license acknowledgement and " +
+                    "source-distribution fields need ${SbomEnricher.MINIMUM_SPEC_VERSION} or later"
+            )
+    }
 
     @Test
     fun `rejects input that is not a JSON object`() {
@@ -109,7 +142,9 @@ class SbomEnricherTest {
 
     @Test
     fun `tolerates a metadata value that is not an object`() {
-        val input = """{"metadata":[],"components":[{"group":"org.example","name":"lib","version":"1.0"}]}"""
+        val input = """
+            {"specVersion":"1.6","metadata":[],"components":[{"group":"org.example","name":"lib","version":"1.0"}]}
+        """.trimIndent()
 
         val result = enrich(input.toByteArray())
 
@@ -221,7 +256,7 @@ class SbomEnricherTest {
 
     @Test
     fun `writes the composition in the same order whatever the order of the dependencies`() {
-        val input = """{"dependencies":[{"ref":"pkg:maven/b/b@1"},{"ref":"pkg:maven/a/a@1"}]}"""
+        val input = """{"specVersion":"1.6","dependencies":[{"ref":"pkg:maven/b/b@1"},{"ref":"pkg:maven/a/a@1"}]}"""
 
         val result = enrich(input.toByteArray())
 
@@ -232,7 +267,12 @@ class SbomEnricherTest {
     @Test
     fun `writes the composition with each textual ref once`() {
         val input = """
-            {"dependencies":[{"ref":"pkg:maven/b/b@1"},{"ref":7},{"ref":"pkg:maven/a/a@1"},{"ref":"pkg:maven/b/b@1"}]}
+            {
+              "specVersion": "1.6",
+              "dependencies": [
+                {"ref":"pkg:maven/b/b@1"}, {"ref":7}, {"ref":"pkg:maven/a/a@1"}, {"ref":"pkg:maven/b/b@1"}
+              ]
+            }
         """.trimIndent()
 
         val result = enrich(input.toByteArray())
@@ -283,7 +323,7 @@ class SbomEnricherTest {
         val coordinates = Coordinates("", "local", "1")
         val withoutGroup = details.copy(
             artifactFileNames = mapOf(coordinates.toString() to "local-1.jar"),
-            concludedLicenses = mapOf(coordinates.moduleId to "MIT"),
+            concludedLicenses = mapOf(coordinates.toString() to "MIT"),
         )
 
         val local = enrich(bom(components), withoutGroup).component("local")
@@ -333,6 +373,32 @@ class SbomEnricherTest {
     }
 
     @Test
+    fun `adds the concluded license only to the version it was resolved for`() {
+        // configurations resolve independently, so the BOM can hold a module in two versions, while the license
+        // tasks resolve one of them
+        val components = """
+            {
+              "type": "library", "bom-ref": "pkg:maven/org.example/lib@1.0",
+              "group": "org.example", "name": "lib", "version": "1.0",
+              "licenses": [ { "license": { "id": "Apache-2.0" } } ]
+            },
+            {
+              "type": "library", "bom-ref": "pkg:maven/org.example/lib@2.0",
+              "group": "org.example", "name": "lib", "version": "2.0",
+              "licenses": [ { "license": { "id": "Apache-2.0" } } ]
+            }
+        """.trimIndent()
+        val resolved = details.copy(concludedLicenses = mapOf("org.example:lib:2.0" to "MIT"))
+
+        val result = enrich(bom(components), resolved)
+
+        fun licenses(version: String) = result["components"].first { it["version"].asText() == version }["licenses"]
+            .map { it["license"]["id"].asText() to it["license"]["acknowledgement"].asText() }
+        assertThat(licenses("1.0")).containsExactly("Apache-2.0" to "declared")
+        assertThat(licenses("2.0")).containsExactly("Apache-2.0" to "declared", "MIT" to "concluded")
+    }
+
+    @Test
     fun `keeps an expression license as it is without a concluded one`() {
         val withoutConcluded = details.copy(concludedLicenses = emptyMap())
 
@@ -354,7 +420,7 @@ class SbomEnricherTest {
 
     @Test
     fun `turns an expression license into a named entry to fit the concluded one`() {
-        val concluded = details.copy(concludedLicenses = mapOf("org.example:lib" to "CDDL-1.1"))
+        val concluded = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to "CDDL-1.1"))
 
         val lib = enrich(bom(EXPRESSION_COMPONENT), concluded).component("lib")
 
@@ -372,7 +438,7 @@ class SbomEnricherTest {
 
     @Test
     fun `writes a concluded license that is not an SPDX id by name`() {
-        val publicDomain = details.copy(concludedLicenses = mapOf("org.example:lib" to "Public Domain"))
+        val publicDomain = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to "Public Domain"))
 
         val lib = enrich(with = publicDomain).component("lib")
 
@@ -451,7 +517,7 @@ class SbomEnricherTest {
 
     @Test
     fun `is idempotent for a concluded license that is not an SPDX id`() {
-        val publicDomain = details.copy(concludedLicenses = mapOf("org.example:lib" to "Public Domain"))
+        val publicDomain = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to "Public Domain"))
         val once = SbomEnricher.enrich(bom(), publicDomain)
 
         val twice = SbomEnricher.enrich(once, publicDomain)
@@ -461,7 +527,7 @@ class SbomEnricherTest {
 
     @Test
     fun `is idempotent for an expression license next to a concluded one`() {
-        val concluded = details.copy(concludedLicenses = mapOf("org.example:lib" to "CDDL-1.1"))
+        val concluded = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to "CDDL-1.1"))
         val once = SbomEnricher.enrich(bom(EXPRESSION_COMPONENT), concluded)
 
         val twice = SbomEnricher.enrich(once, concluded)
@@ -470,9 +536,9 @@ class SbomEnricherTest {
     }
 
     @Test
-    fun `writes valid CycloneDX 1_6`() {
-        val cddl = details.copy(concludedLicenses = mapOf("org.example:lib" to "CDDL-1.1"))
-        val publicDomain = details.copy(concludedLicenses = mapOf("org.example:lib" to "Public Domain"))
+    fun `writes a document that is valid for the spec version it declares`() {
+        val cddl = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to "CDDL-1.1"))
+        val publicDomain = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to "Public Domain"))
         val variants = mapOf(
             "default" to (bom() to details),
             "email creator" to (bom() to details.copy(creator = "security@example.com")),
@@ -484,7 +550,11 @@ class SbomEnricherTest {
 
         for ((name, variant) in variants) {
             val (input, variantDetails) = variant
-            val errors = JsonParser().validate(SbomEnricher.enrich(input, variantDetails), Version.VERSION_16)
+            val output = SbomEnricher.enrich(input, variantDetails)
+
+            // against the schema of the version the document itself claims, which the enricher must not change
+            val schema = Version.fromVersionString(mapper.readTree(output)["specVersion"].asText())
+            val errors = JsonParser().validate(output, schema)
 
             assertThat(errors.map { it.message }).describedAs(name).isEmpty()
         }
@@ -557,17 +627,32 @@ class SbomEnricherTest {
         ).joinToString(",")
 
         @JvmStatic
+        fun missingOrMalformedSpecVersions(): List<Arguments> = listOf(
+            Arguments.of("""{"bomFormat":"CycloneDX"}""", "no CycloneDX specVersion"),
+            Arguments.of("""{"specVersion":"1.x"}""", "CycloneDX specVersion 1.x"),
+            // a number cannot tell 1.1 from 1.10
+            Arguments.of("""{"specVersion":1.6}""", "a CycloneDX specVersion that is not a string"),
+        )
+
+        @JvmStatic
         fun valuesOfAnUnexpectedType(): List<Arguments> {
-            fun lib(name: String, value: String) =
-                """{"components":[{"group":"org.example","name":"lib","version":"1.0","$name":$value}]}"""
+            fun lib(name: String, value: String) = """
+                {
+                  "specVersion": "1.6",
+                  "components": [ { "group": "org.example", "name": "lib", "version": "1.0", "$name": $value } ]
+                }
+            """.trimIndent()
             return listOf(
-                Arguments.of("/metadata/component", """{"metadata":{"component":"app"}}"""),
-                Arguments.of("/components", """{"components":{}}"""),
-                Arguments.of("/components/0", """{"components":["lib"]}"""),
+                Arguments.of("/metadata/component", """{"specVersion":"1.6","metadata":{"component":"app"}}"""),
+                Arguments.of("/components", """{"specVersion":"1.6","components":{}}"""),
+                Arguments.of("/components/0", """{"specVersion":"1.6","components":["lib"]}"""),
                 Arguments.of("/components/0/properties", lib("properties", "1")),
                 Arguments.of("/components/0/externalReferences", lib("externalReferences", "1")),
-                Arguments.of("/dependencies", """{"dependencies":{}}"""),
-                Arguments.of("/compositions", """{"dependencies":[{"ref":"a"}],"compositions":1}"""),
+                Arguments.of("/dependencies", """{"specVersion":"1.6","dependencies":{}}"""),
+                Arguments.of(
+                    "/compositions",
+                    """{"specVersion":"1.6","dependencies":[{"ref":"a"}],"compositions":1}""",
+                ),
             )
         }
     }

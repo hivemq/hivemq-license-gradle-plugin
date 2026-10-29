@@ -37,7 +37,7 @@ import java.util.UUID
  * same bytes. Every rule here removes one of those differences: the `vcs` reference is replaced by the project's own
  * remote, which the caller passes in, and that repository URL is written as the `source-distribution` reference too.
  */
-object SbomNormalizer {
+internal object SbomNormalizer {
 
     private val mapper = ObjectMapper()
 
