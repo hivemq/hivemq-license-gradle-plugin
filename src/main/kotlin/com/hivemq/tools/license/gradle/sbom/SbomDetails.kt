@@ -13,7 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.hivemq.tools.license.gradle
+package com.hivemq.tools.license.gradle.sbom
+
+import com.hivemq.tools.license.gradle.Coordinates
 
 /** What the build knows about the SBOM's component and its dependencies beyond what CycloneDX writes. */
 internal data class SbomDetails(

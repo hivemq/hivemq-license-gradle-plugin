@@ -13,12 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.hivemq.tools.license.gradle
+package com.hivemq.tools.license.gradle.sbom
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ArrayNode
 import com.fasterxml.jackson.databind.node.ObjectNode
+import com.hivemq.tools.license.gradle.Coordinates
 import java.math.BigInteger
 import java.net.URI
 import java.net.URISyntaxException

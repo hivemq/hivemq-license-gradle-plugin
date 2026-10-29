@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.hivemq.tools.license.gradle
+package com.hivemq.tools.license.gradle.sbom
 
 import org.gradle.api.Action
 import org.gradle.api.Project
