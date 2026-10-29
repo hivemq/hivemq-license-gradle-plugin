@@ -27,9 +27,8 @@ import javax.inject.Inject
 /**
  * Runs git inside temporary test directories.
  *
- * The environment is isolated because the machine's global git config, hooks, inherited `GIT_*` variables and an
- * enclosing repository (a temporary directory may lie inside one) would otherwise leak into the tests and change
- * their outcome.
+ * The environment is isolated, as the machine's global git config, hooks, inherited `GIT_*` variables and an
+ * enclosing repository would otherwise leak into the tests and change their outcome.
  */
 internal object GitTestRepository {
 

@@ -29,7 +29,10 @@ interface HivemqLicenseExtension {
     val additionalConfigurations: SetProperty<String>
     val overriddenLicenses: MapProperty<String, String>
 
-    /** File name of the SBOM written by `generateSbom`, without the `.cdx.json` suffix; the project name by default. */
+    /**
+     * File name of the SBOM written by `generateSbom`, without the `.cdx.json` suffix; the project name by default. A
+     * blank name, or one with `/` or `\`, fails the build.
+     */
     val sbomName: Property<String>
 
     /**
@@ -41,7 +44,10 @@ interface HivemqLicenseExtension {
     /** Who creates the SBOM and ships the component, written as the manufacturer; "HiveMQ GmbH" by default. */
     val sbomCreatorName: Property<String>
 
-    /** Email address or URL of that organisation; `security@hivemq.com` by default. */
+    /**
+     * Email address or http(s) URL of that organisation, anything else fails `generateSbom`; `security@hivemq.com` by
+     * default.
+     */
     val sbomCreator: Property<String>
 
     /**

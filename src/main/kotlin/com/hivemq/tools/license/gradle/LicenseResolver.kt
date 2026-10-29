@@ -113,7 +113,7 @@ object LicenseResolver {
      * is left out instead of failing, so a license problem stays a matter for [resolveLicenses] and the report tasks.
      * A file that cannot be read or parsed still fails.
      */
-    fun resolveKnownLicenses(
+    internal fun resolveKnownLicenses(
         dependencyLicenseFile: File,
         ignoredGroupPrefixes: Set<String>,
         allowedArtifacts: Set<String>,

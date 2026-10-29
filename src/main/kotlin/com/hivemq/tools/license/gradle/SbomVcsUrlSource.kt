@@ -18,6 +18,7 @@ package com.hivemq.tools.license.gradle
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.logging.Logger
 import org.gradle.api.logging.Logging
+import org.gradle.api.provider.Property
 import org.gradle.api.provider.ValueSource
 import org.gradle.api.provider.ValueSourceParameters
 import org.gradle.process.ExecOperations
@@ -28,10 +29,13 @@ import javax.inject.Inject
  * absent when there is none. CycloneDX reads `GIT_URL` or the remote of the Gradle daemon's working directory
  * instead, which in a composite build is another repository.
  */
-abstract class SbomVcsUrlSource : ValueSource<String, SbomVcsUrlSource.Parameters> {
+internal abstract class SbomVcsUrlSource : ValueSource<String, SbomVcsUrlSource.Parameters> {
 
-    interface Parameters : ValueSourceParameters {
+    internal interface Parameters : ValueSourceParameters {
         val projectDirectory: DirectoryProperty
+
+        /** Only named in the log messages. */
+        val projectPath: Property<String>
     }
 
     @get:Inject
@@ -39,6 +43,7 @@ abstract class SbomVcsUrlSource : ValueSource<String, SbomVcsUrlSource.Parameter
 
     override fun obtain(): String? {
         val directory = parameters.projectDirectory.get().asFile
+        val project = parameters.projectPath.get()
         val git = GitCommand.run(execOperations, directory, "remote", "get-url", "origin")
         // a source tree outside any repository is expected, the timestamp source already warns about it
         val outsideRepository = git != null && git.exitCode != 0 && git.stderr.contains("not a git repository")
@@ -46,7 +51,7 @@ abstract class SbomVcsUrlSource : ValueSource<String, SbomVcsUrlSource.Parameter
             val failure = git?.let { "git remote get-url origin exited with ${it.exitCode}: ${it.stderr}" }
                 ?: "git could not be started"
             // the SBOM ships without a vcs reference, and nothing else would show that
-            logger.warn("The SBOM of $directory has no vcs reference: $failure")
+            logger.warn("The SBOM of project '$project' has no vcs reference: $failure")
             return null
         }
         val reason = when {
@@ -57,7 +62,7 @@ abstract class SbomVcsUrlSource : ValueSource<String, SbomVcsUrlSource.Parameter
             else -> SbomNormalizer.canonicalVcsUrl(git.stdout)?.let { return it }
                 ?: "the origin remote is not an http(s) or ssh URL"
         }
-        logger.info("The SBOM of $directory has no vcs reference: $reason")
+        logger.info("The SBOM of project '$project' has no vcs reference: $reason")
         return null
     }
 

@@ -24,16 +24,19 @@ internal data class SbomDetails(
     /** File name of the shipped top-level artifact, null when unknown. */
     val artifactFileName: String?,
     /**
-     * File name of every resolved artifact, by the `group:name:version` that [Coordinates.toString] writes, for
+     * File name of every resolved component, by the `group:name:version` that [Coordinates.toString] writes, for
      * example `org.slf4j:slf4j-api:2.0.16` to `slf4j-api-2.0.16.jar`.
      */
-    val artifactFileNames: Map<String, String>,
+    val componentFileNames: Map<String, String>,
     /**
-     * The license we reviewed, for the components we could resolve, by the `group:name:version` that
-     * [Coordinates.toString] writes, for example `org.slf4j:slf4j-api:2.0.16` to `MIT`. The license tasks resolve one
-     * version of each module, so another version of it in the BOM has no entry. The value is the resolved license ids
-     * joined with ` AND `; an id that contains a space, such as `Public Domain`, is not an SPDX id and is written as a
-     * `name`.
+     * The reviewed licenses of the components that resolve, keyed like [componentFileNames]; the license tasks resolve
+     * one version of each module, so another version in the BOM has no entry. Every license of a list applies; one with
+     * a space, such as `Public Domain`, is not an SPDX id and is written as a `name`.
      */
-    val concludedLicenses: Map<String, String>,
+    val concludedLicenses: Map<String, List<String>>,
+    /**
+     * Why the dependency graph is not complete, one reason per finding, such as a file dependency or a module that
+     * could not be resolved; empty when it is complete.
+     */
+    val incompleteReasons: List<String>,
 )

@@ -34,6 +34,7 @@ class SbomVcsUrlSourceTest {
     private fun obtain(adjust: ExecSpec.() -> Unit = {}): String? {
         val sourceParameters = project.objects.newInstance(SbomVcsUrlSource.Parameters::class.java).apply {
             projectDirectory.set(projectDir)
+            projectPath.set(project.path)
         }
         return object : SbomVcsUrlSource() {
             override val execOperations: ExecOperations = GitTestRepository.isolatedExec(project, projectDir, adjust)

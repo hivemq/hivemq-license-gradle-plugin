@@ -69,7 +69,7 @@ class GenerateSbomTaskTest {
                 creatorName.set("HiveMQ GmbH")
                 creator.set("https://www.hivemq.com/")
                 artifactFileName.set("app-1.0.0.jar")
-                artifactFileNames.set(mapOf("org.example:lib:1.0" to "lib-1.0.jar"))
+                componentFileNames.set(mapOf("org.example:lib:1.0" to "lib-1.0.jar"))
                 ignoredGroupPrefixes.set(setOf("com.hivemq"))
                 allowedArtifacts.set(emptySet())
                 overriddenLicenses.set(mapOf("org.example:lib" to "MIT"))
@@ -131,6 +131,26 @@ class GenerateSbomTaskTest {
     }
 
     @Test
+    fun `fails naming the BOM file when the creator is neither an email address nor an http URL`() {
+        setup()
+        projectDir.resolve("build.gradle.kts").writeText(
+            projectDir.resolve("build.gradle.kts").readText()
+                .replace("""creator.set("https://www.hivemq.com/")""", """creator.set("HiveMQ Security Team")""")
+        )
+
+        val result = gradleRunner().buildAndFail()
+
+        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output)
+            .contains("Cannot write an SBOM from '")
+            .contains(
+                "bom.json': hivemqLicense.sbomCreator must be an email address or an http(s) URL, but is " +
+                    "'HiveMQ Security Team'"
+            )
+        assertThat(projectDir.resolve("build/sbom/app.cdx.json")).doesNotExist()
+    }
+
+    @Test
     fun `fails naming the BOM file when the input is not a BOM`() {
         setup()
         projectDir.resolve("bom.json").writeText("[]")
@@ -154,6 +174,19 @@ class GenerateSbomTaskTest {
         assertThat(result.output)
             .contains("Cannot write an SBOM from '")
             .contains("bom.json': The BOM is not valid JSON: ")
+    }
+
+    @Test
+    fun `fails naming the BOM file when the metadata is not an object`() {
+        setup()
+        projectDir.resolve("bom.json").writeText("""{ "specVersion": "1.6", "metadata": [] }""")
+
+        val result = gradleRunner().buildAndFail()
+
+        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output)
+            .contains("Cannot write an SBOM from '")
+            .contains("bom.json': The BOM's metadata is not a JSON object")
     }
 
     @Test

@@ -32,9 +32,9 @@ import javax.inject.Inject
  * time of the repository's HEAD commit, else the current time. A value source keeps git and the environment out
  * of the configuration-cache entry and only warns when the fallback to the current time really happens.
  */
-abstract class SbomTimestampSource : ValueSource<Instant, SbomTimestampSource.Parameters> {
+internal abstract class SbomTimestampSource : ValueSource<Instant, SbomTimestampSource.Parameters> {
 
-    interface Parameters : ValueSourceParameters {
+    internal interface Parameters : ValueSourceParameters {
         /** `SOURCE_DATE_EPOCH`, absent when the variable is not set. */
         val sourceDateEpoch: Property<String>
         val projectDirectory: DirectoryProperty

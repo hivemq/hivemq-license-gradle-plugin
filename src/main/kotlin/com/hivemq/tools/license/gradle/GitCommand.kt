@@ -42,13 +42,17 @@ internal object GitCommand {
                 isIgnoreExitValue = true
             }
         } catch (e: GradleException) {
-            // A process that cannot be started fails with a GradleException. The subclass Gradle 9 throws,
-            // ProcessExecutionException, does not exist in Gradle 8, so catching it would break there. A non-zero
-            // exit value does not throw because it is ignored above.
+            // git did not start; Gradle 9 throws the subclass ProcessExecutionException, which Gradle 8 does not have
             logger.info("Cannot start git in $dir: ${e.message}")
             return null
         }
-        return GitResult(result.exitValue, stdout.toString().trim(), stderr.toString().trim())
+        // as UTF-8, git's default encoding, not as the JVM's default charset, which before Java 18 depends on the
+        // environment
+        return GitResult(
+            result.exitValue,
+            stdout.toString(Charsets.UTF_8).trim(),
+            stderr.toString(Charsets.UTF_8).trim(),
+        )
     }
 }
 

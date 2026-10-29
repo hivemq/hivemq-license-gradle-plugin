@@ -24,14 +24,20 @@ internal object BomJson {
 
     private val mapper = ObjectMapper()
 
-    /** Throws [IllegalArgumentException] when [bom] is not JSON or its root is not an object. */
+    /**
+     * Throws [SbomException] when [bom] is not JSON, its root is not an object or its `metadata` is not an object,
+     * which the enricher and the normalizer both write to.
+     */
     fun read(bom: ByteArray): ObjectNode {
         val root = try {
             mapper.readTree(bom)
         } catch (e: JsonProcessingException) {
             val location = e.location?.let { " at line ${it.lineNr}, column ${it.columnNr}" }.orEmpty()
-            throw IllegalArgumentException("The BOM is not valid JSON: ${e.originalMessage}$location", e)
+            throw SbomException("The BOM is not valid JSON: ${e.originalMessage}$location")
         }
-        return root as? ObjectNode ?: throw IllegalArgumentException("The BOM is not a JSON object")
+        if (root !is ObjectNode) throw SbomException("The BOM is not a JSON object")
+        val metadata = root.get("metadata")
+        if (metadata != null && metadata !is ObjectNode) throw SbomException("The BOM's metadata is not a JSON object")
+        return root
     }
 }

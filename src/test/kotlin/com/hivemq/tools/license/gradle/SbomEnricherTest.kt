@@ -35,12 +35,16 @@ class SbomEnricherTest {
         creatorName = "HiveMQ GmbH",
         creator = "https://www.hivemq.com/",
         artifactFileName = "app-1.0.0.jar",
-        artifactFileNames = mapOf(
+        componentFileNames = mapOf(
             "org.example:lib:1.0" to "lib-1.0.jar",
             "org.example:zipped:2.0" to "zipped-2.0.zip",
             "org.example:other:3.0" to "other-3.0.so",
         ),
-        concludedLicenses = mapOf("org.example:lib:1.0" to "MIT", "org.example:dual:1.0" to "MIT AND ISC"),
+        concludedLicenses = mapOf(
+            "org.example:lib:1.0" to listOf("MIT"),
+            "org.example:dual:1.0" to listOf("MIT", "ISC"),
+        ),
+        incompleteReasons = emptyList(),
     )
 
     /** A BOM the way the CycloneDX Gradle plugin writes it, reduced to what the enricher touches. */
@@ -77,8 +81,7 @@ class SbomEnricherTest {
 
     // --- Input ---
 
-    // The fields the enricher adds exist from SbomEnricher.MINIMUM_SPEC_VERSION on, so the BOM must declare at
-    // least that specification; a later one keeps every earlier field.
+    // the added fields exist from the minimum on, and a later specification keeps every earlier field
     @ParameterizedTest
     @ValueSource(strings = ["1.6.1", "1.7", "1.10"])
     fun `accepts a spec version at or after the minimum`(specVersion: String) {
@@ -91,7 +94,7 @@ class SbomEnricherTest {
     @MethodSource("missingOrMalformedSpecVersions")
     fun `rejects a missing or malformed spec version`(document: String, declared: String) {
         assertThatThrownBy { enrich(document.toByteArray()) }
-            .isInstanceOf(IllegalArgumentException::class.java)
+            .isInstanceOf(SbomException::class.java)
             .hasMessage(
                 "The BOM declares $declared, but the manufacturer, license acknowledgement and source-distribution " +
                     "fields need ${SbomEnricher.MINIMUM_SPEC_VERSION} or later"
@@ -102,26 +105,50 @@ class SbomEnricherTest {
     fun `rejects a spec version before the minimum`() {
         // the cyclonedxDirectBom task can be configured to write an older spec version
         assertThatThrownBy { enrich(bom(specVersion = "1.5")) }
-            .isInstanceOf(IllegalArgumentException::class.java)
+            .isInstanceOf(SbomException::class.java)
             .hasMessage(
                 "The BOM declares CycloneDX specVersion 1.5, but the manufacturer, license acknowledgement and " +
                     "source-distribution fields need ${SbomEnricher.MINIMUM_SPEC_VERSION} or later"
             )
     }
 
+    // another major version may rename or drop the fields the enricher writes, so being later is not enough
+    @ParameterizedTest
+    @ValueSource(strings = ["0.9", "2.0"])
+    fun `rejects a spec version with a major version other than 1`(specVersion: String) {
+        assertThatThrownBy { enrich(bom(specVersion = specVersion)) }
+            .isInstanceOf(SbomException::class.java)
+            .hasMessage(
+                "The BOM declares CycloneDX specVersion $specVersion, but this task only handles specification " +
+                    "${SbomEnricher.MINIMUM_SPEC_VERSION} and later 1.x versions"
+            )
+    }
+
     @Test
     fun `rejects input that is not a JSON object`() {
         assertThatThrownBy { enrich("[]".toByteArray()) }
-            .isInstanceOf(IllegalArgumentException::class.java)
-            .hasMessageContaining("JSON object")
+            .isInstanceOf(SbomException::class.java)
+            .hasMessage("The BOM is not a JSON object")
     }
 
     @Test
     fun `rejects input that is not valid JSON`() {
         assertThatThrownBy { enrich("{".toByteArray()) }
-            .isInstanceOf(IllegalArgumentException::class.java)
+            .isInstanceOf(SbomException::class.java)
             .hasMessageStartingWith("The BOM is not valid JSON: ")
             .hasMessageContaining("at line 1")
+    }
+
+    @Test
+    fun `rejects metadata that is not a JSON object`() {
+        val input = """
+            {"specVersion":"1.6","metadata":[],"components":[{"group":"org.example","name":"lib","version":"1.0"}]}
+        """.trimIndent()
+
+        // the normalizer cannot set the timestamp in it, so the enricher rejects it too instead of leaving it alone
+        assertThatThrownBy { enrich(input.toByteArray()) }
+            .isInstanceOf(SbomException::class.java)
+            .hasMessage("The BOM's metadata is not a JSON object")
     }
 
     @Test
@@ -140,19 +167,6 @@ class SbomEnricherTest {
         assertThat(result["metadata"]["manufacturer"]["name"].asText()).isEqualTo("HiveMQ GmbH")
     }
 
-    @Test
-    fun `tolerates a metadata value that is not an object`() {
-        val input = """
-            {"specVersion":"1.6","metadata":[],"components":[{"group":"org.example","name":"lib","version":"1.0"}]}
-        """.trimIndent()
-
-        val result = enrich(input.toByteArray())
-
-        assertThat(result["metadata"].isArray).isTrue()
-        assertThat(result["metadata"]).isEmpty()
-        assertThat(result.component("lib").property("bsi:component:filename")).isEqualTo("lib-1.0.jar")
-    }
-
     @ParameterizedTest
     @MethodSource("valuesOfAnUnexpectedType")
     fun `tolerates any other value of an unexpected type`(pointer: String, document: String) {
@@ -165,6 +179,19 @@ class SbomEnricherTest {
     }
 
     // --- Creator ---
+
+    @ParameterizedTest
+    @ValueSource(
+        strings = [
+            "security@example.com", "mailto:security@example.com",
+            "http://www.hivemq.com/", "https://www.hivemq.com/", "HTTPS://www.hivemq.com/",
+        ]
+    )
+    fun `accepts a creator that is an email address, a mailto link or an http or https URL`(creator: String) {
+        val result = enrich(with = details.copy(creator = creator))
+
+        assertThat(result["metadata"]["manufacturer"]["name"].asText()).isEqualTo("HiveMQ GmbH")
+    }
 
     @Test
     fun `leaves an existing component manufacturer alone`() {
@@ -181,6 +208,26 @@ class SbomEnricherTest {
 
         assertThat(lib["manufacturer"]["name"].asText()).isEqualTo("Example Corp")
         assertThat(lib["manufacturer"].has("url")).isFalse()
+    }
+
+    // a name makes the SBOM invalid and the rest lead nowhere, though HiveMQ:Security and localhost:8080 have a scheme
+    @ParameterizedTest
+    @ValueSource(
+        strings = [
+            "HiveMQ Security Team", "www.hivemq.com", "",
+            "HiveMQ:Security", "localhost:8080", "file:///tmp/x", "mailto:foo", "https:foo",
+        ]
+    )
+    fun `rejects a creator that is neither an email address nor an http or https URL before changing the BOM`(
+        creator: String,
+    ) {
+        val root = BomJson.read(bom())
+        val unchanged = root.deepCopy()
+
+        assertThatThrownBy { SbomEnricher.enrich(root, details.copy(creator = creator)) }
+            .isInstanceOf(SbomException::class.java)
+            .hasMessage("hivemqLicense.sbomCreator must be an email address or an http(s) URL, but is '$creator'")
+        assertThat(root).isEqualTo(unchanged)
     }
 
     @Test
@@ -241,6 +288,16 @@ class SbomEnricherTest {
 
         val composition = result["compositions"][0]
         assertThat(composition["aggregate"].asText()).isEqualTo("complete")
+        assertThat(composition["dependencies"].map { it.asText() })
+            .containsExactly("pkg:maven/com.hivemq/app@1.0.0?project_path=%3A", "pkg:maven/org.example/lib@1.0")
+    }
+
+    @Test
+    fun `declares the dependency graph incomplete when the build reports a gap`() {
+        val result = enrich(with = details.copy(incompleteReasons = listOf(FILE_DEPENDENCY)))
+
+        val composition = result["compositions"][0]
+        assertThat(composition["aggregate"].asText()).isEqualTo("incomplete")
         assertThat(composition["dependencies"].map { it.asText() })
             .containsExactly("pkg:maven/com.hivemq/app@1.0.0?project_path=%3A", "pkg:maven/org.example/lib@1.0")
     }
@@ -322,8 +379,8 @@ class SbomEnricherTest {
         val components = """{ "type": "library", "name": "local", "version": "1" }"""
         val coordinates = Coordinates("", "local", "1")
         val withoutGroup = details.copy(
-            artifactFileNames = mapOf(coordinates.toString() to "local-1.jar"),
-            concludedLicenses = mapOf(coordinates.toString() to "MIT"),
+            componentFileNames = mapOf(coordinates.toString() to "local-1.jar"),
+            concludedLicenses = mapOf(coordinates.toString() to listOf("MIT")),
         )
 
         val local = enrich(bom(components), withoutGroup).component("local")
@@ -388,7 +445,7 @@ class SbomEnricherTest {
               "licenses": [ { "license": { "id": "Apache-2.0" } } ]
             }
         """.trimIndent()
-        val resolved = details.copy(concludedLicenses = mapOf("org.example:lib:2.0" to "MIT"))
+        val resolved = details.copy(concludedLicenses = mapOf("org.example:lib:2.0" to listOf("MIT")))
 
         val result = enrich(bom(components), resolved)
 
@@ -420,7 +477,7 @@ class SbomEnricherTest {
 
     @Test
     fun `turns an expression license into a named entry to fit the concluded one`() {
-        val concluded = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to "CDDL-1.1"))
+        val concluded = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to listOf("CDDL-1.1")))
 
         val lib = enrich(bom(EXPRESSION_COMPONENT), concluded).component("lib")
 
@@ -438,7 +495,7 @@ class SbomEnricherTest {
 
     @Test
     fun `writes a concluded license that is not an SPDX id by name`() {
-        val publicDomain = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to "Public Domain"))
+        val publicDomain = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to listOf("Public Domain")))
 
         val lib = enrich(with = publicDomain).component("lib")
 
@@ -517,7 +574,7 @@ class SbomEnricherTest {
 
     @Test
     fun `is idempotent for a concluded license that is not an SPDX id`() {
-        val publicDomain = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to "Public Domain"))
+        val publicDomain = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to listOf("Public Domain")))
         val once = SbomEnricher.enrich(bom(), publicDomain)
 
         val twice = SbomEnricher.enrich(once, publicDomain)
@@ -527,7 +584,7 @@ class SbomEnricherTest {
 
     @Test
     fun `is idempotent for an expression license next to a concluded one`() {
-        val concluded = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to "CDDL-1.1"))
+        val concluded = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to listOf("CDDL-1.1")))
         val once = SbomEnricher.enrich(bom(EXPRESSION_COMPONENT), concluded)
 
         val twice = SbomEnricher.enrich(once, concluded)
@@ -536,12 +593,23 @@ class SbomEnricherTest {
     }
 
     @Test
+    fun `is idempotent for an incomplete dependency graph`() {
+        val incomplete = details.copy(incompleteReasons = listOf(FILE_DEPENDENCY))
+        val once = SbomEnricher.enrich(bom(), incomplete)
+
+        val twice = SbomEnricher.enrich(once, incomplete)
+
+        assertThat(twice).isEqualTo(once)
+    }
+
+    @Test
     fun `writes a document that is valid for the spec version it declares`() {
-        val cddl = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to "CDDL-1.1"))
-        val publicDomain = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to "Public Domain"))
+        val cddl = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to listOf("CDDL-1.1")))
+        val publicDomain = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to listOf("Public Domain")))
         val variants = mapOf(
             "default" to (bom() to details),
             "email creator" to (bom() to details.copy(creator = "security@example.com")),
+            "incomplete dependency graph" to (bom() to details.copy(incompleteReasons = listOf(FILE_DEPENDENCY))),
             "license that is not an SPDX id" to (bom() to publicDomain),
             "expression license with a concluded one" to (bom(EXPRESSION_COMPONENT) to cddl),
             "expression license without a concluded one" to
@@ -563,6 +631,9 @@ class SbomEnricherTest {
     private companion object {
         // a dual license in the expression form of a license list
         const val EXPRESSION = "(CDDL-1.0 OR GPL-2.0-with-classpath-exception)"
+
+        // what the plugin reports for a jar on the classpath that is no module, which CycloneDX leaves out
+        const val FILE_DEPENDENCY = "runtimeClasspath has file dependencies: vendored.jar"
 
         val EXPRESSION_COMPONENT = """
             {

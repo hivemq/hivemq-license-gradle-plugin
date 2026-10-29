@@ -24,6 +24,9 @@ import org.gradle.testkit.runner.TaskOutcome
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.util.jar.Attributes
+import java.util.jar.JarOutputStream
+import java.util.jar.Manifest
 
 class GenerateSbomIntegrationTest {
 
@@ -67,6 +70,24 @@ class GenerateSbomIntegrationTest {
             .writeText(if (externalDependencies) "$buildScript\n$dependencies" else buildScript)
     }
 
+    /**
+     * Puts `libs/vendored.jar` into [configuration] of the project in [dir] as a file dependency, like a jar checked
+     * into a repository.
+     */
+    private fun addVendoredJar(dir: File = projectDir, configuration: String = "implementation") {
+        val jar = dir.resolve("libs/vendored.jar")
+        jar.parentFile.mkdirs()
+        val manifest = Manifest().apply { mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0" }
+        JarOutputStream(jar.outputStream(), manifest).close()
+        dir.resolve("build.gradle.kts").appendText(
+            "\n" + """
+            dependencies {
+                "$configuration"(files("libs/vendored.jar"))
+            }
+            """.trimIndent()
+        )
+    }
+
     private val fixedTimestamp = """sbomTimestamp.set(Instant.parse("2026-01-02T03:04:05Z"))"""
 
     private fun sbom() = projectDir.resolve("build/sbom/sbom-project.cdx.json")
@@ -74,6 +95,115 @@ class GenerateSbomIntegrationTest {
     private val mapper = ObjectMapper()
 
     // --- Content ---
+
+    @Test
+    fun `declares the dependency graph incomplete with a file dependency`() {
+        setup(fixedTimestamp, externalDependencies = false)
+        addVendoredJar()
+
+        val result = gradleRunner("generateSbom").build()
+
+        // CycloneDX leaves the jar out without a warning, so the graph in the SBOM is not complete
+        assertThat(sbom().readText()).doesNotContain("vendored")
+        assertThat(mapper.readTree(sbom())["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
+        assertThat(result.output).contains(
+            "The SBOM of project ':' declares its dependency graph incomplete: runtimeClasspath has file " +
+                "dependencies: vendored.jar"
+        )
+    }
+
+    @Test
+    fun `declares the dependency graph incomplete with a file dependency in an additional configuration`() {
+        setup("additionalConfigurations.add(\"extra\")\n$fixedTimestamp", externalDependencies = false)
+        projectDir.resolve("build.gradle.kts").appendText("\nval extra by configurations.creating")
+        addVendoredJar(configuration = "extra")
+
+        val result = gradleRunner("generateSbom").build()
+
+        assertThat(mapper.readTree(sbom())["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
+        // by the name the build script uses, not by the name of the configuration the plugin resolves in its place
+        assertThat(result.output)
+            .contains(
+                "The SBOM of project ':' declares its dependency graph incomplete: extra has file dependencies: " +
+                    "vendored.jar"
+            )
+            .doesNotContain("hivemqLicense_extra")
+    }
+
+    @Test
+    fun `declares the dependency graph incomplete with a file dependency of a project dependency`() {
+        projectDir.resolve("settings.gradle.kts").writeText(
+            """
+            rootProject.name = "multi-project"
+            include("lib", "app")
+            """.trimIndent()
+        )
+        projectDir.resolve("lib").mkdirs()
+        projectDir.resolve("lib/build.gradle.kts").writeText(
+            """
+            plugins {
+                java
+            }
+            """.trimIndent()
+        )
+        addVendoredJar(projectDir.resolve("lib"))
+        projectDir.resolve("app").mkdirs()
+        projectDir.resolve("app/build.gradle.kts").writeText(
+            """
+            import java.time.Instant
+
+            plugins {
+                java
+                id("com.hivemq.tools.license")
+            }
+            hivemqLicense {
+                thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+                $fixedTimestamp
+            }
+            dependencies {
+                implementation(project(":lib"))
+            }
+            """.trimIndent()
+        )
+
+        val result = gradleRunner(":app:generateSbom").build()
+
+        // lib declares the jar, so app has no file dependency of its own, and CycloneDX leaves the jar out
+        val sbom = projectDir.resolve("app/build/sbom/app.cdx.json")
+        assertThat(sbom.readText()).doesNotContain("vendored")
+        assertThat(mapper.readTree(sbom)["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
+        assertThat(result.output).contains(
+            "The SBOM of project ':app' declares its dependency graph incomplete: runtimeClasspath has file " +
+                "dependencies: vendored.jar"
+        )
+        // finding the file needs no jar of lib
+        assertThat(result.task(":lib:jar")).isNull()
+    }
+
+    @Test
+    fun `declares the dependency graph incomplete with a module that cannot be resolved`() {
+        setup(fixedTimestamp)
+        projectDir.resolve("build.gradle.kts").appendText(
+            "\n" + """
+            dependencies {
+                implementation("org.example.missing:does-not-exist:1.0")
+            }
+            """.trimIndent()
+        )
+
+        val result = gradleRunner("generateSbom").build()
+
+        // CycloneDX resolves leniently: it leaves the module out and only logs it
+        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":generateSbom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        val sbom = mapper.readTree(sbom())
+        assertThat(sbom["components"].map { it["name"].asText() }).contains("guava").doesNotContain("does-not-exist")
+        assertThat(sbom["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
+        assertThat(result.output).contains(
+            "The SBOM of project ':' declares its dependency graph incomplete: runtimeClasspath could not resolve " +
+                "org.example.missing:does-not-exist:1.0"
+        )
+    }
 
     @Test
     fun `describes the dependencies with their files, licenses and creators`() {
@@ -175,23 +305,29 @@ class GenerateSbomIntegrationTest {
     }
 
     @Test
-    fun `keeps the file names when the configuration cache is reused`() {
+    fun `keeps the file names and the incomplete graph when the configuration cache is reused`() {
         setup(fixedTimestamp)
+        addVendoredJar()
         // Compiles the build script first: compiling it in a configuration-cache run records system properties that
         // change between TestKit runs, which would discard the entry.
         gradleRunner("help").build()
         val args = arrayOf("generateSbom", "--configuration-cache")
-        gradleRunner(*args).build()
+        val first = gradleRunner(*args).build()
+        assertThat(first.output).contains("Configuration cache entry stored")
         // without its output the task runs again, with the inputs read from the stored entry
         projectDir.resolve("build/sbom").deleteRecursively()
 
         val result = gradleRunner(*args).build()
 
-        assertThat(result.output).contains("Reusing configuration cache")
+        assertThat(result.output)
+            .contains("Reusing configuration cache")
+            .contains("declares its dependency graph incomplete: runtimeClasspath has file dependencies: vendored.jar")
         assertThat(result.task(":generateSbom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
-        val guava = mapper.readTree(sbom())["components"].first { it["name"].asText() == "guava" }
+        val sbom = mapper.readTree(sbom())
+        val guava = sbom["components"].first { it["name"].asText() == "guava" }
         assertThat(guava["properties"].map { it["name"].asText() to it["value"].asText() })
             .contains("bsi:component:filename" to "guava-33.4.0-jre.jar")
+        assertThat(sbom["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
     }
 
     @Test
@@ -259,6 +395,29 @@ class GenerateSbomIntegrationTest {
     // --- Output ---
 
     @Test
+    fun `generateSbom is up to date when nothing changed`() {
+        setup(fixedTimestamp)
+        gradleRunner("generateSbom").build()
+
+        val result = gradleRunner("generateSbom").build()
+
+        assertThat(result.task(":generateSbom")?.outcome).isEqualTo(TaskOutcome.UP_TO_DATE)
+    }
+
+    @Test
+    fun `generateSbom writes the file on Gradle 8`() {
+        setup(fixedTimestamp)
+
+        // the other tests run on the Gradle that builds the plugin, while the plugin supports Gradle 8 as well
+        val result = gradleRunner("generateSbom").withGradleVersion("8.14").build()
+
+        assertThat(result.task(":generateSbom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(sbom().readText())
+            .contains(""""timestamp" : "2026-01-02T03:04:05Z"""")
+            .contains("pkg:maven/org.slf4j/slf4j-api@2.0.16")
+    }
+
+    @Test
     fun `generateSbom writes the project name as file name`() {
         setup(fixedTimestamp)
 
@@ -274,6 +433,17 @@ class GenerateSbomIntegrationTest {
     }
 
     @Test
+    fun `rejects an sbomName that is not a file name`() {
+        setup("sbomName.set(\"../x\")\n$fixedTimestamp", externalDependencies = false)
+
+        val result = gradleRunner("generateSbom").buildAndFail()
+
+        assertThat(result.output)
+            .contains("hivemqLicense.sbomName must be a non-blank file name without '/' or '\\', but is '../x'")
+        assertThat(projectDir.resolve("build/x.cdx.json")).doesNotExist()
+    }
+
+    @Test
     fun `sbomName changes the file name`() {
         setup("sbomName.set(\"hivemq-broker\")\n$fixedTimestamp")
 
@@ -283,6 +453,15 @@ class GenerateSbomIntegrationTest {
     }
 
     // --- Reproducibility ---
+
+    @Test
+    fun `names the project when it has no vcs reference`() {
+        setup(fixedTimestamp, externalDependencies = false)
+
+        val result = gradleRunner("generateSbom", "--info").build()
+
+        assertThat(result.output).contains("The SBOM of project ':' has no vcs reference: not in a git repository")
+    }
 
     @Test
     fun `replaces the CI references with the project's origin remote`() {
@@ -523,8 +702,7 @@ class GenerateSbomIntegrationTest {
         setup(externalDependencies = false)
 
         // Gradle 8 builds the artifacts of every visible configuration as part of assemble
-        // TestKit downloads the distribution into ~/.gradle/wrapper/dists, which CI caches, so this costs the
-        // download once per cache key
+        // TestKit keeps the distribution in ~/.gradle/wrapper/dists, which CI caches: one download per cache key
         val result = gradleRunner("assemble", "--dry-run").withGradleVersion("8.14").build()
 
         assertThat(result.output).contains(":jar SKIPPED").doesNotContain(":generateSbom")

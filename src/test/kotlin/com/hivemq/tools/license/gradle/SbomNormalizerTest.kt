@@ -66,8 +66,7 @@ class SbomNormalizerTest {
 
     private fun references(bytes: ByteArray) = tree(bytes)["metadata"]["component"]["externalReferences"]
 
-    // The URL of every reference, each once. vcs and source-distribution carry the same remote, so a credential that
-    // reaches either one makes the list longer than the one URL the tests expect.
+    // vcs and source-distribution share one remote, so a credential in either adds a second URL to this list
     private fun referenceUrls(bytes: ByteArray) = references(bytes).map { it["url"].asText() }.distinct()
 
     private fun tree(bytes: ByteArray) = mapper.readTree(bytes)
@@ -77,14 +76,14 @@ class SbomNormalizerTest {
     @Test
     fun `rejects input that is not a JSON object`() {
         assertThatThrownBy { normalize("[]".toByteArray()) }
-            .isInstanceOf(IllegalArgumentException::class.java)
-            .hasMessageContaining("JSON object")
+            .isInstanceOf(SbomException::class.java)
+            .hasMessage("The BOM is not a JSON object")
     }
 
     @Test
     fun `rejects input that is not valid JSON`() {
         assertThatThrownBy { normalize("{".toByteArray()) }
-            .isInstanceOf(IllegalArgumentException::class.java)
+            .isInstanceOf(SbomException::class.java)
             .hasMessageStartingWith("The BOM is not valid JSON: Unexpected end-of-input")
             .hasMessageContaining("at line 1")
     }
@@ -92,8 +91,8 @@ class SbomNormalizerTest {
     @Test
     fun `rejects metadata that is not a JSON object`() {
         assertThatThrownBy { normalize("""{"metadata":[]}""".toByteArray()) }
-            .isInstanceOf(IllegalArgumentException::class.java)
-            .hasMessageContaining("metadata is not a JSON object")
+            .isInstanceOf(SbomException::class.java)
+            .hasMessage("The BOM's metadata is not a JSON object")
     }
 
     // --- Timestamp ---
@@ -280,6 +279,14 @@ class SbomNormalizerTest {
     }
 
     @Test
+    fun `canonicalizes a GitHub ssh remote on the https port`() {
+        // GitHub's ssh over the https port, for a firewall that refuses ssh, uses the host ssh.github.com
+        val result = normalize(vcsUrl = "ssh://git@ssh.github.com:443/org/repo.git")
+
+        assertThat(referenceUrls(result)).containsExactly("https://github.com/org/repo")
+    }
+
+    @Test
     fun `canonicalizes a GitHub ssh remote to https`() {
         val result = normalize(vcsUrl = "ssh://git@github.com/hivemq/hivemq-kafka-extension.git")
 
@@ -301,10 +308,19 @@ class SbomNormalizerTest {
     }
 
     @Test
-    fun `drops the password from an ssh remote`() {
-        val result = normalize(vcsUrl = "ssh://user:secret@host/x.git")
+    fun `drops a user other than git from an ssh remote`() {
+        for (remote in listOf("jdoe@review.example.com:p", "ssh://jdoe@review.example.com/p")) {
+            val result = normalize(vcsUrl = remote)
 
-        assertThat(referenceUrls(result)).containsExactly("ssh://user@host/x.git")
+            assertThat(referenceUrls(result)).describedAs(remote).containsExactly("ssh://review.example.com/p")
+        }
+    }
+
+    @Test
+    fun `drops the password from an ssh remote`() {
+        val result = normalize(vcsUrl = "ssh://git:secret@host/x.git")
+
+        assertThat(referenceUrls(result)).containsExactly("ssh://git@host/x.git")
     }
 
     @Test
@@ -344,7 +360,7 @@ class SbomNormalizerTest {
     }
 
     @Test
-    fun `keeps an ssh remote with a login name`() {
+    fun `keeps the git user and the port of an ssh remote`() {
         val result = normalize(vcsUrl = "ssh://git@gitlab.example.com:2222/t/a.git")
 
         assertThat(referenceUrls(result)).containsExactly("ssh://git@gitlab.example.com:2222/t/a.git")

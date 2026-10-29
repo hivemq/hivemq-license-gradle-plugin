@@ -20,26 +20,27 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ArrayNode
 import com.fasterxml.jackson.databind.node.ObjectNode
 import java.math.BigInteger
+import java.net.URI
+import java.net.URISyntaxException
 
 /**
- * Adds what BSI TR-03183-2 requires and CycloneDX does not write: who created the SBOM, the file behind each
- * component and what kind of file it is, the component creators, the source URI, whether the dependency graph is
- * complete, and our reviewed license next to the declared one. Everything is derived from [SbomDetails] and from
- * what the BOM already holds, so the result is the same for the same input. The BOM has to declare CycloneDX 1.6 or
- * later, the first spec version with the manufacturer fields and the acknowledgement of a license; any other value
- * of an unexpected type, such as a `licenses` that is not an array, is left as it is instead of being replaced or
- * failing.
+ * Adds what BSI TR-03183-2 requires and CycloneDX does not write: the SBOM's creator, each component's file, file kind,
+ * creator and source URI, the graph's completeness, and our reviewed license next to the declared one. Deterministic;
+ * needs CycloneDX [MINIMUM_SPEC_VERSION] or a later 1.x and leaves a value of an unexpected type as it is.
  */
 internal object SbomEnricher {
 
     private val mapper = ObjectMapper()
 
-    // CycloneDX puts this qualifier on the purl of every Gradle project, and on nothing else. That includes the
-    // projects of an included build, so their components get the same creator, which is right for a composite build
-    // of our own repositories.
+    // only on the purl of a Gradle project, included builds too, so a composite of our repositories gets our creator
     private val projectPath = Regex("[?&]project_path=")
 
     private val mailto = Regex("^mailto:", RegexOption.IGNORE_CASE)
+
+    // a local part and a domain, neither with whitespace or a second at sign
+    private val emailAddress = Regex("""^[^\s@]+@[^\s@]+$""")
+
+    private val webSchemes = setOf("http", "https")
 
     // major and minor, and a patch like the 1.6.1 that the schema gives as an example
     private val specVersion = Regex("""(\d+)\.(\d+)(?:\.\d+)?""")
@@ -52,42 +53,68 @@ internal object SbomEnricher {
 
     private val minimumSpecVersion = requireNotNull(majorMinor(MINIMUM_SPEC_VERSION))
 
-    fun enrich(bom: ByteArray, details: SbomDetails): ByteArray {
-        val root = BomJson.read(bom)
+    /** [enrich] for a BOM that is still bytes; the result is compact JSON. */
+    fun enrich(bom: ByteArray, details: SbomDetails): ByteArray =
+        // compact, because the normalizer writes the final document and a pretty printer would put the system line
+        // separator into these bytes
+        mapper.writeValueAsBytes(enrich(BomJson.read(bom), details))
+
+    /**
+     * Adds the fields to [root], as [BomJson.read] returns it, and returns it. Everything is checked first, so [root]
+     * is unchanged when this throws.
+     */
+    fun enrich(root: ObjectNode, details: SbomDetails): ObjectNode {
         requireSpecVersion(root)
+        requireCreator(details.creator)
         enrichMetadata(root, details)
         (root.get("components") as? ArrayNode)?.forEach { node ->
             val component = node as? ObjectNode ?: return@forEach
             // with the version, because the BOM can hold a module in two versions, each with its own file and license
             val coordinates = coordinates(component).toString()
-            details.artifactFileNames[coordinates]?.let { describeFile(component, it) }
+            details.componentFileNames[coordinates]?.let { describeFile(component, it) }
             addCreator(component, details)
             addSourceDistribution(component)
-            acknowledgeLicenses(component, details.concludedLicenses[coordinates])
+            acknowledgeLicenses(component, details.concludedLicenses[coordinates].orEmpty())
         }
-        declareComplete(root)
-        // compact, because the normalizer writes the final document and a pretty printer would put the system line
-        // separator into these bytes
-        return mapper.writeValueAsBytes(root)
+        declareCompleteness(root, details.incompleteReasons)
+        return root
     }
 
-    // cyclonedxDirectBom can be configured to write an older spec version, whose schema rejects the fields added here
+    // cyclonedxDirectBom can write an older spec that rejects these fields; a new major may rename or drop them
     private fun requireSpecVersion(root: ObjectNode) {
         val declared = root.get("specVersion")
-        require(declared != null && declared.isTextual && isAtLeastMinimum(declared.asText())) {
-            val version = when {
+        val text = declared?.takeIf { it.isTextual }?.asText()
+        val version = text?.let(::majorMinor)
+        if (version != null && version.first != BigInteger.ONE) {
+            throw SbomException(
+                "The BOM declares CycloneDX specVersion $text, but this task only handles specification " +
+                    "$MINIMUM_SPEC_VERSION and later 1.x versions"
+            )
+        }
+        if (version == null || compareValuesBy(version, minimumSpecVersion, { it.first }, { it.second }) < 0) {
+            val description = when {
                 declared == null -> "no CycloneDX specVersion"
-                declared.isTextual -> "CycloneDX specVersion ${declared.asText()}"
+                text != null -> "CycloneDX specVersion $text"
                 else -> "a CycloneDX specVersion that is not a string"
             }
-            "The BOM declares $version, but the manufacturer, license acknowledgement and source-distribution " +
-                "fields need $MINIMUM_SPEC_VERSION or later"
+            throw SbomException(
+                "The BOM declares $description, but the manufacturer, license acknowledgement and " +
+                    "source-distribution fields need $MINIMUM_SPEC_VERSION or later"
+            )
         }
     }
 
-    private fun isAtLeastMinimum(version: String): Boolean {
-        val declared = majorMinor(version) ?: return false
-        return compareValuesBy(declared, minimumSpecVersion, { it.first }, { it.second }) >= 0
+    // a non-email value is written as a URL, where a name silently invalidates the SBOM and only http(s) leads anywhere
+    private fun requireCreator(creator: String) {
+        if (emailAddress.matches(creator.replace(mailto, "")) || isWebUrl(creator)) return
+        throw SbomException("hivemqLicense.sbomCreator must be an email address or an http(s) URL, but is '$creator'")
+    }
+
+    private fun isWebUrl(value: String) = try {
+        // a host too, because https:foo is a valid URI without one
+        URI(value).let { it.scheme?.lowercase() in webSchemes && it.host != null }
+    } catch (_: URISyntaxException) {
+        false
     }
 
     // as numbers, so that 1.10 is later than 1.6
@@ -159,9 +186,7 @@ internal object SbomEnricher {
         if (existing != null) existing.put("value", value) else addObject().put("name", name).put("value", value)
     }
 
-    // A project of this build has no POM, but it is ours, so its creator is the creator of the SBOM. A POM carries no
-    // contact for its authors, so for any other component the closest thing to one is the URL of the organization in
-    // its POM, which CycloneDX writes as the `website` reference, or else its repository.
+    // a project of this build is ours; another, whose POM has no contact, gets its organization URL (`website`) or vcs
     private fun addCreator(component: ObjectNode, details: SbomDetails) {
         if (component.has("manufacturer")) return
         if (isProjectOfThisBuild(component)) {
@@ -190,24 +215,23 @@ internal object SbomEnricher {
             ?.get("url")?.takeIf { it.isTextual }?.asText()
 
     /**
-     * CycloneDX wrote what the POM declares; our reviewed license is added as concluded. A license list is either
-     * license objects or one expression, never both. To fit a concluded license next to an expression, the expression
-     * becomes the name of a license, kept in one piece because as separate ids it would read as both licenses instead
-     * of either one. Without a concluded license the expression stays as it is and only gets its tag.
+     * CycloneDX wrote what the POM declares; our reviewed license is added as concluded. A license list holds license
+     * objects or one expression, never both, so next to a concluded license an expression becomes a license name, since
+     * separate ids would read as both licenses instead of either; without a concluded license it only gets its tag.
      */
-    private fun acknowledgeLicenses(component: ObjectNode, concluded: String?) {
+    private fun acknowledgeLicenses(component: ObjectNode, concluded: List<String>) {
         val licenses = component.get("licenses") as? ArrayNode
-        if (concluded != null) licenses?.let(::nameExpressions)
+        if (concluded.isNotEmpty()) licenses?.let(::nameExpressions)
         licenses?.forEach { entry ->
             val target = (entry.get("license") as? ObjectNode)
                 ?: (entry as? ObjectNode)?.takeIf { it.has("expression") }
             if (target != null && !target.has("acknowledgement")) target.put("acknowledgement", "declared")
         }
-        if (concluded == null) return
+        if (concluded.isEmpty()) return
         // only an expression that is not text is left, and license objects cannot join it in the list
         if (licenses != null && licenses.any { it.has("expression") }) return
         val list = component.arrayOrNew("licenses") ?: return
-        for (id in concluded.split(" AND ")) {
+        for (id in concluded) {
             // an SPDX id has no space, so a value like "Public Domain" can only be a name, and CycloneDX accepts
             // nothing but SPDX ids as `id`
             val key = if (' ' in id) "name" else "id"
@@ -232,8 +256,8 @@ internal object SbomEnricher {
         }
     }
 
-    // Gradle resolved the whole graph, so the dependency list is complete; the guideline wants that said
-    private fun declareComplete(root: ObjectNode) {
+    // BSI TR-03183-2 wants completeness stated truthfully, so any reason the build reported makes the graph incomplete
+    private fun declareCompleteness(root: ObjectNode, incompleteReasons: List<String>) {
         val dependencies = root.get("dependencies") as? ArrayNode ?: return
         // only text, each once, because the schema wants unique strings; sorted like the normalizer sorts the
         // dependencies, so the order CycloneDX wrote does not reach the output
@@ -244,7 +268,8 @@ internal object SbomEnricher {
         if (refs.isEmpty()) return
         val compositions = root.arrayOrNew("compositions") ?: return
         compositions.removeAll()
-        val composition = compositions.addObject().put("aggregate", "complete")
+        val aggregate = if (incompleteReasons.isEmpty()) "complete" else "incomplete"
+        val composition = compositions.addObject().put("aggregate", aggregate)
         val list = composition.putArray("dependencies")
         refs.forEach(list::add)
     }

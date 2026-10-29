@@ -19,6 +19,7 @@ import com.fasterxml.jackson.core.JsonProcessingException
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
@@ -37,10 +38,7 @@ import java.time.Instant
  * Writes a reproducible CycloneDX SBOM from the JSON BOM of the `cyclonedxDirectBom` task, with the fields
  * [SbomEnricher] adds, see [SbomNormalizer].
  */
-@DisableCachingByDefault(
-    because = "Rewriting one file is cheaper than a cache round trip, and the random serial number in the CycloneDX " +
-        "output makes a hit unlikely"
-)
+@DisableCachingByDefault(because = "Rewriting one file is cheaper than a cache round trip")
 abstract class GenerateSbomTask : DefaultTask() {
 
     @get:InputFile
@@ -64,7 +62,10 @@ abstract class GenerateSbomTask : DefaultTask() {
     @get:Input
     abstract val creatorName: Property<String>
 
-    /** Email address or URL of that organisation; BSI TR-03183-2 wants a contact for the SBOM's creator. */
+    /**
+     * Email address or http(s) URL of that organisation, anything else fails the task; BSI TR-03183-2 wants a contact
+     * for the SBOM's creator.
+     */
     @get:Input
     abstract val creator: Property<String>
 
@@ -73,9 +74,16 @@ abstract class GenerateSbomTask : DefaultTask() {
     @get:Optional
     abstract val artifactFileName: Property<String>
 
-    /** `group:name:version` to file name of the resolved artifacts, for the per-component file description. */
+    /** `group:name:version` to file name of the resolved components, for the per-component file description. */
     @get:Input
-    abstract val artifactFileNames: MapProperty<String, String>
+    abstract val componentFileNames: MapProperty<String, String>
+
+    /**
+     * Why the dependency graph is not complete, such as a file dependency or a module that could not be resolved,
+     * both of which CycloneDX leaves out of the BOM; empty means complete.
+     */
+    @get:Input
+    abstract val incompleteReasons: ListProperty<String>
 
     /** Same as `hivemqLicense.ignoredGroupPrefixes`; here it only shapes which concluded licenses are written. */
     @get:Input
@@ -96,34 +104,46 @@ abstract class GenerateSbomTask : DefaultTask() {
     protected fun run() {
         val bomFile = bom.get().asFile
         val sbomFile = outputFile.get().asFile
+        val reasons = incompleteReasons.get()
         val normalized = try {
-            val bomBytes = bomFile.readBytes()
-            // a file that is not a JSON object gets the reader's message, not the raw one of the license resolver
-            BomJson.read(bomBytes)
+            // before the license resolver, so a file that is not a JSON object gets the reader's message, not the raw
+            // one of the resolver; enricher and normalizer then work on this one tree
+            val root = BomJson.read(bomFile.readBytes())
             // a license problem is for checkApprovedLicenses to report, the SBOM takes what resolves
             val concluded = LicenseResolver.resolveKnownLicenses(
                 bomFile, ignoredGroupPrefixes.get(), allowedArtifacts.get(), overriddenLicenses.get()
             ).values.associate { dependency ->
                 // by the version the license was resolved for, which another version of the module may not share
-                dependency.coordinates.toString() to dependency.licenses.joinToString(" AND ") { it.id }
+                dependency.coordinates.toString() to dependency.licenses.map { it.id }
             }
             val details = SbomDetails(
                 creatorName = creatorName.get(),
                 creator = creator.get(),
                 artifactFileName = artifactFileName.orNull,
-                artifactFileNames = artifactFileNames.get(),
+                componentFileNames = componentFileNames.get(),
                 concludedLicenses = concluded,
+                incompleteReasons = reasons,
             )
-            SbomNormalizer.normalize(SbomEnricher.enrich(bomBytes, details), timestamp.get(), vcsUrl.orNull)
-        } catch (e: IllegalArgumentException) {
+            SbomNormalizer.normalize(SbomEnricher.enrich(root, details), timestamp.get(), vcsUrl.orNull)
+        } catch (e: SbomException) {
             throw cannotWrite(bomFile, e)
         } catch (e: JsonProcessingException) {
             // valid JSON the license resolver cannot map, such as a component without a name
             throw cannotWrite(bomFile, e)
         }
         sbomFile.writeBytes(normalized)
+        if (reasons.isNotEmpty()) {
+            // the SBOM says so too, but nobody reads it during the build
+            logger.warn(
+                "The SBOM of project '${projectPath()}' declares its dependency graph incomplete: " +
+                    reasons.joinToString("; ")
+            )
+        }
     }
 
     private fun cannotWrite(bomFile: File, cause: Exception) =
         GradleException("Cannot write an SBOM from '$bomFile': ${cause.message}", cause)
+
+    // the task's path starts with its project's path; the configuration cache forbids reading the project here
+    private fun projectPath() = path.substringBeforeLast(':').ifEmpty { ":" }
 }
