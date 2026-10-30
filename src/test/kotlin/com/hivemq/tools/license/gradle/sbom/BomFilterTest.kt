@@ -16,9 +16,11 @@
 package com.hivemq.tools.license.gradle.sbom
 
 import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.node.ArrayNode
 import com.fasterxml.jackson.databind.node.ObjectNode
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Timeout
 
 class BomFilterTest {
 
@@ -61,6 +63,23 @@ class BomFilterTest {
         }
         """.trimIndent().toByteArray()
     )
+
+    /**
+     * [bom] with the components [EXTRA] and [PROVIDED_API] added and [entries] as its dependency entries, each a
+     * `bom-ref` with the refs it depends on.
+     */
+    private fun graph(vararg entries: Pair<String, List<String>>): ObjectNode = bom().apply {
+        val components = get("components") as ArrayNode
+        for ((ref, name) in listOf(EXTRA to "extra", PROVIDED_API to "provided-api")) {
+            components.addObject().put("type", "library").put("bom-ref", ref)
+                .put("group", "org.example").put("name", name).put("version", "1.0")
+        }
+        val dependencies = (get("dependencies") as ArrayNode).removeAll()
+        for ((ref, dependsOn) in entries) {
+            val list = dependencies.addObject().put("ref", ref).putArray("dependsOn")
+            dependsOn.forEach(list::add)
+        }
+    }
 
     private fun JsonNode.refs(): List<String> = this["dependencies"].map { it["ref"].asText() }
 
@@ -132,6 +151,83 @@ class BomFilterTest {
         assertThat(root.refs()).containsExactly(APP, LIB)
     }
 
+    @Test
+    fun `links a component reached only through a dropped one to the dropped component's dependant`() {
+        val root = graph(
+            APP to listOf(LIB, PROVIDED_2),
+            LIB to listOf(PROVIDED_1),
+            PROVIDED_1 to listOf(EXTRA),
+            PROVIDED_2 to emptyList(),
+            EXTRA to emptyList(),
+        )
+
+        BomFilter.dropModules(root, PROVIDED)
+
+        assertThat(root.dependsOn(LIB)).containsExactly(EXTRA)
+        assertThat(root.dependsOn(APP)).containsExactly(LIB)
+        assertThat(root.refs()).containsExactly(APP, LIB, EXTRA)
+    }
+
+    @Test
+    fun `links a component reached through two dropped ones once`() {
+        val root = graph(
+            APP to listOf(LIB, PROVIDED_1, PROVIDED_API),
+            LIB to emptyList(),
+            PROVIDED_1 to listOf(EXTRA, LIB),
+            PROVIDED_API to listOf(EXTRA),
+            EXTRA to emptyList(),
+        )
+
+        BomFilter.dropModules(root, PROVIDED_WITH_API)
+
+        // in the order the refs first appear, the one the root already had included
+        assertThat(root.dependsOn(APP)).containsExactly(LIB, EXTRA)
+    }
+
+    @Test
+    fun `links across a chain of dropped components`() {
+        val root = graph(
+            APP to listOf(PROVIDED_2),
+            PROVIDED_2 to listOf(PROVIDED_API),
+            PROVIDED_API to listOf(EXTRA),
+            EXTRA to emptyList(),
+        )
+
+        BomFilter.dropModules(root, PROVIDED_WITH_API)
+
+        assertThat(root.dependsOn(APP)).containsExactly(EXTRA)
+    }
+
+    @Test
+    @Timeout(value = 10, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+    fun `links across a cycle of dropped components`() {
+        val root = graph(
+            APP to listOf(LIB),
+            LIB to listOf(PROVIDED_1),
+            PROVIDED_1 to listOf(PROVIDED_API),
+            PROVIDED_API to listOf(PROVIDED_1, EXTRA),
+            EXTRA to emptyList(),
+        )
+
+        BomFilter.dropModules(root, PROVIDED_WITH_API)
+
+        assertThat(root.dependsOn(LIB)).containsExactly(EXTRA)
+    }
+
+    @Test
+    fun `never links a component to itself`() {
+        val root = graph(
+            APP to listOf(LIB),
+            LIB to listOf(PROVIDED_1),
+            PROVIDED_1 to listOf(LIB, EXTRA),
+            EXTRA to emptyList(),
+        )
+
+        BomFilter.dropModules(root, PROVIDED)
+
+        assertThat(root.dependsOn(LIB)).containsExactly(EXTRA)
+    }
+
     // --- Output ---
 
     @Test
@@ -147,11 +243,14 @@ class BomFilterTest {
     private companion object {
         // the bom-refs CycloneDX writes: a purl, which for a project of this build carries the project path
         const val APP = "pkg:maven/com.hivemq/app@1.0.0?project_path=%3A"
+        const val EXTRA = "pkg:maven/org.example/extra@1.0?type=jar"
         const val LIB = "pkg:maven/org.example/lib@1.0?type=jar"
         const val PROVIDED_1 = "pkg:maven/org.example/provided@1.0?type=jar"
         const val PROVIDED_2 = "pkg:maven/org.example/provided@2.0?type=jar"
+        const val PROVIDED_API = "pkg:maven/org.example/provided-api@1.0?type=jar"
 
         // what the plugin reads from a hivemqProvided configuration, by group and name without a version
         val PROVIDED = setOf("org.example:provided")
+        val PROVIDED_WITH_API = PROVIDED + "org.example:provided-api"
     }
 }
