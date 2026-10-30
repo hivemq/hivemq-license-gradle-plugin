@@ -111,7 +111,10 @@ abstract class HivemqLicensePlugin @Inject constructor(
             outputDirectory.set(extension.thirdPartyLicenseDirectory)
         }
 
-        SbomWiring.register(project, extension, cyclonedxJsonOutput, bomConfigurationNames(extension))
+        // the SBOM resolves the licenses like the other license tasks, so a license problem fails it the same way
+        SbomWiring.register(project, extension, bomConfigurationNames(extension)).configure {
+            readLicensesFromBom()
+        }
     }
 
     /**

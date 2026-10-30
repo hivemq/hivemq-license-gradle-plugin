@@ -87,7 +87,9 @@ The `outputFileNamePrefix` property can be set to prefix the output file names, 
 
 Writes `build/sbom/<sbomName>.cdx.json`, a CycloneDX JSON SBOM derived from the `cyclonedxDirectBom` output.
 Nothing ships it by itself: add it to a distribution or image where the product is assembled, for example
-`from(tasks.named("generateSbom")) { into("sbom") }` in a `Zip` task.
+`from(tasks.named("generateSbom")) { into("sbom") }` in a `Zip` task. It validates licenses the same way as
+`checkApprovedLicenses` and fails with the same message when any dependency has an unapproved or unknown license, so
+a build that ships the SBOM needs no separate license check.
 
 The CycloneDX Gradle plugin writes a file that differs on every run (current time, random serial number, the CI run
 URL, a `vcs` reference taken from the `GIT_URL` variable or from the directory Gradle was started in), which changes
@@ -146,16 +148,16 @@ requires beyond CycloneDX's defaults:
   reports (overrides included) is added as `concluded`, one entry per license when several apply. When a component's
   declared license is a single SPDX expression and a concluded license is added, the expression is kept whole as the
   `name` of the declared entry, because a CycloneDX license list holds either single licenses or one expression. A
-  component the plugin cannot resolve, or leaves out of the reports, or in a version the reports do not list, keeps
-  only the declared entries; `generateSbom` never fails on a license problem, that is what
-  `checkApprovedLicenses` is for.
+  component the reports leave out (a module matched by `ignoredGroupPrefixes` and not listed in `allowedArtifacts`),
+  or in a version the reports do not list, keeps only its declared entries.
 
-Known gaps: first-party components (the top-level component and the projects of this build and of included builds)
-carry no license; a module matched by `ignoredGroupPrefixes` and not listed in `allowedArtifacts` carries no concluded
-license; concluded licenses are written as one license object per license instead of the single SPDX expression the
-guideline shows, because a CycloneDX 1.6 license list cannot mix an expression with the declared license objects;
-files other than `.jar` and `.zip` get a file name but no executable, archive or structured property; and a component
-whose POM inherits `<organization>` and `<scm>` from a parent POM gets no creator, as described above.
+Known gaps: first-party components (the top-level component and the projects of this build and of included builds) carry
+no license, so a project dependency fails `generateSbom` like it fails `checkApprovedLicenses` unless
+`ignoredGroupPrefixes` covers its group or an override names it; concluded licenses are written as one license object
+per license instead of the single SPDX expression the guideline shows, because a CycloneDX 1.6 license list cannot mix
+an expression with the declared license objects; files other than `.jar` and `.zip` get a file name but no executable,
+archive or structured property; and a component whose POM inherits `<organization>` and `<scm>` from a parent POM gets
+no creator, as described above.
 
 Deliberate deviations: the serial number is derived from the content, while CycloneDX recommends a new serial number
 for every generated BOM even when the content is unchanged; and the timestamp is `sbomTimestamp`, by default

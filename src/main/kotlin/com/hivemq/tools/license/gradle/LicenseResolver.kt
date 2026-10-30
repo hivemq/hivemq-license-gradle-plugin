@@ -102,34 +102,9 @@ object LicenseResolver {
         overriddenLicenses: Map<String, String> = emptyMap(),
         dependencyLicenseOrigin: () -> String? = { null },
     ): TreeMap<String, ResolvedDependency> {
-        val (entries, problems) =
-            resolve(dependencyLicenseFile, ignoredGroupPrefixes, allowedArtifacts, overriddenLicenses)
-        failOnProblems(LicenseSource(dependencyLicenseFile, dependencyLicenseOrigin), problems)
-        return entries
-    }
-
-    /**
-     * The licenses that resolve, nothing else: a component with no license, an unapproved one or an invalid override
-     * is left out instead of failing, so a license problem stays a matter for [resolveLicenses] and the report tasks.
-     * A file that cannot be read or parsed still fails.
-     */
-    internal fun resolveKnownLicenses(
-        dependencyLicenseFile: File,
-        ignoredGroupPrefixes: Set<String>,
-        allowedArtifacts: Set<String>,
-        overriddenLicenses: Map<String, String> = emptyMap(),
-    ): TreeMap<String, ResolvedDependency> =
-        resolve(dependencyLicenseFile, ignoredGroupPrefixes, allowedArtifacts, overriddenLicenses).first
-
-    // what resolves and a message for each component that does not, so the caller decides whether that is a failure
-    private fun resolve(
-        dependencyLicenseFile: File,
-        ignoredGroupPrefixes: Set<String>,
-        allowedArtifacts: Set<String>,
-        overriddenLicenses: Map<String, String>,
-    ): Pair<TreeMap<String, ResolvedDependency>, List<String>> {
         val objectMapper = ObjectMapper()
         val tree = objectMapper.readTree(dependencyLicenseFile)
+        val source = LicenseSource(dependencyLicenseFile, dependencyLicenseOrigin)
         // an override naming an unknown license is a problem of its own, and its module is not resolved any further
         val invalidOverrides = overriddenLicenses.filterValues { knownLicense(it) == null }
         val problems = invalidOverrides.map { (moduleId, spdxId) ->
@@ -137,6 +112,7 @@ object LicenseResolver {
         }.toMutableList()
         if (!tree.has("components")) {
             return resolvePnpmLicenses(
+                source,
                 tree,
                 ignoredGroupPrefixes,
                 allowedArtifacts,
@@ -184,7 +160,8 @@ object LicenseResolver {
             }
             entries[coordinates.moduleId] = ResolvedDependency(coordinates, chosenLicenses)
         }
-        return Pair(entries, problems)
+        failOnProblems(source, problems)
+        return entries
     }
 
     // one way a component may be used: the licenses that then apply together, or null when one of them is not approved
@@ -216,13 +193,14 @@ object LicenseResolver {
     }
 
     private fun resolvePnpmLicenses(
+        source: LicenseSource,
         tree: JsonNode,
         ignoredGroupPrefixes: Set<String>,
         allowedArtifacts: Set<String>,
         overriddenLicenses: Map<String, String>,
         invalidOverrides: Set<String>,
         problems: MutableList<String>,
-    ): Pair<TreeMap<String, ResolvedDependency>, List<String>> {
+    ): TreeMap<String, ResolvedDependency> {
         val entries = TreeMap<String, ResolvedDependency>()
         for ((_, packages) in tree.properties()) {
             for (pkg in packages) {
@@ -249,7 +227,8 @@ object LicenseResolver {
                 entries[coordinates.moduleId] = ResolvedDependency(coordinates, result.licenses)
             }
         }
-        return Pair(entries, problems)
+        failOnProblems(source, problems)
+        return entries
     }
 
     fun shouldIgnore(

@@ -15,7 +15,6 @@
  */
 package com.hivemq.tools.license.gradle
 
-import com.fasterxml.jackson.core.JsonProcessingException
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
@@ -1570,106 +1569,5 @@ class LicenseResolverResolveLicensesTest {
             .hasMessageContaining(report.absolutePath)
             .hasMessageContaining("No license found for 'mystery-pkg:2.0.0'")
             .hasMessageContaining("License not on the approved list for 'closed-pkg:1.0.0': Proprietary")
-    }
-
-    // --- known licenses only ---
-
-    @Test
-    fun `resolveKnownLicenses leaves out a component whose license is not approved`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                { "group": "com.example", "name": "approved", "version": "1.0.0",
-                  "licenses": [ { "license": { "id": "Apache-2.0" } } ] },
-                { "group": "com.example", "name": "proprietary", "version": "1.0.0",
-                  "licenses": [ { "license": { "name": "Some Proprietary License" } } ] }
-              ]
-            }
-            """.trimIndent()
-        )
-
-        val result = LicenseResolver.resolveKnownLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
-
-        assertThat(result.keys).containsExactly("com.example:approved")
-        assertThat(result["com.example:approved"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
-    }
-
-    @Test
-    fun `resolveKnownLicenses leaves out a component whose override names an unknown license`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                { "group": "org.jline", "name": "jline", "version": "3.26.1",
-                  "licenses": [ { "license": { "name": "The BSD License" } } ] },
-                { "group": "com.example", "name": "badly-overridden", "version": "1.0.0",
-                  "licenses": [ { "license": { "id": "MIT" } } ] }
-              ]
-            }
-            """.trimIndent()
-        )
-
-        val result = LicenseResolver.resolveKnownLicenses(
-            bom,
-            defaultIgnoredPrefixes,
-            defaultAllowedArtifacts,
-            overriddenLicenses = mapOf(
-                "org.jline:jline" to "BSD-3-Clause",
-                "com.example:badly-overridden" to "Nope-1.0",
-            ),
-        )
-
-        assertThat(result.keys).containsExactly("org.jline:jline")
-        assertThat(result["org.jline:jline"]!!.licenses).containsExactly(KnownLicense.BSD_3_CLAUSE)
-    }
-
-    @Test
-    fun `resolveKnownLicenses leaves out a component without a license`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                { "group": "com.example", "name": "no-license", "version": "1.0.0" }
-              ]
-            }
-            """.trimIndent()
-        )
-
-        val result = LicenseResolver.resolveKnownLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
-
-        assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `resolveKnownLicenses leaves out a pnpm package with a problem`() {
-        val report = writeBom(
-            """
-            {
-              "MIT": [
-                { "name": "fine-pkg", "versions": ["1.0.0"], "license": "MIT" }
-              ],
-              "Unknown": [
-                { "name": "mystery-pkg", "versions": ["2.0.0"], "license": "Unknown" }
-              ],
-              "Proprietary": [
-                { "name": "closed-pkg", "versions": ["1.0.0"], "license": "Proprietary" }
-              ]
-            }
-            """.trimIndent()
-        )
-
-        val result = LicenseResolver.resolveKnownLicenses(report, emptySet(), emptySet())
-
-        assertThat(result.keys).containsExactly("fine-pkg")
-        assertThat(result["fine-pkg"]!!.licenses).containsExactly(KnownLicense.MIT)
-    }
-
-    @Test
-    fun `resolveKnownLicenses still fails on a file that is not JSON`() {
-        val file = writeBom("not json")
-
-        assertThatThrownBy { LicenseResolver.resolveKnownLicenses(file, emptySet(), emptySet()) }
-            .isInstanceOf(JsonProcessingException::class.java)
     }
 }

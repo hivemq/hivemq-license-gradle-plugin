@@ -17,6 +17,7 @@ package com.hivemq.tools.license.gradle.sbom
 
 /**
  * A BOM or a setting the SBOM cannot be written from, with a message for the user. [GenerateSbomTask] reports it
- * with the BOM file; any other exception is a bug and propagates as it is.
+ * with the BOM file, like a BOM the license resolver cannot map; a license problem keeps the message
+ * `checkApprovedLicenses` gives, and any other exception is a bug and propagates as it is.
  */
 internal class SbomException(message: String) : RuntimeException(message)

@@ -15,6 +15,7 @@
  */
 package com.hivemq.tools.license.gradle.sbom
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.assertj.core.api.Assertions.assertThat
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
@@ -64,7 +65,9 @@ class GenerateSbomTaskTest {
                 id("com.hivemq.tools.license")
             }
             tasks.register<GenerateSbomTask>("sbomFromFile") {
-                bom.set(layout.projectDirectory.file("bom.json"))
+                // an input of every license task, unused by the SBOM
+                projectName.set("app")
+                dependencyLicense.set(layout.projectDirectory.file("bom.json"))
                 timestamp.set(Instant.parse("2026-01-02T03:04:05Z"))
                 creatorName.set("HiveMQ GmbH")
                 creator.set("https://www.hivemq.com/")
@@ -79,11 +82,8 @@ class GenerateSbomTaskTest {
         )
     }
 
-    // --- Output ---
-
-    @Test
-    fun `does not fail on a license that is not approved`() {
-        setup()
+    /** Gives the BOM's component a license that is not approved, and drops the override that would replace it. */
+    private fun useUnapprovedLicense() {
         projectDir.resolve("bom.json").writeText(
             projectDir.resolve("bom.json").readText().replace("Apache-2.0", "Proprietary-9.9")
         )
@@ -91,11 +91,24 @@ class GenerateSbomTaskTest {
             projectDir.resolve("build.gradle.kts").readText()
                 .replace("""mapOf("org.example:lib" to "MIT")""", "emptyMap()")
         )
+    }
 
-        val result = gradleRunner().build()
+    // --- Output ---
 
-        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
-        assertThat(projectDir.resolve("build/sbom/app.cdx.json").readText()).doesNotContain("concluded")
+    @Test
+    fun `fails like checkApprovedLicenses on a license that is not approved`() {
+        setup()
+        useUnapprovedLicense()
+
+        val result = gradleRunner().buildAndFail()
+
+        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        // the message of checkApprovedLicenses, not wrapped like the message of a BOM the SBOM cannot be written from
+        assertThat(result.output)
+            .contains("1 license problem found in '${projectDir.resolve("bom.json").canonicalPath}':")
+            .contains("License not on the approved list for 'org.example:lib:1.0': Proprietary-9.9")
+            .doesNotContain("Cannot write an SBOM")
+        assertThat(projectDir.resolve("build/sbom/app.cdx.json")).doesNotExist()
     }
 
     @Test
@@ -187,6 +200,26 @@ class GenerateSbomTaskTest {
         assertThat(result.output)
             .contains("Cannot write an SBOM from '")
             .contains("bom.json': The BOM's metadata is not a JSON object")
+    }
+
+    @Test
+    fun `writes only the declared license of a component in an ignored group`() {
+        setup()
+        val internal = """{ "group": "com.hivemq", "name": "internal", "version": "1.0", """ +
+            """"purl": "pkg:maven/com.hivemq/internal@1.0?type=jar", """ +
+            """"licenses": [ { "license": { "id": "Proprietary-9.9" } } ] },"""
+        projectDir.resolve("bom.json").writeText(
+            projectDir.resolve("bom.json").readText().replace(""""components": [""", """"components": [ $internal""")
+        )
+
+        val result = gradleRunner().build()
+
+        // the license tasks leave the group out, so its license is neither checked nor concluded
+        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        val component = ObjectMapper().readTree(projectDir.resolve("build/sbom/app.cdx.json"))["components"]
+            .first { it["name"].asText() == "internal" }
+        assertThat(component["licenses"].map { it["license"]["acknowledgement"].asText() })
+            .containsExactly("declared")
     }
 
     @Test

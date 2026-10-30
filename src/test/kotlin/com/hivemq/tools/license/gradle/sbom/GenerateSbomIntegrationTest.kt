@@ -139,11 +139,13 @@ class GenerateSbomIntegrationTest {
             """.trimIndent()
         )
         projectDir.resolve("lib").mkdirs()
+        // a project has no license, so lib takes a group the default ignoredGroupPrefixes skips, or generateSbom fails
         projectDir.resolve("lib/build.gradle.kts").writeText(
             """
             plugins {
                 java
             }
+            group = "com.hivemq"
             """.trimIndent()
         )
         addVendoredJar(projectDir.resolve("lib"))
@@ -266,11 +268,13 @@ class GenerateSbomIntegrationTest {
             """.trimIndent()
         )
         projectDir.resolve("lib").mkdirs()
+        // a project has no license, so lib takes a group the default ignoredGroupPrefixes skips, or generateSbom fails
         projectDir.resolve("lib/build.gradle.kts").writeText(
             """
             plugins {
                 java
             }
+            group = "com.hivemq"
             """.trimIndent()
         )
         projectDir.resolve("app").mkdirs()

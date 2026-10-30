@@ -32,21 +32,23 @@ import org.gradle.api.artifacts.result.ResolvedComponentResult
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.gradle.api.artifacts.result.UnresolvedDependencyResult
 import org.gradle.api.attributes.Category
-import org.gradle.api.file.RegularFile
 import org.gradle.api.provider.Provider
+import org.gradle.api.tasks.TaskProvider
 import org.gradle.api.tasks.bundling.Jar
 import org.gradle.util.GradleVersion
 
 /** The SBOM part of the plugin: the `sbom*` conventions, the `generateSbom` task and the `sbomElements` variant. */
 internal object SbomWiring {
 
-    /** Sets the conventions and registers the task and the variant, reading the BOM from [cyclonedxJsonOutput]. */
+    /**
+     * Sets the conventions and registers the task and the variant. The caller sets the BOM and the license inputs of
+     * the returned task, the same way as those of the other license tasks.
+     */
     fun register(
         project: Project,
         extension: HivemqLicenseExtension,
-        cyclonedxJsonOutput: Provider<RegularFile>,
         bomConfigurationNames: Provider<List<String>>,
-    ) {
+    ): TaskProvider<GenerateSbomTask> {
         extension.sbomName.convention(project.name)
         extension.sbomTimestamp.convention(
             project.providers.of(SbomTimestampSource::class.java) {
@@ -67,7 +69,6 @@ internal object SbomWiring {
             group = TASK_GROUP
             description =
                 "Writes a reproducible CycloneDX SBOM (<sbomName>.cdx.json) from the cyclonedxDirectBom output."
-            bom.set(cyclonedxJsonOutput)
             timestamp.set(extension.sbomTimestamp)
             vcsUrl.set(
                 project.providers.of(SbomVcsUrlSource::class.java) {
@@ -80,9 +81,6 @@ internal object SbomWiring {
             artifactFileName.set(extension.sbomArtifactFileName)
             componentFileNames.set(resolvedComponentFileNames(project, bomConfigurationNames))
             incompleteReasons.set(incompleteGraphReasons(project, bomConfigurationNames))
-            ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
-            allowedArtifacts.set(extension.allowedArtifacts)
-            overriddenLicenses.set(extension.overriddenLicenses)
             outputFile.set(
                 project.layout.buildDirectory.file(extension.sbomName.map { "sbom/${checkSbomName(it)}.cdx.json" })
             )
@@ -107,6 +105,7 @@ internal object SbomWiring {
                 outgoing.artifact(generateSbom.flatMap { it.outputFile })
             }
         }
+        return generateSbom
     }
 
     /**
