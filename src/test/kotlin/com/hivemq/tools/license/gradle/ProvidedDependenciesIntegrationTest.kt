@@ -15,6 +15,8 @@
  */
 package com.hivemq.tools.license.gradle
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.hivemq.tools.license.gradle.sbom.GitTestRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
@@ -31,6 +33,8 @@ class ProvidedDependenciesIntegrationTest {
         .withProjectDir(projectDir)
         .withPluginClasspath()
         .withArguments(*args)
+        // generateSbom runs git, which must see neither the machine's git settings nor a repository around the build
+        .withEnvironment(GitTestRepository.isolatedEnv(projectDir))
 
     // the configuration as the HiveMQ extension plugin creates it: resolvable, and extended by implementation
     private val providedConfiguration = """
@@ -45,6 +49,15 @@ class ProvidedDependenciesIntegrationTest {
         dependencies {
             implementation("com.google.guava:guava:33.4.0-jre")
             hivemqProvided("org.slf4j:slf4j-api:2.0.16")
+        }
+        """.trimIndent()
+
+    // guava brings failureaccess along, so the shadow jar of an extension leaves it out as well; slf4j-api stays
+    private val providedGuavaWithDeclaredFailureaccess = """
+        dependencies {
+            hivemqProvided("com.google.guava:guava:33.4.0-jre")
+            implementation("com.google.guava:failureaccess:1.0.2")
+            implementation("org.slf4j:slf4j-api:2.0.16")
         }
         """.trimIndent()
 
@@ -88,6 +101,13 @@ class ProvidedDependenciesIntegrationTest {
     private fun licenses(dir: File = projectDir) =
         dir.resolve("build/tmp/third-party-licenses/licenses").readText()
 
+    private val mapper = ObjectMapper()
+
+    // the BOM of the cyclonedxDirectBom task, from which generateSbom writes the SBOM
+    private fun bom() = mapper.readTree(projectDir.resolve("build/reports/cyclonedx-direct/bom.json"))
+
+    private fun sbom() = mapper.readTree(projectDir.resolve("build/sbom/provided-project.cdx.json"))
+
     // --- Reports ---
 
     @Test
@@ -116,17 +136,7 @@ class ProvidedDependenciesIntegrationTest {
 
     @Test
     fun `drops a module reached from a provided one even when declared directly`() {
-        // guava brings failureaccess along, so the shadow jar of an extension leaves it out as well
-        setup(
-            providedConfiguration,
-            """
-            dependencies {
-                hivemqProvided("com.google.guava:guava:33.4.0-jre")
-                implementation("com.google.guava:failureaccess:1.0.2")
-                implementation("org.slf4j:slf4j-api:2.0.16")
-            }
-            """.trimIndent(),
-        )
+        setup(providedConfiguration, providedGuavaWithDeclaredFailureaccess)
 
         gradleRunner("updateThirdPartyLicenses").build()
 
@@ -212,5 +222,57 @@ class ProvidedDependenciesIntegrationTest {
         assertThat(result.output).contains("Reusing configuration cache")
         assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(licenses()).contains("com.google.guava:guava").doesNotContain("org.slf4j:slf4j-api")
+    }
+
+    // --- SBOM ---
+
+    @Test
+    fun `generateSbom drops a module reached from a provided one even when declared directly`() {
+        setup(providedConfiguration, providedGuavaWithDeclaredFailureaccess)
+
+        gradleRunner("generateSbom").build()
+
+        assertThat(sbom()["components"].map { it["name"].asText() })
+            .contains("slf4j-api")
+            .doesNotContain("guava", "failureaccess")
+    }
+
+    @Test
+    fun `generateSbom leaves provided modules out`() {
+        setup(providedConfiguration, guavaWithProvidedSlf4j)
+
+        gradleRunner("generateSbom").build()
+
+        // the BOM lists slf4j-api, so the SBOM lacks it because of the filter, not because CycloneDX never saw it
+        val slf4jApi = bom()["components"].first { it["name"].asText() == "slf4j-api" }["bom-ref"].asText()
+        val sbom = sbom()
+        assertThat(sbom["components"].map { it["name"].asText() }).contains("guava").doesNotContain("slf4j-api")
+        val guava = sbom["components"].first { it["name"].asText() == "guava" }["bom-ref"].asText()
+        // nothing refers to slf4j-api any more, neither a dependsOn list nor the composition stating completeness
+        val refs = sbom["dependencies"].flatMap { it["dependsOn"] }.plusElement(sbom["compositions"][0]["dependencies"])
+        assertThat(refs.map { it.asText() }).contains(guava).doesNotContain(slf4jApi)
+    }
+
+    @Test
+    fun `generateSbom leaves provided modules out when the configuration cache is reused`() {
+        setup(providedConfiguration, guavaWithProvidedSlf4j)
+        // Compiles the build script first: compiling it in a configuration-cache run records system properties that
+        // change between TestKit runs, which would discard the entry.
+        gradleRunner("help").build()
+        val args = arrayOf("generateSbom", "--configuration-cache")
+        assertThat(gradleRunner(*args).build().output).contains("Configuration cache entry stored")
+        val stored = sbom()
+        // without its output the task runs again, with the provided modules read from the stored entry
+        projectDir.resolve("build/sbom").deleteRecursively()
+
+        val result = gradleRunner(*args).build()
+
+        assertThat(result.output).contains("Reusing configuration cache")
+        assertThat(result.task(":generateSbom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        // outside a git repository the timestamp is the current time, but what the filter shapes is the same
+        val sbom = sbom()
+        assertThat(sbom["components"]).isEqualTo(stored["components"])
+        assertThat(sbom["dependencies"]).isEqualTo(stored["dependencies"])
+        assertThat(sbom["components"].map { it["name"].asText() }).contains("guava").doesNotContain("slf4j-api")
     }
 }

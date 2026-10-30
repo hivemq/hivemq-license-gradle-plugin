@@ -37,6 +37,11 @@ The `hivemqLicense` extension provides the following properties:
 | `sbomCreator`                | `Property<String>`            | `security@hivemq.com`               | No       | Email address or http(s) URL of that organisation, or the build fails  |
 | `sbomArtifactFileName`       | `Property<String>`            | `jar` archive file name             | No       | Top-level component's file name; the default needs the `java` plugin   |
 
+In a project with a `hivemqProvided` configuration (the HiveMQ extension Gradle plugin creates it for the dependencies
+the broker supplies at runtime), everything that configuration resolves is left out of the reports, the check and the
+SBOM, the same rule the extension jar applies when it leaves those libraries out; the broker's own report and SBOM
+cover them. There is no switch for it.
+
 ### Advanced Example
 
 ```kotlin
@@ -163,6 +168,9 @@ Deliberate deviations: the serial number is derived from the content, while Cycl
 for every generated BOM even when the content is unchanged; and the timestamp is `sbomTimestamp`, by default
 `SOURCE_DATE_EPOCH` or the commit time, instead of the time the SBOM data was compiled, which is what BSI TR-03183-2
 names. Both keep the file reproducible, so that archives containing it stay cacheable.
+
+Every version of the modules a `hivemqProvided` configuration resolves is left out, with its dependency entries and
+every reference to it (see Configuration).
 
 The manufacturer fields, the license acknowledgements and the `source-distribution` reference exist from CycloneDX
 specification 1.6 on, which is what `cyclonedxDirectBom` writes by default; `generateSbom` fails on a BOM that

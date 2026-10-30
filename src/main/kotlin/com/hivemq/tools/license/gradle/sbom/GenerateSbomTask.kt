@@ -33,8 +33,9 @@ import java.time.Instant
 /**
  * Writes a reproducible CycloneDX SBOM, with the fields [SbomEnricher] adds, from the JSON BOM in [dependencyLicense],
  * which the plugin sets to the output of `cyclonedxDirectBom`; see [SbomNormalizer]. It fails on the license
- * problems `checkApprovedLicenses` fails on, with the same message, and then writes no SBOM. A registration by hand
- * must set [projectName] too, although the SBOM does not use it.
+ * problems `checkApprovedLicenses` fails on, with the same message, and then writes no SBOM. The SBOM lists neither
+ * the modules in [providedModules] nor references to them. A registration by hand must set [projectName] too,
+ * although the SBOM does not use it.
  */
 @DisableCachingByDefault(because = "Rewriting one file is cheaper than a cache round trip")
 abstract class GenerateSbomTask : LicenseResolvingTask() {
@@ -87,10 +88,13 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
         val bomFile = dependencyLicense.get().asFile
         val sbomFile = outputFile.get().asFile
         val reasons = incompleteReasons.get()
+        val provided = providedModules.get()
         val normalized = try {
             // before the license resolver, so a file that is not a JSON object gets the reader's message, not the raw
-            // one of the resolver; enricher and normalizer then work on this one tree
+            // one of the resolver; filter, enricher and normalizer then work on this one tree
             val root = BomJson.read(bomFile.readBytes())
+            // the shipped artifact does not contain what the host provides at runtime, so neither does its SBOM
+            BomFilter.dropModules(root, provided)
             // fails on a license problem with the message of checkApprovedLicenses, which is not wrapped below
             val concluded = resolveLicenses().values.associate { dependency ->
                 // by the version the license was resolved for, which another version of the module may not share
