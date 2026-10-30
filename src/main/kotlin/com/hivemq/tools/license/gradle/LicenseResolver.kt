@@ -17,6 +17,7 @@ package com.hivemq.tools.license.gradle
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ArrayNode
 import java.io.File
 import java.util.*
 
@@ -92,15 +93,25 @@ object LicenseResolver {
     }
 
     // the approved license with this SPDX ID, matched regardless of case, or null
+
+    /** `group:name` of a BOM component [node]; a missing group or name counts as empty. */
+    private fun moduleIdOf(node: JsonNode): String =
+        "${node.get("group")?.asText().orEmpty()}:${node.get("name")?.asText().orEmpty()}"
+
     private fun knownLicense(spdxId: String): KnownLicense? =
         SPDX_ID_MAP[spdxId] ?: SPDX_IDS_IGNORING_CASE[spdxId.lowercase()]
 
+    /**
+     * The licenses of the components in [dependencyLicenseFile], or a failure that lists every license problem found.
+     * A BOM component whose `group:name` is in [providedModules] is left out in every version, as the host provides it.
+     */
     fun resolveLicenses(
         dependencyLicenseFile: File,
         ignoredGroupPrefixes: Set<String>,
         allowedArtifacts: Set<String>,
         overriddenLicenses: Map<String, String> = emptyMap(),
         dependencyLicenseOrigin: () -> String? = { null },
+        providedModules: Set<String> = emptySet(),
     ): TreeMap<String, ResolvedDependency> {
         val objectMapper = ObjectMapper()
         val tree = objectMapper.readTree(dependencyLicenseFile)
@@ -121,6 +132,8 @@ object LicenseResolver {
                 problems,
             )
         }
+        // out before the typed model is built, so a provided component is left out whatever its fields hold
+        (tree.get("components") as? ArrayNode)?.removeIf { moduleIdOf(it) in providedModules }
         val bom = objectMapper.treeToValue(tree, DependencyReport.Bom::class.java)
         val entries = TreeMap<String, ResolvedDependency>()
         for (component in bom.components) {

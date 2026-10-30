@@ -1,0 +1,216 @@
+/*
+ * Copyright 2020-present HiveMQ and the HiveMQ Community
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.hivemq.tools.license.gradle
+
+import org.assertj.core.api.Assertions.assertThat
+import org.gradle.testkit.runner.GradleRunner
+import org.gradle.testkit.runner.TaskOutcome
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.io.File
+
+class ProvidedDependenciesIntegrationTest {
+
+    @TempDir
+    lateinit var projectDir: File
+
+    private fun gradleRunner(vararg args: String) = GradleRunner.create()
+        .withProjectDir(projectDir)
+        .withPluginClasspath()
+        .withArguments(*args)
+
+    // the configuration as the HiveMQ extension plugin creates it: resolvable, and extended by implementation
+    private val providedConfiguration = """
+        val hivemqProvided by configurations.creating {
+            isCanBeResolved = true
+            isCanBeConsumed = false
+        }
+        configurations.named("implementation") { extendsFrom(hivemqProvided) }
+        """.trimIndent()
+
+    private val guavaWithProvidedSlf4j = """
+        dependencies {
+            implementation("com.google.guava:guava:33.4.0-jre")
+            hivemqProvided("org.slf4j:slf4j-api:2.0.16")
+        }
+        """.trimIndent()
+
+    // prints what the plugin hands to the license tasks as provided modules
+    private val printProvidedModules = """
+        tasks.register("printProvidedModules") {
+            val provided = tasks.named<com.hivemq.tools.license.gradle.LicenseResolvingTask>("updateThirdPartyLicenses")
+                .flatMap { it.providedModules }
+            doLast { println("provided modules: " + provided.get().sorted()) }
+        }
+        """.trimIndent()
+
+    private val head = """
+        plugins {
+            java
+            id("com.hivemq.tools.license")
+        }
+        hivemqLicense {
+            thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+        }
+        repositories {
+            mavenCentral()
+        }
+        """.trimIndent()
+
+    // each of the blocks goes below the plugins, the extension and Maven Central, so a test adds only what it needs
+    private fun buildScript(vararg blocks: String) = listOf(head, *blocks).joinToString("\n")
+
+    private fun setup(vararg blocks: String) {
+        projectDir.resolve("settings.gradle.kts").writeText("""rootProject.name = "provided-project"""")
+        projectDir.resolve("build.gradle.kts").writeText(buildScript(*blocks))
+    }
+
+    // a subproject of the group com.example with the hivemqProvided configuration, below which go the given blocks
+    private fun subproject(name: String, vararg blocks: String) {
+        val dir = projectDir.resolve(name).apply { mkdirs() }
+        val script = buildScript("""group = "com.example"""", providedConfiguration, *blocks)
+        dir.resolve("build.gradle.kts").writeText(script)
+    }
+
+    private fun licenses(dir: File = projectDir) =
+        dir.resolve("build/tmp/third-party-licenses/licenses").readText()
+
+    // --- Reports ---
+
+    @Test
+    fun `checkApprovedLicenses ignores provided modules`() {
+        UnlicensedRepository.write(projectDir.resolve("repo"))
+        setup(
+            providedConfiguration,
+            """
+            repositories {
+                maven { url = uri("repo") }
+            }
+            dependencies {
+                implementation("com.google.guava:guava:33.4.0-jre")
+                hivemqProvided("com.example:no-license-lib:1.0.0")
+            }
+            """.trimIndent(),
+        )
+
+        val result = gradleRunner("checkApprovedLicenses").build()
+
+        assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        // the BOM lists the module, so the check passes by leaving it out, not by never seeing it
+        assertThat(projectDir.resolve("build/reports/cyclonedx-direct/bom.json").readText())
+            .contains("no-license-lib")
+    }
+
+    @Test
+    fun `drops a module reached from a provided one even when declared directly`() {
+        // guava brings failureaccess along, so the shadow jar of an extension leaves it out as well
+        setup(
+            providedConfiguration,
+            """
+            dependencies {
+                hivemqProvided("com.google.guava:guava:33.4.0-jre")
+                implementation("com.google.guava:failureaccess:1.0.2")
+                implementation("org.slf4j:slf4j-api:2.0.16")
+            }
+            """.trimIndent(),
+        )
+
+        gradleRunner("updateThirdPartyLicenses").build()
+
+        assertThat(licenses()).contains("org.slf4j:slf4j-api").doesNotContain("com.google.guava:failureaccess")
+    }
+
+    @Test
+    fun `drops a provided project and what it brings in, not what the project declares itself`() {
+        // a project in the provided graph counts like a module, and so does everything it pulls in
+        projectDir.resolve("settings.gradle.kts").writeText(
+            """
+            rootProject.name = "provided-project"
+            include("a", "b")
+            """.trimIndent()
+        )
+        subproject(
+            "a",
+            """
+            dependencies {
+                implementation("com.google.guava:guava:33.4.0-jre")
+                hivemqProvided(project(":b"))
+            }
+            """.trimIndent(),
+            printProvidedModules,
+        )
+        subproject(
+            "b",
+            """
+            dependencies {
+                implementation("org.slf4j:slf4j-api:2.0.16")
+            }
+            """.trimIndent(),
+        )
+
+        val result = gradleRunner(":a:printProvidedModules", ":a:updateThirdPartyLicenses").build()
+
+        // what the project declares itself stays, what :b declares goes
+        assertThat(result.output).contains("provided modules: [com.example:b, org.slf4j:slf4j-api]")
+        assertThat(licenses(projectDir.resolve("a")))
+            .contains("com.google.guava:guava")
+            .doesNotContain("org.slf4j:slf4j-api")
+    }
+
+    @Test
+    fun `reports stay the same without a hivemqProvided configuration`() {
+        setup(
+            """
+            dependencies {
+                implementation("com.google.guava:guava:33.4.0-jre")
+                implementation("org.slf4j:slf4j-api:2.0.16")
+            }
+            """.trimIndent(),
+        )
+
+        gradleRunner("updateThirdPartyLicenses").build()
+
+        assertThat(licenses()).contains("org.slf4j:slf4j-api")
+    }
+
+    @Test
+    fun `updateThirdPartyLicenses leaves provided modules out`() {
+        setup(providedConfiguration, guavaWithProvidedSlf4j)
+
+        val result = gradleRunner("updateThirdPartyLicenses").build()
+
+        assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(licenses()).contains("com.google.guava:guava").doesNotContain("org.slf4j:slf4j-api")
+    }
+
+    @Test
+    fun `updateThirdPartyLicenses leaves provided modules out when the configuration cache is reused`() {
+        setup(providedConfiguration, guavaWithProvidedSlf4j)
+        // Compiles the build script first: compiling it in a configuration-cache run records system properties that
+        // change between TestKit runs, which would discard the entry.
+        gradleRunner("help").build()
+        val args = arrayOf("updateThirdPartyLicenses", "--configuration-cache")
+        assertThat(gradleRunner(*args).build().output).contains("Configuration cache entry stored")
+        // without its output the task runs again, with the provided modules read from the stored entry
+        projectDir.resolve("build/tmp/third-party-licenses").deleteRecursively()
+
+        val result = gradleRunner(*args).build()
+
+        assertThat(result.output).contains("Reusing configuration cache")
+        assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(licenses()).contains("com.google.guava:guava").doesNotContain("org.slf4j:slf4j-api")
+    }
+}

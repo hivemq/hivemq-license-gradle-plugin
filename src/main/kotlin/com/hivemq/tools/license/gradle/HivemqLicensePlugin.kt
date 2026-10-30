@@ -19,6 +19,8 @@ import com.hivemq.tools.license.gradle.sbom.SbomWiring
 import org.cyclonedx.gradle.CyclonedxDirectTask
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.gradle.api.artifacts.result.ResolvedComponentResult
+import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.gradle.api.provider.Provider
 import org.gradle.build.event.BuildEventsListenerRegistry
 import javax.inject.Inject
@@ -70,6 +72,8 @@ abstract class HivemqLicensePlugin @Inject constructor(
             doFirst { bomTaskOutcomes.get().recordExecuted(bomTaskPath) }
         }
 
+        val provided = providedModules(project)
+
         fun LicenseResolvingTask.readLicensesFromBom() {
             projectName.set(extension.projectName)
             dependencyLicense.set(bomJsonOutput)
@@ -80,6 +84,7 @@ abstract class HivemqLicensePlugin @Inject constructor(
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
             allowedArtifacts.set(extension.allowedArtifacts)
             overriddenLicenses.set(extension.overriddenLicenses)
+            providedModules.set(provided)
         }
 
         project.tasks.register("checkApprovedLicenses", CheckApprovedLicensesTask::class.java).configure {
@@ -112,6 +117,18 @@ abstract class HivemqLicensePlugin @Inject constructor(
             listOf("runtimeClasspath") + additionalConfigs.map { "$WRAPPER_CONFIGURATION_PREFIX$it" }
         }
 
+    /**
+     * The modules a `hivemqProvided` configuration resolves, by `group:name`; empty when there is no such
+     * configuration.
+     */
+    private fun providedModules(project: Project): Provider<Set<String>> {
+        val configurations = project.configurations
+        return project.provider { configurations.findByName(PROVIDED_CONFIGURATION_NAME) }
+            .flatMap { it.incoming.resolutionResult.rootComponent }
+            .map { root -> modulesBelow(root) }
+            .orElse(emptySet())
+    }
+
     companion object {
         /** The CycloneDX task that writes the BOM the license tasks and the SBOM read, registered without a group. */
         const val BOM_TASK_NAME = "generateDependencyBom"
@@ -121,9 +138,23 @@ abstract class HivemqLicensePlugin @Inject constructor(
         const val SBOM_CONFIGURATION_NAME = "sbomElements"
         const val SBOM_CATEGORY = "sbom"
 
+        /** The configuration in which an extension build declares what the HiveMQ broker provides at runtime. */
+        internal const val PROVIDED_CONFIGURATION_NAME = "hivemqProvided"
+
         internal const val TASK_GROUP = "hivemq license"
 
         /** Prefix of the resolvable wrapper the plugin creates for each additional configuration. */
         internal const val WRAPPER_CONFIGURATION_PREFIX = "hivemqLicense_"
+
+        /** Every component below the root, the root itself excluded: the extension's shadow jar drops the same set. */
+        private fun modulesBelow(root: ResolvedComponentResult): Set<String> {
+            val seen = linkedSetOf(root)
+            val queue = ArrayDeque(root.dependencies)
+            while (queue.isNotEmpty()) {
+                val selected = (queue.removeFirst() as? ResolvedDependencyResult)?.selected ?: continue
+                if (seen.add(selected)) queue.addAll(selected.dependencies)
+            }
+            return (seen - root).mapNotNull { it.moduleVersion?.let { id -> "${id.group}:${id.name}" } }.toSortedSet()
+        }
     }
 }
