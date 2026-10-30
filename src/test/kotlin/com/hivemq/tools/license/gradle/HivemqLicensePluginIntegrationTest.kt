@@ -213,7 +213,7 @@ class HivemqLicensePluginIntegrationTest {
     private fun cachedRunner(vararg args: String) = gradleRunner(*args, "--build-cache", "--no-watch-fs")
 
     private fun setupWithUnlicensedDependency(extra: String = "") {
-        UnlicensedRepository.write(projectDir.resolve("repo"))
+        FixtureRepository.unlicensedLib(projectDir.resolve("repo"))
         projectDir.resolve("settings.gradle.kts").writeText(settingsWithLocalBuildCache())
         projectDir.resolve("build.gradle.kts").writeText(unlicensedBuildFile("repo", extra = extra))
     }
@@ -358,7 +358,7 @@ class HivemqLicensePluginIntegrationTest {
         // resolved from a repository here because TestKit's injected classpath loads it once for the whole build.
         val pluginVersion = testProperty("test.plugin.version")
         val shadowVersion = testProperty("test.plugin.shadow.version")
-        UnlicensedRepository.write(projectDir.resolve("repo"))
+        FixtureRepository.unlicensedLib(projectDir.resolve("repo"))
         projectDir.resolve("settings.gradle.kts").writeText(
             """
             pluginManagement {
@@ -398,7 +398,7 @@ class HivemqLicensePluginIntegrationTest {
     fun `origin is reported per build in a composite build`() {
         // the root build and the included build both have a ":cyclonedxDirectBom" task, so outcomes must be keyed by
         // the task's path in the whole build tree
-        UnlicensedRepository.write(projectDir.resolve("repo"))
+        FixtureRepository.unlicensedLib(projectDir.resolve("repo"))
         projectDir.resolve("settings.gradle.kts").writeText(settingsWithLocalBuildCache("""includeBuild("inc")"""))
         projectDir.resolve("build.gradle.kts").writeText(unlicensedBuildFile("repo"))
         val includedDir = projectDir.resolve("inc")

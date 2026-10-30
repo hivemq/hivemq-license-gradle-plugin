@@ -79,7 +79,10 @@ internal object SbomEnricher {
         return root
     }
 
-    /** CyclonedxDirectBom can write an older spec that rejects these fields; a new major may rename or drop them. */
+    /**
+     * The `cyclonedxDirectBom` task can write an older spec that rejects these fields; a new major may rename or drop
+     * them.
+     */
     private fun requireSpecVersion(root: ObjectNode) {
         val declared = root.get("specVersion")
         val text = declared?.takeIf { it.isTextual }?.asText()

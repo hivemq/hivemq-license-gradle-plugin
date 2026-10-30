@@ -39,8 +39,11 @@ The `hivemqLicense` extension provides the following properties:
 
 In a project with a `hivemqProvided` configuration (the HiveMQ extension Gradle plugin creates it for the dependencies
 the broker supplies at runtime), everything that configuration resolves is left out of the reports, the check and the
-SBOM, the same rule the extension jar applies when it leaves those libraries out; the broker's own report and SBOM
-cover them. There is no switch for it.
+SBOM, the same rule the extension jar applies when it leaves those libraries out; the broker's own report covers them,
+and its SBOM will once it has one. There is no extension property for it. The CycloneDX BOM,
+`build/reports/cyclonedx-direct/bom.json`, still lists these modules, and `checkApprovedLicenses`,
+`updateThirdPartyLicenses` and `generateSbom` skip them when they read it: CycloneDX cannot drop part of
+`runtimeClasspath`, which contains them because `implementation` extends `hivemqProvided`.
 
 ### Advanced Example
 
@@ -148,7 +151,8 @@ requires beyond CycloneDX's defaults:
 - A `compositions` entry declaring the dependency graph `complete`, or `incomplete` when the configurations the BOM is
   built from resolve a file dependency, such as a jar checked into the repository, or fail to resolve a module:
   CycloneDX leaves both out of the BOM, and `generateSbom` warns with the reasons. A file dependency counts no matter
-  which project declares it: this one, or one it depends on, in this build or in an included build.
+  which project declares it: this one, or one it depends on, in this build or in an included build. `complete` refers to
+  the dependency graph of the shipped artifact, without the modules a `hivemqProvided` configuration resolves.
 - Licenses: the entries CycloneDX wrote from the POM are tagged `declared`; the license this plugin resolves for the
   reports (overrides included) is added as `concluded`, one entry per license when several apply. When a component's
   declared license is a single SPDX expression and a concluded license is added, the expression is kept whole as the
@@ -167,10 +171,15 @@ no creator, as described above.
 Deliberate deviations: the serial number is derived from the content, while CycloneDX recommends a new serial number
 for every generated BOM even when the content is unchanged; and the timestamp is `sbomTimestamp`, by default
 `SOURCE_DATE_EPOCH` or the commit time, instead of the time the SBOM data was compiled, which is what BSI TR-03183-2
-names. Both keep the file reproducible, so that archives containing it stay cacheable.
+names. Both keep the file reproducible, so that archives containing it stay cacheable. BSI TR-03183-2 section 5.1 also
+requires identifying, on each path, the first component outside the scope of delivery, so that the SBOM can be chained
+with the SBOM of the environment the software runs in; the SBOM of a HiveMQ extension stops at the delivered artifact
+instead and does not name the modules the broker provides.
 
-Every version of the modules a `hivemqProvided` configuration resolves is left out, with its dependency entries and
-every reference to it (see Configuration).
+Every version of the modules a `hivemqProvided` configuration resolves is left out, with its dependency entries (see
+Configuration). A reference to one of them is replaced by references to the components that stay and that it leads to,
+directly or through other left-out modules, so the graph still reaches every component that stays, such as a module that
+only another version of a provided module brings in.
 
 The manufacturer fields, the license acknowledgements and the `source-distribution` reference exist from CycloneDX
 specification 1.6 on, which is what `cyclonedxDirectBom` writes by default; `generateSbom` fails on a BOM that
