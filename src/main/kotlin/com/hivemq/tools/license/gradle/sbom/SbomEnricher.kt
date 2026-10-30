@@ -46,10 +46,8 @@ internal object SbomEnricher {
     // major and minor, and a patch like the 1.6.1 that the schema gives as an example
     private val specVersion = Regex("""(\d+)\.(\d+)(?:\.\d+)?""")
 
-    /**
-     * The CycloneDX specification in which the manufacturer fields, the license acknowledgements and the
-     * `source-distribution` reference first appear; a BOM of an older specification cannot carry them.
-     */
+    // the CycloneDX specification in which the manufacturer fields, the license acknowledgements and the
+    // `source-distribution` reference first appear; a BOM of an older specification cannot carry them
     const val MINIMUM_SPEC_VERSION = "1.6"
 
     private val minimumSpecVersion = requireNotNull(majorMinor(MINIMUM_SPEC_VERSION))
@@ -81,7 +79,7 @@ internal object SbomEnricher {
         return root
     }
 
-    // cyclonedxDirectBom can write an older spec that rejects these fields; a new major may rename or drop them
+    /** CyclonedxDirectBom can write an older spec that rejects these fields; a new major may rename or drop them. */
     private fun requireSpecVersion(root: ObjectNode) {
         val declared = root.get("specVersion")
         val text = declared?.takeIf { it.isTextual }?.asText()
@@ -105,7 +103,10 @@ internal object SbomEnricher {
         }
     }
 
-    // a non-email value is written as a URL, where a name silently invalidates the SBOM and only http(s) leads anywhere
+    /**
+     * A non-email value is written as a URL, where a name silently invalidates the SBOM and only http(s) leads
+     * anywhere.
+     */
     private fun requireCreator(creator: String) {
         if (emailAddress.matches(creator.replace(mailto, "")) || isWebUrl(creator)) return
         throw SbomException("hivemqLicense.sbomCreator must be an email address or an http(s) URL, but is '$creator'")
@@ -118,13 +119,15 @@ internal object SbomEnricher {
         false
     }
 
-    // as numbers, so that 1.10 is later than 1.6
+    /** As numbers, so that 1.10 is later than 1.6. */
     private fun majorMinor(version: String): Pair<BigInteger, BigInteger>? =
         specVersion.matchEntire(version)?.destructured?.let { (major, minor) ->
             major.toBigInteger() to minor.toBigInteger()
         }
 
-    // A value of another type is not ours to replace: these return null for it and the caller leaves that part alone.
+    /**
+     * A value of another type is not ours to replace: these return null for it and the caller leaves that part alone.
+     */
     private fun ObjectNode.objectOrNew(name: String): ObjectNode? = when (val existing = get(name)) {
         null -> putObject(name)
         is ObjectNode -> existing
@@ -163,7 +166,7 @@ internal object SbomEnricher {
         version = component.get("version")?.asText().orEmpty(),
     )
 
-    // a jar holds code a runtime executes and metadata about its contents; a zip holds files, not code
+    /** A jar holds code a runtime executes and metadata about its contents; a zip holds files, not code. */
     private fun describeFile(component: ObjectNode, fileName: String) {
         val properties = component.arrayOrNew("properties") ?: return
         properties.putProperty(FILENAME, fileName)
@@ -181,13 +184,15 @@ internal object SbomEnricher {
         }
     }
 
-    // replaces an existing value, so enriching twice gives the same document
+    /** Replaces an existing value, so enriching twice gives the same document. */
     private fun ArrayNode.putProperty(name: String, value: String) {
         val existing = firstOrNull { it.get("name")?.asText() == name } as? ObjectNode
         if (existing != null) existing.put("value", value) else addObject().put("name", name).put("value", value)
     }
 
-    // a project of this build is ours; another, whose POM has no contact, gets its organization URL (`website`) or vcs
+    /**
+     * A project of this build is ours; another, whose POM has no contact, gets its organization URL (`website`) or vcs.
+     */
     private fun addCreator(component: ObjectNode, details: SbomDetails) {
         if (component.has("manufacturer")) return
         if (isProjectOfThisBuild(component)) {
@@ -244,7 +249,7 @@ internal object SbomEnricher {
         }
     }
 
-    // a license takes free text as its name, so the declared expression can sit next to license ids in one piece
+    /** A license takes free text as its name, so the declared expression can sit next to license ids in one piece. */
     private fun nameExpressions(licenses: ArrayNode) {
         for (index in 0 until licenses.size()) {
             val entry = licenses.get(index) as? ObjectNode ?: continue
@@ -257,7 +262,9 @@ internal object SbomEnricher {
         }
     }
 
-    // BSI TR-03183-2 wants completeness stated truthfully, so any reason the build reported makes the graph incomplete
+    /**
+     * BSI TR-03183-2 wants completeness stated truthfully, so any reason the build reported makes the graph incomplete.
+     */
     private fun declareCompleteness(root: ObjectNode, incompleteReasons: List<String>) {
         val dependencies = root.get("dependencies") as? ArrayNode ?: return
         // only text, each once, because the schema wants unique strings; sorted like the normalizer sorts the

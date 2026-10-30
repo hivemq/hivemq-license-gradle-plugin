@@ -62,11 +62,16 @@ abstract class LicenseResolvingTask : DefaultTask() {
     @get:Input
     abstract val overriddenLicenses: MapProperty<String, String>
 
+    /** `group:name` of the modules the host provides at runtime; they are left out of the report and the check. */
+    @get:Input
+    abstract val providedModules: SetProperty<String>
+
     protected fun resolveLicenses(): TreeMap<String, ResolvedDependency> = LicenseResolver.resolveLicenses(
         dependencyLicenseFile = dependencyLicense.get().asFile.absoluteFile,
         ignoredGroupPrefixes = ignoredGroupPrefixes.get(),
         allowedArtifacts = allowedArtifacts.get(),
         overriddenLicenses = overriddenLicenses.get(),
+        providedModules = providedModules.get(),
         dependencyLicenseOrigin = ::dependencyLicenseOrigin,
     )
 

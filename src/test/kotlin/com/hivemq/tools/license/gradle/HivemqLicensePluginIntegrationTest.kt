@@ -173,30 +173,6 @@ class HivemqLicensePluginIntegrationTest {
 
     // --- BOM origin in the failure message ---
 
-    /**
-     * Writes a local Maven repository with one artifact whose POM declares no license, so the real cyclonedxDirectBom
-     * task produces a BOM that makes checkApprovedLicenses fail.
-     */
-    private fun writeUnlicensedRepository(repoDir: File) {
-        val artifactDir = repoDir.resolve("com/example/no-license-lib/1.0.0")
-        artifactDir.mkdirs()
-        artifactDir.resolve("no-license-lib-1.0.0.pom").writeText(
-            """
-            <project xmlns="http://maven.apache.org/POM/4.0.0">
-              <modelVersion>4.0.0</modelVersion>
-              <groupId>com.example</groupId>
-              <artifactId>no-license-lib</artifactId>
-              <version>1.0.0</version>
-            </project>
-            """.trimIndent()
-        )
-        ZipOutputStream(artifactDir.resolve("no-license-lib-1.0.0.jar").outputStream()).use { zip ->
-            zip.putNextEntry(ZipEntry("META-INF/MANIFEST.MF"))
-            zip.write("Manifest-Version: 1.0\n".toByteArray())
-            zip.closeEntry()
-        }
-    }
-
     /** Build script of a project depending on the unlicensed artifact, [repoPath] relative to the project. */
     private fun unlicensedBuildFile(
         repoPath: String,
@@ -237,7 +213,7 @@ class HivemqLicensePluginIntegrationTest {
     private fun cachedRunner(vararg args: String) = gradleRunner(*args, "--build-cache", "--no-watch-fs")
 
     private fun setupWithUnlicensedDependency(extra: String = "") {
-        writeUnlicensedRepository(projectDir.resolve("repo"))
+        UnlicensedRepository.write(projectDir.resolve("repo"))
         projectDir.resolve("settings.gradle.kts").writeText(settingsWithLocalBuildCache())
         projectDir.resolve("build.gradle.kts").writeText(unlicensedBuildFile("repo", extra = extra))
     }
@@ -382,7 +358,7 @@ class HivemqLicensePluginIntegrationTest {
         // resolved from a repository here because TestKit's injected classpath loads it once for the whole build.
         val pluginVersion = testProperty("test.plugin.version")
         val shadowVersion = testProperty("test.plugin.shadow.version")
-        writeUnlicensedRepository(projectDir.resolve("repo"))
+        UnlicensedRepository.write(projectDir.resolve("repo"))
         projectDir.resolve("settings.gradle.kts").writeText(
             """
             pluginManagement {
@@ -422,7 +398,7 @@ class HivemqLicensePluginIntegrationTest {
     fun `origin is reported per build in a composite build`() {
         // the root build and the included build both have a ":cyclonedxDirectBom" task, so outcomes must be keyed by
         // the task's path in the whole build tree
-        writeUnlicensedRepository(projectDir.resolve("repo"))
+        UnlicensedRepository.write(projectDir.resolve("repo"))
         projectDir.resolve("settings.gradle.kts").writeText(settingsWithLocalBuildCache("""includeBuild("inc")"""))
         projectDir.resolve("build.gradle.kts").writeText(unlicensedBuildFile("repo"))
         val includedDir = projectDir.resolve("inc")

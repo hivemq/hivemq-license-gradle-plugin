@@ -124,6 +124,6 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
     private fun cannotWrite(bomFile: File, cause: Exception) =
         GradleException("Cannot write an SBOM from '$bomFile': ${cause.message}", cause)
 
-    // the task's path starts with its project's path; the configuration cache forbids reading the project here
+    /** The task's path starts with its project's path; the configuration cache forbids reading the project here. */
     private fun projectPath() = path.substringBeforeLast(':').ifEmpty { ":" }
 }
