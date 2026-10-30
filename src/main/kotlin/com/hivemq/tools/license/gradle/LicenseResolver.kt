@@ -95,11 +95,16 @@ object LicenseResolver {
     private fun knownLicense(spdxId: String): KnownLicense? =
         SPDX_ID_MAP[spdxId] ?: SPDX_IDS_IGNORING_CASE[spdxId.lowercase()]
 
+    /**
+     * The licenses of the components in [dependencyLicenseFile], or a failure that lists every license problem found.
+     * A BOM component whose `group:name` is in [providedModules] is left out in every version, as the host provides it.
+     */
     fun resolveLicenses(
         dependencyLicenseFile: File,
         ignoredGroupPrefixes: Set<String>,
         allowedArtifacts: Set<String>,
         overriddenLicenses: Map<String, String> = emptyMap(),
+        providedModules: Set<String> = emptySet(),
         dependencyLicenseOrigin: () -> String? = { null },
     ): TreeMap<String, ResolvedDependency> {
         val objectMapper = ObjectMapper()
@@ -127,6 +132,7 @@ object LicenseResolver {
             val group = component.group ?: continue
             val coordinates = Coordinates(group, component.name, component.version)
             if (shouldIgnore(coordinates, ignoredGroupPrefixes, allowedArtifacts)) continue
+            if (coordinates.moduleId in providedModules) continue
             if (coordinates.moduleId in invalidOverrides) continue
             val resolvedLicense = resolveOverriddenOrBuiltIn(coordinates.moduleId, overriddenLicenses)
             if (resolvedLicense != null) {
