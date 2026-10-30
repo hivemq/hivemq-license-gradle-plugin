@@ -178,7 +178,7 @@ internal object SbomWiring {
     // The helpers below run inside providers the configuration cache may store; as members of an object, a lambda
     // calling them captures no instance the cache would have to store as well.
 
-    // a separator in the name would write the SBOM elsewhere, and a blank name would give a file without a name
+    /** A separator in the name would write the SBOM elsewhere, and a blank name would give a file without a name. */
     private fun checkSbomName(name: String): String {
         if (name.isBlank() || '/' in name || '\\' in name) {
             throw GradleException(
@@ -188,7 +188,9 @@ internal object SbomWiring {
         return name
     }
 
-    // file names, sorted and without paths, so the task input depends on neither the machine nor the artifact order
+    /**
+     * File names, sorted and without paths, so the task input depends on neither the machine nor the artifact order.
+     */
     private fun fileDependencyReasons(
         configurationName: String,
         artifacts: Set<ResolvedArtifactResult>,
@@ -198,7 +200,7 @@ internal object SbomWiring {
         return listOf("$configurationName has file dependencies: ${fileNames.joinToString(", ")}")
     }
 
-    // an unresolved module has no component, only the edge that requested it; sorted, whatever the walk order
+    /** An unresolved module has no component, only the edge that requested it; sorted, whatever the walk order. */
     private fun unresolvedDependencyReasons(
         configurationName: String,
         root: ResolvedComponentResult,

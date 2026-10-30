@@ -554,6 +554,110 @@ class LicenseResolverResolveLicensesTest {
         assertThat(result["com.example:lower-lib"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
     }
 
+    // --- provided modules ---
+
+    @Test
+    fun `does not fail on the license problem of a provided module`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                { "group": "com.example", "name": "provided-lib", "version": "1.0.0" },
+                { "group": "com.google.guava", "name": "guava", "version": "33.4.0-jre",
+                  "licenses": [ { "license": { "id": "Apache-2.0" } } ] }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            providedModules = setOf("com.example:provided-lib"),
+        )
+
+        assertThat(result.keys).containsExactly("com.google.guava:guava")
+    }
+
+    @Test
+    fun `skips a provided module`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                { "group": "org.slf4j", "name": "slf4j-api", "version": "2.0.16",
+                  "licenses": [ { "license": { "id": "MIT" } } ] },
+                { "group": "com.google.guava", "name": "guava", "version": "33.4.0-jre",
+                  "licenses": [ { "license": { "id": "Apache-2.0" } } ] }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            providedModules = setOf("org.slf4j:slf4j-api"),
+        )
+
+        assertThat(result.keys).containsExactly("com.google.guava:guava")
+    }
+
+    @Test
+    fun `skips every version of a provided module`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                { "group": "org.slf4j", "name": "slf4j-api", "version": "1.7.36",
+                  "licenses": [ { "license": { "id": "MIT" } } ] },
+                { "group": "org.slf4j", "name": "slf4j-api", "version": "2.0.16",
+                  "licenses": [ { "license": { "id": "MIT" } } ] },
+                { "group": "com.google.guava", "name": "guava", "version": "33.4.0-jre",
+                  "licenses": [ { "license": { "id": "Apache-2.0" } } ] }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            providedModules = setOf("org.slf4j:slf4j-api"),
+        )
+
+        assertThat(result.keys).containsExactly("com.google.guava:guava")
+    }
+
+    @Test
+    fun `still fails on the license problem of a module that is not provided`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                { "group": "com.example", "name": "provided-lib", "version": "1.0.0" },
+                { "group": "com.example", "name": "no-license-lib", "version": "1.0.0" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(
+                bom,
+                defaultIgnoredPrefixes,
+                defaultAllowedArtifacts,
+                providedModules = setOf("com.example:provided-lib"),
+            )
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("1 license problem found")
+            .hasMessageContaining("No license found for 'com.example:no-license-lib:1.0.0'")
+            .hasMessageNotContaining("provided-lib")
+    }
+
     // --- SPDX expressions ---
 
     @Test

@@ -203,6 +203,47 @@ class GenerateSbomTaskTest {
     }
 
     @Test
+    fun `leaves out the provided modules and every reference to them`() {
+        setup()
+        val app = "pkg:maven/org.example/app@1.0"
+        val lib = "pkg:maven/org.example/lib@1.0?type=jar"
+        val provided = "pkg:maven/org.example/provided@1.0?type=jar"
+        projectDir.resolve("bom.json").writeText(
+            """
+            {
+              "bomFormat": "CycloneDX",
+              "specVersion": "1.6",
+              "version": 1,
+              "metadata": { "component": { "bom-ref": "$app", "name": "app" } },
+              "components": [
+                { "bom-ref": "$lib", "group": "org.example", "name": "lib", "version": "1.0" },
+                { "bom-ref": "$provided", "group": "org.example", "name": "provided", "version": "1.0" }
+              ],
+              "dependencies": [
+                { "ref": "$app", "dependsOn": [ "$lib", "$provided" ] },
+                { "ref": "$lib", "dependsOn": [ "$provided" ] },
+                { "ref": "$provided", "dependsOn": [] }
+              ]
+            }
+            """.trimIndent()
+        )
+        projectDir.resolve("build.gradle.kts").appendText(
+            "\n" + """
+            tasks.named<GenerateSbomTask>("sbomFromFile") {
+                providedModules.set(setOf("org.example:provided"))
+            }
+            """.trimIndent()
+        )
+
+        gradleRunner().build()
+
+        val sbom = ObjectMapper().readTree(projectDir.resolve("build/sbom/app.cdx.json"))
+        assertThat(sbom["components"].map { it["name"].asText() }).containsExactly("lib")
+        assertThat(sbom["dependencies"].map { it["ref"].asText() }).containsExactly(app, lib)
+        assertThat(sbom["dependencies"].flatMap { it["dependsOn"] }.map { it.asText() }).containsExactly(lib)
+    }
+
+    @Test
     fun `writes only the declared license of a component in an ignored group`() {
         setup()
         val internal = """{ "group": "com.hivemq", "name": "internal", "version": "1.0", """ +

@@ -154,7 +154,7 @@ internal object SbomNormalizer {
         sorted.forEach(dependencies::add)
     }
 
-    // keeps CycloneDX's field order, where the serial number follows the spec version
+    /** Keeps CycloneDX's field order, where the serial number follows the spec version. */
     private fun withSerialNumber(root: ObjectNode, serialNumber: String): ObjectNode {
         val ordered = mapper.createObjectNode()
         var placed = false
