@@ -62,7 +62,7 @@ abstract class LicenseResolvingTask : DefaultTask() {
     @get:Input
     abstract val overriddenLicenses: MapProperty<String, String>
 
-    /** `group:name` of the modules the host provides at runtime; they are left out of the report and the check. */
+    /** `group:name` of the modules the host provides at runtime; left out of the report, the check and the SBOM. */
     @get:Input
     abstract val providedModules: SetProperty<String>
 
