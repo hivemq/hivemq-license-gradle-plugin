@@ -15,10 +15,12 @@
  */
 package com.hivemq.tools.license.gradle
 
+import com.hivemq.tools.license.gradle.sbom.SbomWiring
 import org.cyclonedx.gradle.CyclonedxDirectTask
 import org.cyclonedx.gradle.CyclonedxPlugin
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.gradle.api.provider.Provider
 import org.gradle.build.event.BuildEventsListenerRegistry
 import javax.inject.Inject
 
@@ -52,7 +54,7 @@ abstract class HivemqLicensePlugin @Inject constructor(
 
         project.afterEvaluate {
             for (configName in extension.additionalConfigurations.get()) {
-                project.configurations.create("hivemqLicense_$configName") {
+                project.configurations.create("$WRAPPER_CONFIGURATION_PREFIX$configName") {
                     isCanBeConsumed = false
                     isCanBeResolved = true
                     extendsFrom(project.configurations.getByName(configName))
@@ -63,11 +65,7 @@ abstract class HivemqLicensePlugin @Inject constructor(
         val cyclonedxDirectBom = project.tasks.named(BOM_TASK_NAME, CyclonedxDirectTask::class.java)
         cyclonedxDirectBom.configure {
             projectType.set(org.cyclonedx.model.Component.Type.APPLICATION)
-            includeConfigs.set(
-                extension.additionalConfigurations.map { additionalConfigs ->
-                    listOf("runtimeClasspath") + additionalConfigs.map { "hivemqLicense_$it" }
-                }
-            )
+            includeConfigs.set(bomConfigurationNames(extension))
         }
 
         val cyclonedxJsonOutput = cyclonedxDirectBom.flatMap { it.jsonOutput }
@@ -112,12 +110,35 @@ abstract class HivemqLicensePlugin @Inject constructor(
             outputFileNamePrefix.convention("")
             outputDirectory.set(extension.thirdPartyLicenseDirectory)
         }
+
+        // the SBOM resolves the licenses like the other license tasks, so a license problem fails it the same way
+        SbomWiring.register(project, extension, bomConfigurationNames(extension)).configure {
+            readLicensesFromBom()
+        }
     }
+
+    /**
+     * Names of the configurations the BOM is built from: `runtimeClasspath`, then the wrapper of each additional
+     * configuration. The wrappers are only created after evaluation, so this is a provider of names, not of
+     * configurations.
+     */
+    private fun bomConfigurationNames(extension: HivemqLicenseExtension): Provider<List<String>> =
+        extension.additionalConfigurations.map { additionalConfigs ->
+            listOf("runtimeClasspath") + additionalConfigs.map { "$WRAPPER_CONFIGURATION_PREFIX$it" }
+        }
 
     companion object {
         /** The CycloneDX task whose BOM the license tasks read. */
         const val BOM_TASK_NAME = "cyclonedxDirectBom"
 
-        private const val TASK_GROUP = "hivemq license"
+        /** The task that writes the reproducible SBOM and the variant that carries it. */
+        const val SBOM_TASK_NAME = "generateSbom"
+        const val SBOM_CONFIGURATION_NAME = "sbomElements"
+        const val SBOM_CATEGORY = "sbom"
+
+        internal const val TASK_GROUP = "hivemq license"
+
+        /** Prefix of the resolvable wrapper the plugin creates for each additional configuration. */
+        internal const val WRAPPER_CONFIGURATION_PREFIX = "hivemqLicense_"
     }
 }

@@ -10,7 +10,7 @@ This Gradle plugin generates and validates third-party license reports from Cycl
 Contents of the `build.gradle(.kts)` file:
 ```kotlin
 plugins {
-    id("com.hivemq.tools.license") version "1.4.0"
+    id("com.hivemq.tools.license") version "1.5.0"
 }
 
 hivemqLicense {
@@ -31,6 +31,11 @@ The `hivemqLicense` extension provides the following properties:
 | `allowedArtifacts`           | `SetProperty<String>`         | `["com.hivemq:hivemq-mqtt-client"]` | No       | Specific artifacts to include despite matching an ignored group prefix |
 | `additionalConfigurations`   | `SetProperty<String>`         | `[]`                                | No       | Extra Gradle configurations to include in the CycloneDX BOM            |
 | `overriddenLicenses`         | `MapProperty<String, String>` | `{}`                                | No       | Override license SPDX IDs for specific artifacts                       |
+| `sbomName`                   | `Property<String>`            | `project.name`                      | No       | SBOM file name without `.cdx.json`; blank, `/` or `\` fails the build  |
+| `sbomTimestamp`              | `Property<Instant>`           | see `generateSbom`                  | No       | `metadata.timestamp` of that SBOM                                      |
+| `sbomCreatorName`            | `Property<String>`            | `HiveMQ GmbH`                       | No       | Name of the organisation that creates the SBOM and ships the component |
+| `sbomCreator`                | `Property<String>`            | `security@hivemq.com`               | No       | Email address or http(s) URL of that organisation, or the build fails  |
+| `sbomArtifactFileName`       | `Property<String>`            | `jar` archive file name             | No       | Top-level component's file name; the default needs the `java` plugin   |
 
 ### Advanced Example
 
@@ -54,6 +59,7 @@ hivemqLicense {
 |----------------------------|--------------------------------------------------------------|
 | `checkApprovedLicenses`    | Validates that all dependencies have approved licenses       |
 | `updateThirdPartyLicenses` | Generates third-party license reports from the CycloneDX BOM |
+| `generateSbom`             | Writes a reproducible CycloneDX SBOM from the CycloneDX BOM  |
 
 ### checkApprovedLicenses
 
@@ -76,6 +82,115 @@ an unapproved or unknown license.
 Both reports contain a table with the following columns: Module, Version, License ID, and License URL.
 
 The `outputFileNamePrefix` property can be set to prefix the output file names, which is useful when generating multiple reports (e.g. backend and frontend) into the same directory.
+
+### generateSbom
+
+Writes `build/sbom/<sbomName>.cdx.json`, a CycloneDX JSON SBOM derived from the `cyclonedxDirectBom` output.
+Nothing ships it by itself: add it to a distribution or image where the product is assembled, for example
+`from(tasks.named("generateSbom")) { into("sbom") }` in a `Zip` task. It validates licenses the same way as
+`checkApprovedLicenses` and fails with the same message when any dependency has an unapproved or unknown license, so
+a build that ships the SBOM needs no separate license check.
+
+The CycloneDX Gradle plugin writes a file that differs on every run (current time, random serial number, the CI run
+URL, a `vcs` reference taken from the `GIT_URL` variable or from the directory Gradle was started in), which changes
+every archive that contains it and defeats the build cache. `generateSbom` writes the same bytes for the same
+dependencies and timestamp:
+
+- `metadata.timestamp` is `sbomTimestamp`, truncated to whole seconds. Without a value the plugin uses
+  `SOURCE_DATE_EPOCH`, then the time of the repository's HEAD commit (`git log -1` in the project directory), then the
+  current time with a warning. A missing `git` binary also falls back to the current time; a blank `SOURCE_DATE_EPOCH`
+  counts as unset, and one that is not a number of seconds within the range of Java's `Instant` fails the build.
+- `serialNumber` is a UUID computed from the content.
+- `dependencies` and their `dependsOn` lists are sorted.
+- The `build-system` external reference is dropped, and the `vcs` reference is the project's own `origin` remote, as
+  `https://github.com/<org>/<repo>` for GitHub, with credentials removed; without a remote, or with one that is not
+  an http(s) or ssh URL, it is left out. A URL set on the task property `generateSbom.vcsUrl` replaces the remote's,
+  whether there is a remote or not; it is a task input, so it must not contain credentials. Only a GitHub remote gives
+  the same URL whatever protocol the repository was cloned with; for other hosts an ssh and an https clone write
+  different SBOMs. `vcs` and `build-system` references configured through `cyclonedxDirectBom.externalReferences` are
+  dropped as well, and a configured `source-distribution` reference is replaced too: the top-level component's
+  `source-distribution` reference carries the same URL as `vcs`, or is left out with it.
+
+In a Kotlin DSL build script, setting `sbomTimestamp` needs the import, because `java.time.Instant` written out in
+full does not resolve once the `java` plugin is applied:
+
+```kotlin
+import java.time.Instant
+
+hivemqLicense {
+    sbomTimestamp.set(Instant.parse("2026-01-02T03:04:05Z"))
+}
+```
+
+The file also carries what [BSI TR-03183-2](https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/TechGuidelines/TR03183/BSI-TR-03183-2_v2_1_0.pdf?__blob=publicationFile)
+requires beyond CycloneDX's defaults:
+
+- The creator of the SBOM and of the component, as `metadata.manufacturer` and `metadata.component.manufacturer`,
+  from `sbomCreatorName` and `sbomCreator` (an email address becomes a contact, a URL stays a URL); a manufacturer
+  configured through `cyclonedxDirectBom.organizationalEntity` is replaced.
+- Per component: the file name and whether it is executable, an archive and structured
+  (`bsi:component:filename`, `bsi:component:executable`, `bsi:component:archive`, `bsi:component:structured`),
+  from the resolved artifact; a JAR counts as an executable, structured archive, a ZIP as a non-executable one, and a
+  file of any other type gets only its name. Components without a file, such as Maven BOMs, get none. Projects of
+  this build and of included builds get none either: only modules from a repository are resolved to files, so that no
+  jar has to be built for the SBOM. The top-level component's file name comes from `sbomArtifactFileName`, by default
+  the archive file name of the `jar` task; that default exists only when the `java` plugin is applied, and without a
+  value the top-level component gets no file description.
+- The component creator as a URL, and the repository as a `source-distribution` reference. The creator is the URL of
+  the component's `website` reference, or else of its `vcs` reference; CycloneDX writes those from the `<organization>`
+  and `<scm>` elements of the component's own POM, so a library whose POM inherits them from a parent POM gets no
+  creator. A project of this build or of an included build has no POM and gets the creator of the SBOM.
+- A `compositions` entry declaring the dependency graph `complete`, or `incomplete` when the configurations the BOM is
+  built from resolve a file dependency, such as a jar checked into the repository, or fail to resolve a module:
+  CycloneDX leaves both out of the BOM, and `generateSbom` warns with the reasons. A file dependency counts no matter
+  which project declares it: this one, or one it depends on, in this build or in an included build.
+- Licenses: the entries CycloneDX wrote from the POM are tagged `declared`; the license this plugin resolves for the
+  reports (overrides included) is added as `concluded`, one entry per license when several apply. When a component's
+  declared license is a single SPDX expression and a concluded license is added, the expression is kept whole as the
+  `name` of the declared entry, because a CycloneDX license list holds either single licenses or one expression. A
+  component the reports leave out (a module matched by `ignoredGroupPrefixes` and not listed in `allowedArtifacts`),
+  or in a version the reports do not list, keeps only its declared entries.
+
+Known gaps: first-party components (the top-level component and the projects of this build and of included builds) carry
+no license, so a project dependency fails `generateSbom` like it fails `checkApprovedLicenses` unless
+`ignoredGroupPrefixes` covers its group or an override names it; concluded licenses are written as one license object
+per license instead of the single SPDX expression the guideline shows, because a CycloneDX 1.6 license list cannot mix
+an expression with the declared license objects; files other than `.jar` and `.zip` get a file name but no executable,
+archive or structured property; and a component whose POM inherits `<organization>` and `<scm>` from a parent POM gets
+no creator, as described above.
+
+Deliberate deviations: the serial number is derived from the content, while CycloneDX recommends a new serial number
+for every generated BOM even when the content is unchanged; and the timestamp is `sbomTimestamp`, by default
+`SOURCE_DATE_EPOCH` or the commit time, instead of the time the SBOM data was compiled, which is what BSI TR-03183-2
+names. Both keep the file reproducible, so that archives containing it stay cacheable.
+
+The manufacturer fields, the license acknowledgements and the `source-distribution` reference exist from CycloneDX
+specification 1.6 on, which is what `cyclonedxDirectBom` writes by default; `generateSbom` fails on a BOM that
+declares an older `specVersion`, or a major version other than 1.
+
+The guideline also asks for a SHA-512 hash of each component's file. CycloneDX writes the hashes of every resolved
+artifact, SHA-512 among them, to `components[].hashes`, and they stay there; projects of this build and of included
+builds, the top-level component among them, have no resolved artifact and so no hashes. The guideline's example
+places the hashes on a `distribution` reference with a download URL, which Gradle does not know.
+
+The file is also available to other projects, or included builds, as the `sbomElements` variant (attribute
+`Category=sbom`):
+
+```kotlin
+val sboms by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    attributes {
+        attribute(Category.CATEGORY_ATTRIBUTE, objects.named("sbom"))
+    }
+}
+dependencies {
+    sboms(project(":some-component"))
+}
+```
+
+The variant exists only in projects with the `java` plugin. In other projects it would be their only variant with
+attributes, so Gradle would match their consumers against it instead of handing out the `default` configuration.
 
 ### Custom License Tasks
 
@@ -188,7 +303,7 @@ BOM.
 ## How It Works
 
 1. The plugin applies the [CycloneDX Gradle Plugin](https://github.com/CycloneDX/cyclonedx-gradle-plugin) and configures it to generate a `bom.json` from the `runtimeClasspath`.
-2. Both tasks parse the generated BOM (or pnpm JSON) and resolve licenses using SPDX IDs, license name patterns, and URL-based matching.
+2. The three tasks, `checkApprovedLicenses`, `updateThirdPartyLicenses` and `generateSbom`, parse the generated BOM and resolve licenses using SPDX IDs, license name patterns, and URL-based matching; the first two also read pnpm JSON.
 3. Dependencies matching the configured `ignoredGroupPrefixes` are excluded (unless listed in `allowedArtifacts`).
 
 ## Requirements
