@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.hivemq.tools.license.gradle
+package com.hivemq.tools.license.gradle.sbom
 
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -23,6 +23,8 @@ import org.gradle.process.ExecSpec
 import org.gradle.testfixtures.ProjectBuilder
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import java.io.File
 import java.time.Instant
 
@@ -33,15 +35,23 @@ class SbomTimestampSourceTest {
 
     private val project by lazy { ProjectBuilder.builder().withProjectDir(projectDir).build() }
 
-    /** Runs the value source on Gradle's real exec, outside a build, with [adjust] applied to every git command. */
-    private fun obtain(sourceDateEpoch: String? = null, adjust: ExecSpec.() -> Unit = {}): Instant {
+    /**
+     * Runs the value source on Gradle's real exec, outside a build, with [environment] added to the environment of
+     * every git command and then [adjust] applied to it.
+     */
+    private fun obtain(
+        sourceDateEpoch: String? = null,
+        environment: Map<String, String> = emptyMap(),
+        adjust: ExecSpec.() -> Unit = {},
+    ): Instant {
         val sourceParameters = project.objects.newInstance(SbomTimestampSource.Parameters::class.java).apply {
             this.sourceDateEpoch.set(sourceDateEpoch)
             projectDirectory.set(projectDir)
             projectPath.set(project.path)
         }
         return object : SbomTimestampSource() {
-            override val execOperations: ExecOperations = GitTestRepository.isolatedExec(project, projectDir, adjust)
+            override val execOperations: ExecOperations =
+                GitTestRepository.isolatedExec(project, projectDir, environment, adjust)
 
             override fun getParameters() = sourceParameters
         }.obtain()
@@ -61,6 +71,20 @@ class SbomTimestampSourceTest {
         val timestamp = obtain { executable = projectDir.resolve("missing/git").absolutePath }
 
         assertThat(timestamp).isBetween(before, Instant.now())
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["GIT_COMMON_DIR", "GIT_DIR"])
+    fun `reads the commit time of the project's repository when the environment names another one`(
+        variable: String,
+        @TempDir otherRepository: File,
+    ) {
+        GitTestRepository.commitAt(projectDir, "2024-05-06T07:08:09Z", "file.txt")
+        GitTestRepository.commitAt(otherRepository, "2023-01-02T03:04:05Z", "file.txt")
+
+        val timestamp = obtain(environment = mapOf(variable to otherRepository.resolve(".git").absolutePath))
+
+        assertThat(timestamp).isEqualTo(Instant.parse("2024-05-06T07:08:09Z"))
     }
 
     // --- SOURCE_DATE_EPOCH ---

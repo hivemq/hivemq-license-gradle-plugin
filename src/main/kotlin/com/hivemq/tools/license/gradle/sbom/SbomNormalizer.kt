@@ -13,9 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.hivemq.tools.license.gradle
+package com.hivemq.tools.license.gradle.sbom
 
-import com.fasterxml.jackson.core.JsonProcessingException
 import com.fasterxml.jackson.core.util.DefaultIndenter
 import com.fasterxml.jackson.core.util.DefaultPrettyPrinter
 import com.fasterxml.jackson.databind.JsonNode
@@ -32,13 +31,10 @@ import java.util.UUID
 /**
  * Turns the JSON BOM written by the CycloneDX Gradle plugin into a file that is identical for identical inputs.
  *
- * The CycloneDX plugin writes the current time as `metadata.timestamp`, a random `serialNumber`, a `build-system`
- * reference taken from CI environment variables and a `vcs` reference from `GIT_URL` or the remote of the Gradle
- * daemon's working directory, in whatever form the clone used, so two builds of the same commit never produce the
- * same bytes. Every rule here removes one of those differences: the `vcs` reference is replaced by the project's own
- * remote, which the caller passes in.
+ * It replaces the current time and the random `serialNumber`, drops the `build-system` reference to the CI run and
+ * writes the remote the caller passes in as the `vcs` and the `source-distribution` reference instead of CycloneDX's.
  */
-object SbomNormalizer {
+internal object SbomNormalizer {
 
     private val mapper = ObjectMapper()
 
@@ -47,34 +43,45 @@ object SbomNormalizer {
         .withObjectIndenter(DefaultIndenter("  ", "\n"))
         .withArrayIndenter(DefaultIndenter("  ", "\n"))
 
-    // the owner/repo after a GitHub host, with an optional .git, trailing slash, query or fragment
-    private const val GITHUB_REPO = """([^/?#]+/[^/?#]+?)(?:\.git)?/?(?:[?#].*)?$"""
+    // the RFC 3339 date-time of the CycloneDX schema has a four-digit year; an Instant reaches far beyond that
+    private val firstTimestamp = Instant.parse("0000-01-01T00:00:00Z")
+    private val lastTimestamp = Instant.parse("9999-12-31T23:59:59Z")
 
-    // GitHub over https, also with the default port written out, which the form below does not accept
-    private val gitHubHttps =
-        Regex("""^https://(?:[^@/]+@)?github\.com(?::443)?/$GITHUB_REPO""", RegexOption.IGNORE_CASE)
+    // the owner/repo after a GitHub host, in the characters GitHub allows in names so that the shortcut cannot write
+    // an invalid URL, with an optional .git, trailing slash, query or fragment
+    private const val GITHUB_REPO = """([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?(?:[?#].*)?$"""
 
-    // every other GitHub form, by host: any scheme, any user info, a colon or a slash after the host
-    private val gitHub =
-        Regex("""^(?:[\w+]+://)?(?:[^@/]+@)?github\.com[:/]$GITHUB_REPO""", RegexOption.IGNORE_CASE)
+    // every GitHub form by host: any scheme, user info or port, also ssh.github.com (ssh on port 443), then : or /
+    private val gitHub = Regex(
+        """^(?:[\w+]+://)?(?:[^@/]+@)?(?:ssh\.)?github\.com(?::\d+)?[:/]$GITHUB_REPO""",
+        RegexOption.IGNORE_CASE,
+    )
 
-    // like git, a remote without a scheme whose first colon comes before any slash
-    private val scpStyle = Regex("""^([^@/:]+)@([^@/:]+):(.+)$""")
+    // [user@]host:path, but no URL (//), remote helper (::) or @ in the path: credentials in front of the first colon
+    // would pass as host and path and must never reach the SBOM. One letter is a Windows drive (C:\repo), not a host
+    private val scpStyle = Regex("""^(?:([^@/:]+)@)?([^@/:]{2,}):(?!//|:)([^@]+)$""")
 
     /**
-     * [vcsUrl], without credentials, becomes the only `vcs` reference; null, or a value that is not a network remote,
-     * leaves the SBOM without one.
+     * [vcsUrl], without credentials, becomes the only `vcs` reference and also the only `source-distribution` one;
+     * null, or a value that is not a network remote, leaves the SBOM without either.
      */
-    fun normalize(bom: ByteArray, timestamp: Instant, vcsUrl: String?): ByteArray {
-        val root = read(bom) as? ObjectNode
-            ?: throw IllegalArgumentException("The BOM is not a JSON object")
+    fun normalize(bom: ByteArray, timestamp: Instant, vcsUrl: String?): ByteArray =
+        normalize(BomJson.read(bom), timestamp, vcsUrl)
 
-        val metadata = when (val existing = root.get("metadata")) {
-            null -> root.putObject("metadata")
-            is ObjectNode -> existing
-            else -> throw IllegalArgumentException("The BOM's metadata is not a JSON object")
+    /** [normalize] for [root] as [BomJson.read] returns it, which this changes. */
+    fun normalize(root: ObjectNode, timestamp: Instant, vcsUrl: String?): ByteArray {
+        // what the SBOM carries, so a value that rounds into the four-digit years still passes
+        val seconds = timestamp.truncatedTo(ChronoUnit.SECONDS)
+        if (seconds !in firstTimestamp..lastTimestamp) {
+            throw SbomException(
+                "The SBOM timestamp $seconds is not a valid date: set hivemqLicense.sbomTimestamp to a date with a " +
+                    "four-digit year, or fix the SOURCE_DATE_EPOCH environment variable, which holds seconds since " +
+                    "1970-01-01, not milliseconds"
+            )
         }
-        metadata.put("timestamp", DateTimeFormatter.ISO_INSTANT.format(timestamp.truncatedTo(ChronoUnit.SECONDS)))
+        // BomJson.read rejected a metadata that is not an object, so there is nothing else to replace here
+        val metadata = root.get("metadata") as? ObjectNode ?: root.putObject("metadata")
+        metadata.put("timestamp", DateTimeFormatter.ISO_INSTANT.format(seconds))
         (metadata.get("component") as? ObjectNode)?.let { normalizeExternalReferences(it, vcsUrl) }
         (root.get("dependencies") as? ArrayNode)?.let(::sortDependencies)
 
@@ -83,13 +90,6 @@ object SbomNormalizer {
         // the hash covers the timestamp too, so the same dependencies with a different timestamp get a different serial
         val serial = UUID.nameUUIDFromBytes(write(root))
         return write(withSerialNumber(root, "urn:uuid:$serial"))
-    }
-
-    private fun read(bom: ByteArray): JsonNode = try {
-        mapper.readTree(bom)
-    } catch (e: JsonProcessingException) {
-        val location = e.location?.let { " at line ${it.lineNr}, column ${it.columnNr}" }.orEmpty()
-        throw IllegalArgumentException("The BOM is not valid JSON: ${e.originalMessage}$location", e)
     }
 
     private fun normalizeExternalReferences(component: ObjectNode, vcsUrl: String?) {
@@ -105,25 +105,38 @@ object SbomNormalizer {
                 "build-system" -> continue
                 // CycloneDX's guess, replaced by the project's own remote below
                 "vcs" -> continue
+                // written below from the same remote, so a document that is normalized again must not collect another
+                "source-distribution" -> continue
             }
             kept.add(reference)
         }
-        vcsUrl?.let(::canonicalVcsUrl)?.let { kept.addObject().put("type", "vcs").put("url", it) }
-        // whether CycloneDX wrote references that were dropped above must not show in the output
-        if (kept.isEmpty) {
-            component.remove("externalReferences")
-        } else {
-            component.set("externalReferences", kept)
+        vcsUrl?.let(::canonicalVcsUrl)?.let { url ->
+            kept.addObject().put("type", "vcs").put("url", url)
+            // the source of the project itself is its repository
+            kept.addObject().put("type", "source-distribution").put("url", url)
         }
+        // The enricher appends its fields to the ones in the BOM, so a field replaced in place would come before
+        // them when CycloneDX wrote it and after them when it did not. Removed first, it always comes last.
+        component.remove("externalReferences")
+        // nothing is written when no reference is left, so the ones dropped above do not show in the output
+        if (!kept.isEmpty) component.set<JsonNode>("externalReferences", kept)
     }
 
-    // The SBOM ships, so no credential may reach it: GitHub becomes https://github.com/org/repo, http(s) drops user
-    // info, query and fragment, ssh drops a password, scp-style becomes ssh://, anything else gives no reference.
-    // SbomVcsUrlSource applies it too, so the raw remote never becomes a task input.
+    /**
+     * [url] without credentials, as the SBOM ships: GitHub as https://github.com/org/repo, http(s) without user info,
+     * query and fragment, ssh with no user but git, scp-style as ssh:// with an explicit `~` home kept; null for
+     * anything else.
+     */
     internal fun canonicalVcsUrl(url: String): String? {
-        (gitHubHttps.find(url) ?: gitHub.find(url))?.groupValues?.get(1)?.let { return "https://github.com/$it" }
+        gitHub.find(url)?.groupValues?.get(1)?.let { return "https://github.com/$it" }
         val candidate = scpStyle.matchEntire(url)?.destructured
-            ?.let { (user, host, path) -> "ssh://$user@$host/${path.removePrefix("/")}" }
+            ?.let { (user, host, path) ->
+                // the user group is empty when the remote has none
+                val userInfo = if (user.isEmpty()) "" else "$user@"
+                // hosting services look a repository up by name and ignore a leading slash, so the path is written
+                // absolute, like their own ssh URLs; a home-relative path on a plain ssh server needs ~/ or vcsUrl
+                "ssh://$userInfo$host/${path.removePrefix("/")}"
+            }
             ?: url
         val uri = try {
             URI(candidate)
@@ -136,8 +149,9 @@ object SbomNormalizer {
         return when (val scheme = uri.scheme?.lowercase()) {
             "http", "https" -> "$scheme://$host$port${uri.rawPath}"
             "ssh" -> {
-                // the user of an ssh remote is a login name like git, only a password after it is a secret
-                val user = uri.rawUserInfo?.substringBefore(':')?.let { "$it@" }.orEmpty()
+                // git is the shared user of a hosted repository; any other user is a person's login name, which would
+                // put that person into the SBOM and make it differ between clones, and a password is a secret
+                val user = if (uri.rawUserInfo?.substringBefore(':') == "git") "git@" else ""
                 "ssh://$user$host$port${uri.rawPath}"
             }
             else -> null
