@@ -20,6 +20,7 @@ import org.gradle.api.model.ObjectFactory
 import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
+import java.time.Instant
 import javax.inject.Inject
 
 abstract class HivemqLicenseExtensionImpl @Inject constructor(
@@ -35,4 +36,6 @@ abstract class HivemqLicenseExtensionImpl @Inject constructor(
         .convention(emptySet())
     override val overriddenLicenses: MapProperty<String, String> =
         objectFactory.mapProperty(String::class.java, String::class.java).convention(emptyMap())
+    override val sbomName: Property<String> = objectFactory.property(String::class.java)
+    override val sbomTimestamp: Property<Instant> = objectFactory.property(Instant::class.java)
 }
