@@ -15,13 +15,13 @@
  */
 package com.hivemq.tools.license.gradle
 
+import com.hivemq.tools.license.gradle.sbom.SbomWiring
 import org.cyclonedx.gradle.CyclonedxDirectTask
 import org.cyclonedx.gradle.CyclonedxPlugin
 import org.gradle.api.Plugin
 import org.gradle.api.Project
-import org.gradle.api.attributes.Category
+import org.gradle.api.provider.Provider
 import org.gradle.build.event.BuildEventsListenerRegistry
-import org.gradle.util.GradleVersion
 import javax.inject.Inject
 
 abstract class HivemqLicensePlugin @Inject constructor(
@@ -31,14 +31,6 @@ abstract class HivemqLicensePlugin @Inject constructor(
     override fun apply(project: Project) {
         val extension = project.extensions.create("hivemqLicense", HivemqLicenseExtensionImpl::class.java)
         extension.projectName.convention(project.name)
-        extension.sbomName.convention(project.name)
-        extension.sbomTimestamp.convention(
-            project.providers.of(SbomTimestampSource::class.java) {
-                parameters.sourceDateEpoch.set(project.providers.environmentVariable("SOURCE_DATE_EPOCH"))
-                parameters.projectDirectory.set(project.layout.projectDirectory)
-                parameters.projectPath.set(project.path)
-            }
-        )
 
         project.plugins.apply(CyclonedxPlugin::class.java)
 
@@ -62,7 +54,7 @@ abstract class HivemqLicensePlugin @Inject constructor(
 
         project.afterEvaluate {
             for (configName in extension.additionalConfigurations.get()) {
-                project.configurations.create("hivemqLicense_$configName") {
+                project.configurations.create("$WRAPPER_CONFIGURATION_PREFIX$configName") {
                     isCanBeConsumed = false
                     isCanBeResolved = true
                     extendsFrom(project.configurations.getByName(configName))
@@ -73,11 +65,7 @@ abstract class HivemqLicensePlugin @Inject constructor(
         val cyclonedxDirectBom = project.tasks.named(BOM_TASK_NAME, CyclonedxDirectTask::class.java)
         cyclonedxDirectBom.configure {
             projectType.set(org.cyclonedx.model.Component.Type.APPLICATION)
-            includeConfigs.set(
-                extension.additionalConfigurations.map { additionalConfigs ->
-                    listOf("runtimeClasspath") + additionalConfigs.map { "hivemqLicense_$it" }
-                }
-            )
+            includeConfigs.set(bomConfigurationNames(extension))
         }
 
         val cyclonedxJsonOutput = cyclonedxDirectBom.flatMap { it.jsonOutput }
@@ -123,42 +111,21 @@ abstract class HivemqLicensePlugin @Inject constructor(
             outputDirectory.set(extension.thirdPartyLicenseDirectory)
         }
 
-        val generateSbom = project.tasks.register(SBOM_TASK_NAME, GenerateSbomTask::class.java) {
-            group = TASK_GROUP
-            description =
-                "Writes a reproducible CycloneDX SBOM (<sbomName>.cdx.json) from the cyclonedxDirectBom output."
-            bom.set(cyclonedxJsonOutput)
-            timestamp.set(extension.sbomTimestamp)
-            vcsUrl.set(
-                project.providers.of(SbomVcsUrlSource::class.java) {
-                    parameters.projectDirectory.set(project.layout.projectDirectory)
-                }
-            )
-            outputFile.set(
-                extension.sbomName.flatMap { name -> project.layout.buildDirectory.file("sbom/$name.cdx.json") }
-            )
-        }
-
-        // Without the java plugin, an attributed consumable configuration would switch the project's consumers from
-        // the default configuration to attribute matching, which then finds no library.
-        project.pluginManager.withPlugin("java") {
-            // other projects, or included builds, collect the SBOM through this variant, by its Category attribute
-            project.configurations.create(SBOM_CONFIGURATION_NAME) {
-                isCanBeConsumed = true
-                isCanBeResolved = false
-                // Gradle 8 lets assemble build the artifacts of every visible configuration, Gradle 9 does not
-                if (GradleVersion.current().baseVersion < GradleVersion.version("9.0")) {
-                    @Suppress("DEPRECATION")
-                    isVisible = false
-                }
-                attributes.attribute(
-                    Category.CATEGORY_ATTRIBUTE,
-                    project.objects.named(Category::class.java, SBOM_CATEGORY)
-                )
-                outgoing.artifact(generateSbom.flatMap { it.outputFile })
-            }
+        // the SBOM resolves the licenses like the other license tasks, so a license problem fails it the same way
+        SbomWiring.register(project, extension, cyclonedxDirectBom).configure {
+            readLicensesFromBom()
         }
     }
+
+    /**
+     * Names of the configurations the BOM is built from, unless a build script sets the `includeConfigs` of
+     * `cyclonedxDirectBom` itself: `runtimeClasspath`, then the wrapper of each additional configuration. The wrappers
+     * are only created after evaluation, so this is a provider of names, not of configurations.
+     */
+    private fun bomConfigurationNames(extension: HivemqLicenseExtension): Provider<List<String>> =
+        extension.additionalConfigurations.map { additionalConfigs ->
+            listOf("runtimeClasspath") + additionalConfigs.map { "$WRAPPER_CONFIGURATION_PREFIX$it" }
+        }
 
     companion object {
         /** The CycloneDX task whose BOM the license tasks read. */
@@ -169,6 +136,9 @@ abstract class HivemqLicensePlugin @Inject constructor(
         const val SBOM_CONFIGURATION_NAME = "sbomElements"
         const val SBOM_CATEGORY = "sbom"
 
-        private const val TASK_GROUP = "hivemq license"
+        internal const val TASK_GROUP = "hivemq license"
+
+        /** Prefix of the resolvable wrapper the plugin creates for each additional configuration. */
+        internal const val WRAPPER_CONFIGURATION_PREFIX = "hivemqLicense_"
     }
 }
