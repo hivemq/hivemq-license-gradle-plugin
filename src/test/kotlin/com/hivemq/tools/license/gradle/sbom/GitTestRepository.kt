@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.hivemq.tools.license.gradle
+package com.hivemq.tools.license.gradle.sbom
 
 import org.gradle.api.Action
 import org.gradle.api.Project
@@ -27,9 +27,8 @@ import javax.inject.Inject
 /**
  * Runs git inside temporary test directories.
  *
- * The environment is isolated because the machine's global git config, hooks, inherited `GIT_*` variables and an
- * enclosing repository (a temporary directory may lie inside one) would otherwise leak into the tests and change
- * their outcome.
+ * The environment is isolated, as the machine's global git config, hooks, inherited `GIT_*` variables and an
+ * enclosing repository would otherwise leak into the tests and change their outcome.
  */
 internal object GitTestRepository {
 
@@ -54,8 +53,11 @@ internal object GitTestRepository {
         ) + extra
     }
 
-    /** Runs `git [args]` in [dir] with the isolated environment plus [env]; fails with the output on error. */
-    fun git(dir: File, vararg args: String, env: Map<String, String> = emptyMap()) {
+    /**
+     * Runs `git [args]` in [dir] with the isolated environment plus [env] and returns its output; fails with the
+     * output on error.
+     */
+    fun git(dir: File, vararg args: String, env: Map<String, String> = emptyMap()): String {
         val process = ProcessBuilder("git", *args)
             .directory(dir)
             .redirectErrorStream(true)
@@ -68,6 +70,7 @@ internal object GitTestRepository {
         check(process.waitFor(1, TimeUnit.MINUTES) && process.exitValue() == 0) {
             "git ${args.joinToString(" ")} failed: $output"
         }
+        return output.trim()
     }
 
     /**
@@ -93,15 +96,21 @@ internal object GitTestRepository {
     }
 
     /**
-     * Gradle's real exec from [project], running every command in the isolated environment of [dir] and then applying
-     * [adjust]. Value sources start git through it, and a test that calls them without a build passes this one in.
+     * Gradle's real exec from [project]. The environment of every command starts as the isolated one of [dir] plus
+     * [extra], which stands for what Gradle hands to the exec spec; the code under test then changes it, and [adjust]
+     * is applied last. Value sources start git through it; a test that calls them without a build passes it in.
      */
-    fun isolatedExec(project: Project, dir: File, adjust: ExecSpec.() -> Unit = {}): ExecOperations {
+    fun isolatedExec(
+        project: Project,
+        dir: File,
+        extra: Map<String, String> = emptyMap(),
+        adjust: ExecSpec.() -> Unit = {},
+    ): ExecOperations {
         val delegate = project.objects.newInstance(ExecHolder::class.java).execOperations
         return object : ExecOperations by delegate {
             override fun exec(action: Action<in ExecSpec>): ExecResult = delegate.exec {
+                setEnvironment(isolatedEnv(dir, extra))
                 action.execute(this)
-                setEnvironment(isolatedEnv(dir))
                 adjust()
             }
         }
