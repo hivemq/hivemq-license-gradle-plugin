@@ -22,7 +22,7 @@ Gradle plugin that generates and validates third-party license reports from Cycl
 - `src/main/kotlin/com/hivemq/tools/license/gradle/BomTaskOutcomeService.kt`, build service recording how the BOM task finished, so a failure can say where the BOM came from
 - `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/SbomNormalizer.kt`, rewrites the CycloneDX JSON so identical inputs give identical bytes (timestamp, serial number, ordering, CI references)
 - `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/GenerateSbomTask.kt`, the task around it, a `LicenseResolvingTask`, so a license problem fails it like `checkApprovedLicenses`; the plugin registers it as `generateSbom` and exposes the file as the `sbomElements` variant
-- `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/SbomWiring.kt`, what the plugin's `apply` does for the SBOM: the `sbom*` conventions, the `generateSbom` registration with its SBOM inputs (the plugin sets the BOM and the license inputs, as for the other license tasks), and the `sbomElements` variant when the `java` plugin is applied
+- `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/SbomWiring.kt`, what the plugin's `apply` does for the SBOM: the `sbom*` conventions, the `generateSbom` registration with its SBOM inputs (the plugin sets the BOM and the license inputs, as for the other license tasks), the `sbomElements` variant when the `java` plugin is applied, and the conventions of every `MergeSbomsTask`
 - `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/BomFilter.kt`, removes the components a `hivemqProvided` configuration resolves from the BOM tree before the enricher sees it, and re-links the dependency references that went through them
 - `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/SbomTimestampSource.kt`, the value source behind the default `sbomTimestamp` (`SOURCE_DATE_EPOCH`, then the HEAD commit time, then now with a warning)
 - `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/SbomVcsUrlSource.kt`, the value source behind the SBOM's `vcs` reference (the project's own `origin` remote)
@@ -31,6 +31,9 @@ Gradle plugin that generates and validates third-party license reports from Cycl
 - `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/SbomDetails.kt`, what the build tells the enricher: the creator, the file names of the resolved components, the concluded licenses and why the dependency graph is incomplete
 - `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/ConcludedLicense.kt`, our reviewed license as the SBOM writes it: the elected licenses as one object each, or one SPDX expression that replaces the declared entries (`ResolvedDependency.declaredExpression` in `LicenseResolver.kt` says when)
 - `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/BomJson.kt`, reads the BOM so that the enricher, the normalizer and the task reject a bad file the same way
+- `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/SbomMerger.kt`, the flat merge of per-component SBOMs into a product SBOM (parts sorted by name, components unioned by `bom-ref`, hash conflicts fail, completeness from the parts and the expected part names)
+- `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/MergeSbomsTask.kt`, the task type around it, registered by a build once per deliverable; `SbomWiring` applies the `sbom*` conventions to every instance
+- `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/SbomTimestamp.kt`, parses the text timestamp input of both SBOM tasks with one message
 
 ## Conventions
 
@@ -39,6 +42,7 @@ Gradle plugin that generates and validates third-party license reports from Cycl
 - A module whose BOM lists several licenses fails without a `BUILT_IN_EXPRESSIONS` entry: check its POM's `<comments>`, then add it to the `choice(...)` group of its expression (modules sorted), or, when the list does not declare the expression itself (licenses that apply together, a license given by name only), through `replacement(...)` with the list as CycloneDX writes it; a module whose versions declare different lists gets one expression per list
 - Tests are organized by section with comment headers (e.g., `// --- Section ---`) and sorted alphabetically within sections
 - Test classes touched when adding a license: `LicenseTest`, `LicenseResolverMetadataTest`, `LicenseResolverConvertLicenseTest`, `LicenseResolverChooseLicenseTest`; the resolver, the expression parser, the build service and the plugin wiring have their own (`LicenseResolverResolveLicensesTest`, `SpdxExpressionTest`, `BomTaskOutcomeServiceTest`, `HivemqLicensePluginIntegrationTest`), `BuiltInExpressionsIntegrationTest` resolves every `BUILT_IN_EXPRESSIONS` module from its published POM's license list through the real CycloneDX plugin and needs a fixture for every new table entry, and `BomUpToDateIntegrationTest` covers when the BOM task runs again; the SBOM has `SbomNormalizerTest`, `ConcludedLicenseTest`, `SbomEnricherTest`, `GenerateSbomTaskTest`, `GenerateSbomIntegrationTest`, `SbomTimestampSourceTest` and `SbomVcsUrlSourceTest`
+- Test classes touched when changing the merge: `SbomMergerTest`, `MergeSbomsTaskTest`, `MergeSbomsIntegrationTest`
 
 ## Adding a New License
 

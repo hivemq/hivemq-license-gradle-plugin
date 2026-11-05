@@ -38,16 +38,20 @@ import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.bundling.Jar
 import org.gradle.util.GradleVersion
 
-/** The SBOM part of the plugin: the `sbom*` conventions, the `generateSbom` task and the `sbomElements` variant. */
+/**
+ * The SBOM part of the plugin: the `sbom*` conventions, the `generateSbom` task, the `sbomElements` variant and the
+ * conventions of every [MergeSbomsTask].
+ */
 internal object SbomWiring {
 
     // 8.1.1 and older answer only to the legacy id, 8.3.0 only to the new one, later releases to both
     private val shadowPluginIds = listOf("com.gradleup.shadow", "com.github.johnrengelman.shadow")
 
     /**
-     * Sets the defaults, also of every [GenerateSbomTask], and registers `generateSbom` and the variant. The caller
-     * sets the BOM and the license inputs of those tasks, the same way as those of the other license tasks. The SBOM
-     * describes the files and the completeness of [bomConfigurationNames], the configurations the BOM is built from.
+     * Sets the defaults, also of every [GenerateSbomTask] and [MergeSbomsTask], and registers `generateSbom` and the
+     * variant. The caller sets the BOM and the license inputs of every [GenerateSbomTask], as for the other license
+     * tasks. The SBOM describes the files and the completeness of [bomConfigurationNames], the configurations the BOM
+     * is built from.
      */
     fun register(
         project: Project,
@@ -84,6 +88,23 @@ internal object SbomWiring {
         val namesReadByBomTask = configurationNamesReadBy(bomConfigurationNames, project.configurations)
         val projectComponentFileNames = resolvedComponentFileNames(project, namesReadByBomTask)
         val projectIncompleteReasons = incompleteGraphReasons(project, namesReadByBomTask)
+
+        // every merge task a build registers gets the same defaults as generateSbom, whatever the plugin order
+        project.tasks.withType(MergeSbomsTask::class.java).configureEach {
+            group = TASK_GROUP
+            description =
+                "Merges the SBOMs of the parts of a deliverable into the product SBOM (<productName>.cdx.json)."
+            timestamp.convention(timestampText)
+            vcsUrl.convention(projectVcsUrl)
+            creatorName.convention(extension.sbomCreatorName)
+            creator.convention(extension.sbomCreator)
+            val taskPath = path
+            outputFile.convention(
+                project.layout.buildDirectory.file(
+                    productName.zip(extension.sbomName) { name, sbomName -> mergeOutputPath(taskPath, name, sbomName) }
+                )
+            )
+        }
 
         // the scalars as conventions, so a set wins in any order; the collections as values, so a later add or put
         // extends the plugin's value instead of discarding a convention, and a later set replaces it
@@ -219,11 +240,25 @@ internal object SbomWiring {
     // The helpers below run inside providers the configuration cache may store; as members of an object, a lambda
     // calling them captures no instance the cache would have to store as well.
 
+    /**
+     * The path below the build directory of the SBOM that the merge task [taskPath] writes for [productName]. Fails on
+     * a name that is not a file name, and on the project's [sbomName] in any letter case.
+     */
+    private fun mergeOutputPath(taskPath: String, productName: String, sbomName: String): String {
+        val what = "The productName of task '$taskPath'"
+        checkFileName(productName, what)
+        // a file system that ignores case, such as the default one of macOS, would make one file of the two names
+        if (productName.equals(sbomName, ignoreCase = true)) {
+            throw GradleException("$what must differ from hivemqLicense.sbomName, which is '$sbomName'")
+        }
+        return "sbom/$productName.cdx.json"
+    }
+
     // a separator in the name would write the SBOM elsewhere, and a blank name would give a file without a name
-    private fun checkSbomName(name: String): String {
+    private fun checkFileName(name: String, what: String): String {
         if (name.isBlank() || '/' in name || '\\' in name) {
             throw GradleException(
-                "hivemqLicense.sbomName must be a non-blank file name without '/' or '\\', but is '$name'"
+                "$what must be a non-blank file name without '/' or '\\', but is '$name'"
             )
         }
         return name
@@ -231,7 +266,7 @@ internal object SbomWiring {
 
     // another SBOM task writes into a directory of its own name, so it cannot overwrite the file of generateSbom
     private fun sbomOutputPath(taskName: String, sbomName: String): String {
-        val fileName = "${checkSbomName(sbomName)}.cdx.json"
+        val fileName = "${checkFileName(sbomName, "hivemqLicense.sbomName")}.cdx.json"
         return if (taskName == SBOM_TASK_NAME) "sbom/$fileName" else "sbom/$taskName/$fileName"
     }
 

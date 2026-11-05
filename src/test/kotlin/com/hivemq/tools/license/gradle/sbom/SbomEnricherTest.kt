@@ -17,6 +17,8 @@ package com.hivemq.tools.license.gradle.sbom
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ArrayNode
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.hivemq.tools.license.gradle.Coordinates
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -565,6 +567,73 @@ class SbomEnricherTest {
         assertThat(kept["assemblies"].map { it.asText() }).containsExactly(topLevel)
         assertThat(kept["dependencies"].map { it.asText() }).containsExactly(elsewhere, "7")
         assertThat(kept["vulnerabilities"].map { it.asText() }).containsExactly("vulnerability-1")
+    }
+
+    @Test
+    fun `leaves a dependency target without an entry out of the complete composition`() {
+        // CycloneDX writes an entry per node, but a BOM from another tool may target a component that has none; the
+        // SBOM then states nothing about that component's dependencies and cannot call them complete
+        val input = mapper.readTree(bom()) as ObjectNode
+        (input["dependencies"] as ArrayNode).removeIf { it["ref"].asText() == "pkg:maven/org.example/lib@1.0" }
+
+        val result = enrich(mapper.writeValueAsBytes(input))
+
+        assertThat(result["compositions"].map { it["aggregate"].asText() }).containsExactly("complete")
+        assertThat(result["compositions"][0]["dependencies"].map { it.asText() })
+            .containsExactly("pkg:maven/com.hivemq/app@1.0.0?project_path=%3A")
+    }
+
+    @Test
+    fun `leaves a dependency target without an entry out of the complete composition next to identified components`() {
+        val input = """
+            {
+              "specVersion": "1.6",
+              "metadata": { "component": { "type": "application", "bom-ref": "app", "name": "app" } },
+              "dependencies": [ { "ref": "app", "dependsOn": [ "lib", "sdk" ] }, { "ref": "sdk", "dependsOn": [] } ]
+            }
+        """.trimIndent()
+
+        val result = enrich(input.toByteArray(), details.copy(identifiedComponents = setOf("sdk")))
+
+        // lib has no entry, so the SBOM states nothing about its dependencies either way
+        assertThat(result["compositions"].map { it["aggregate"].asText() }).containsExactly("complete", "incomplete")
+        assertThat(result["compositions"][0]["dependencies"].map { it.asText() }).containsExactly("app")
+        assertThat(result["compositions"][1]["dependencies"].map { it.asText() }).containsExactly("sdk")
+    }
+
+    @Test
+    fun `leaves the top-level component out of the complete composition when the graph has no entry for it`() {
+        val input = """
+            {
+              "specVersion": "1.6",
+              "metadata": { "component": { "type": "application", "bom-ref": "app", "name": "app" } },
+              "dependencies": [ { "ref": "lib" } ]
+            }
+        """.trimIndent()
+
+        val result = enrich(input.toByteArray())
+
+        // the graph says nothing about what the artifact depends on, so only lib is declared complete
+        assertThat(result["compositions"].map { it["aggregate"].asText() }).containsExactly("complete")
+        assertThat(result["compositions"][0]["dependencies"].map { it.asText() }).containsExactly("lib")
+    }
+
+    @Test
+    fun `leaves the top-level component without an entry out of the complete composition beside identified ones`() {
+        val input = """
+            {
+              "specVersion": "1.6",
+              "metadata": { "component": { "type": "application", "bom-ref": "app", "name": "app" } },
+              "dependencies": [ { "ref": "lib" }, { "ref": "sdk", "dependsOn": [] } ]
+            }
+        """.trimIndent()
+
+        val result = enrich(input.toByteArray(), details.copy(identifiedComponents = setOf("sdk")))
+
+        // the graph says nothing about what the artifact depends on, so only lib is declared complete
+        assertThat(result["compositions"].map { it["aggregate"].asText() }).containsExactly("complete", "incomplete")
+        assertThat(result["compositions"][0]["dependencies"].map { it.asText() }).containsExactly("lib")
+        assertThat(result["compositions"][1]["dependencies"].map { it.asText() }).containsExactly("sdk")
     }
 
     @Test

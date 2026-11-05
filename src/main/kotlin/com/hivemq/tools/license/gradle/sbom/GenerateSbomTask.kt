@@ -30,8 +30,6 @@ import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
 import org.gradle.work.DisableCachingByDefault
 import java.io.File
-import java.time.Instant
-import java.time.format.DateTimeParseException
 
 /**
  * Writes a reproducible CycloneDX SBOM, with the fields [SbomEnricher] adds, from the JSON BOM in [dependencyLicense];
@@ -109,16 +107,7 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
                     "$declaredReasons"
             )
         }
-        val text = timestamp.get()
-        val instant = try {
-            Instant.parse(text)
-        } catch (e: DateTimeParseException) {
-            throw GradleException(
-                "The timestamp of task '$path' must be an ISO 8601 instant such as 2026-01-02T03:04:05Z, " +
-                    "but is '$text'",
-                e,
-            )
-        }
+        val instant = SbomTimestamp.parse(path, timestamp.get())
         val provided = providedModules.get()
         val own = OwnModules(ignoredGroupPrefixes.get(), allowedArtifacts.get())
         val normalized = try {
