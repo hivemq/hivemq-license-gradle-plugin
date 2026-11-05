@@ -36,18 +36,21 @@ interface HivemqLicenseExtension {
     val sbomName: Property<String>
 
     /**
-     * `metadata.timestamp` of that SBOM. Defaults to `SOURCE_DATE_EPOCH`, else the time of the repository's HEAD
-     * commit (`git log -1`), else the current time (with a warning, because the file is then not reproducible). It
-     * needs a four-digit year.
+     * `metadata.timestamp` of that SBOM and of the one every `MergeSbomsTask` writes, unless it sets its own
+     * `timestamp`. Defaults to `SOURCE_DATE_EPOCH`, else the time of the repository's HEAD commit (`git log -1`), else
+     * the current time with a warning. It needs a four-digit year.
      */
     val sbomTimestamp: Property<Instant>
 
-    /** Who creates the SBOM and ships the component, written as the manufacturer; "HiveMQ GmbH" by default. */
+    /**
+     * Who creates the SBOM and ships the component, written as the manufacturer of that SBOM and of the one every
+     * `MergeSbomsTask` writes, unless it sets its own `creatorName`; "HiveMQ GmbH" by default.
+     */
     val sbomCreatorName: Property<String>
 
     /**
-     * Email address or http(s) URL of that organisation, anything else fails `generateSbom`; `security@hivemq.com` by
-     * default.
+     * Email address or http(s) URL of that organisation, anything else fails `generateSbom` and every
+     * `MergeSbomsTask`; `security@hivemq.com` by default.
      */
     val sbomCreator: Property<String>
 
