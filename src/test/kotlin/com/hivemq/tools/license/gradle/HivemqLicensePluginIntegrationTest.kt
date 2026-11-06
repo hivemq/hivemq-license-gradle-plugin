@@ -297,6 +297,21 @@ class HivemqLicensePluginIntegrationTest {
     }
 
     @Test
+    fun `generateSbom failure says where the BOM came from`() {
+        setupWithUnlicensedDependency()
+
+        val result = cachedRunner("generateSbom").buildAndFail()
+
+        assertThat(result.task(":generateSbom")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        // word for word what checkApprovedLicenses reports, so a build that packs the SBOM needs no separate check
+        assertThat(result.output)
+            .contains("1 license problem found in '${bomPath(projectDir)}' (produced by this build):")
+            .contains("No license found for 'com.example:no-license-lib:1.0.0'")
+            .doesNotContain("Cannot write an SBOM")
+        assertThat(projectDir.resolve("build/sbom/test-project.cdx.json")).doesNotExist()
+    }
+
+    @Test
     fun `updateThirdPartyLicenses is up to date and restored from the build cache`() {
         // the task's inputs live in a base class, so this checks they still take part in its up-to-date check and key
         setupWithUnlicensedDependency(
