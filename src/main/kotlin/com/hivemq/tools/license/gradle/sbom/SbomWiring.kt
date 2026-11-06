@@ -39,16 +39,19 @@ import org.gradle.api.tasks.TaskProvider
 import org.gradle.api.tasks.bundling.Jar
 import org.gradle.util.GradleVersion
 
-/** The SBOM part of the plugin: the `sbom*` conventions, the `generateSbom` task and the `sbomElements` variant. */
+/**
+ * The SBOM part of the plugin: the `sbom*` conventions, the `generateSbom` task, the `sbomElements` variant and the
+ * conventions of every [MergeSbomsTask].
+ */
 internal object SbomWiring {
 
     // 8.1.1 and older answer only to the legacy id, 8.3.0 only to the new one, later releases to both
     private val shadowPluginIds = listOf("com.gradleup.shadow", "com.github.johnrengelman.shadow")
 
     /**
-     * Sets the conventions and registers the task and the variant. The caller sets the BOM and the license inputs of
-     * the returned task, the same way as those of the other license tasks. [bomTask] writes that BOM, and the SBOM
-     * describes the files and the completeness of the configurations it reads.
+     * Sets the `sbom*` conventions and those of every [MergeSbomsTask] of the project, and registers `generateSbom` and
+     * the variant. The caller sets the BOM and license inputs of the returned task as for the other license tasks;
+     * [bomTask] writes that BOM, and the SBOM describes the files and completeness of the configurations it reads.
      */
     fun register(
         project: Project,
@@ -75,18 +78,37 @@ internal object SbomWiring {
             }
         }
 
+        // as text, because Gradle 8's configuration cache cannot store an Instant
+        val timestampText = extension.sbomTimestamp.map { it.toString() }
+        // one value source for every SBOM task of the project, so git runs once and a warning is logged once
+        val projectVcsUrl = project.providers.of(SbomVcsUrlSource::class.java) {
+            parameters.projectDirectory.set(project.layout.projectDirectory)
+            parameters.projectPath.set(project.path)
+        }
+
+        // every merge task a build registers gets the same defaults as generateSbom, whatever the plugin order
+        project.tasks.withType(MergeSbomsTask::class.java).configureEach {
+            group = TASK_GROUP
+            description =
+                "Merges the SBOMs of the parts of a deliverable into the product SBOM (<productName>.cdx.json)."
+            timestamp.convention(timestampText)
+            vcsUrl.convention(projectVcsUrl)
+            creatorName.convention(extension.sbomCreatorName)
+            creator.convention(extension.sbomCreator)
+            val taskPath = path
+            outputFile.convention(
+                project.layout.buildDirectory.file(
+                    productName.zip(extension.sbomName) { name, sbomName -> mergeOutputPath(taskPath, name, sbomName) }
+                )
+            )
+        }
+
         val generateSbom = project.tasks.register(SBOM_TASK_NAME, GenerateSbomTask::class.java) {
             group = TASK_GROUP
             description =
                 "Writes a reproducible CycloneDX SBOM (<sbomName>.cdx.json) from the cyclonedxDirectBom output."
-            // as text, because Gradle 8's configuration cache cannot store an Instant
-            timestamp.set(extension.sbomTimestamp.map { it.toString() })
-            vcsUrl.set(
-                project.providers.of(SbomVcsUrlSource::class.java) {
-                    parameters.projectDirectory.set(project.layout.projectDirectory)
-                    parameters.projectPath.set(project.path)
-                }
-            )
+            timestamp.set(timestampText)
+            vcsUrl.set(projectVcsUrl)
             creatorName.set(extension.sbomCreatorName)
             creator.set(extension.sbomCreator)
             artifactFileName.set(extension.sbomArtifactFileName)
@@ -94,7 +116,9 @@ internal object SbomWiring {
             componentFileNames.set(resolvedComponentFileNames(project, bomConfigurationNames))
             incompleteReasons.set(incompleteGraphReasons(project, bomConfigurationNames))
             outputFile.set(
-                project.layout.buildDirectory.file(extension.sbomName.map { "sbom/${checkSbomName(it)}.cdx.json" })
+                project.layout.buildDirectory.file(
+                    extension.sbomName.map { "sbom/${checkFileName(it, "hivemqLicense.sbomName")}.cdx.json" }
+                )
             )
         }
 
@@ -220,11 +244,25 @@ internal object SbomWiring {
     // The helpers below run inside providers the configuration cache may store; as members of an object, a lambda
     // calling them captures no instance the cache would have to store as well.
 
+    /**
+     * The path below the build directory of the SBOM that the merge task [taskPath] writes for [productName]. Fails on
+     * a name that is not a file name, and on the project's [sbomName] in any letter case.
+     */
+    private fun mergeOutputPath(taskPath: String, productName: String, sbomName: String): String {
+        val what = "The productName of task '$taskPath'"
+        checkFileName(productName, what)
+        // a file system that ignores case, such as the default one of macOS, would make one file of the two names
+        if (productName.equals(sbomName, ignoreCase = true)) {
+            throw GradleException("$what must differ from hivemqLicense.sbomName, which is '$sbomName'")
+        }
+        return "sbom/$productName.cdx.json"
+    }
+
     // a separator in the name would write the SBOM elsewhere, and a blank name would give a file without a name
-    private fun checkSbomName(name: String): String {
+    private fun checkFileName(name: String, what: String): String {
         if (name.isBlank() || '/' in name || '\\' in name) {
             throw GradleException(
-                "hivemqLicense.sbomName must be a non-blank file name without '/' or '\\', but is '$name'"
+                "$what must be a non-blank file name without '/' or '\\', but is '$name'"
             )
         }
         return name
