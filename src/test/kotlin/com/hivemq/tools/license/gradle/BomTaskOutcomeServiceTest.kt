@@ -78,14 +78,14 @@ class BomTaskOutcomeServiceTest {
     /** The origin of the BOM task, which must be answered without waiting for an event. */
     private fun bomTaskOriginWithoutWaiting(): String? {
         val start = System.nanoTime()
-        val origin = service.originOf(":cyclonedxDirectBom")
+        val origin = service.originOf(":generateDependencyBom")
         assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(eventWait.dividedBy(2))
         return origin
     }
 
     @Test
     fun `an executed task is recorded before its finish event arrives`() {
-        service.recordExecuted(":cyclonedxDirectBom")
+        service.recordExecuted(":generateDependencyBom")
 
         assertThat(bomTaskOriginWithoutWaiting()).isEqualTo("produced by this build")
     }
@@ -93,28 +93,28 @@ class BomTaskOutcomeServiceTest {
     @Test
     fun `a task restored from the cache is known from its finish event`() {
         // Gradle reports a task restored from the cache as up to date as well
-        service.onFinish(taskFinished(":cyclonedxDirectBom", success(fromCache = true, upToDate = true)))
+        service.onFinish(taskFinished(":generateDependencyBom", success(fromCache = true, upToDate = true)))
 
         assertThat(bomTaskOriginWithoutWaiting()).isEqualTo("restored from the build cache")
     }
 
     @Test
     fun `an up-to-date task is known from its finish event`() {
-        service.onFinish(taskFinished(":cyclonedxDirectBom", success(fromCache = false, upToDate = true)))
+        service.onFinish(taskFinished(":generateDependencyBom", success(fromCache = false, upToDate = true)))
 
         assertThat(bomTaskOriginWithoutWaiting()).isEqualTo("unchanged since an earlier build")
     }
 
     @Test
     fun `a skipped task has no origin and does not make the caller wait`() {
-        service.onFinish(taskFinished(":cyclonedxDirectBom", skipped()))
+        service.onFinish(taskFinished(":generateDependencyBom", skipped()))
 
         assertThat(bomTaskOriginWithoutWaiting()).isNull()
     }
 
     @Test
     fun `a failed task has no origin and does not make the caller wait`() {
-        service.onFinish(taskFinished(":cyclonedxDirectBom", failure()))
+        service.onFinish(taskFinished(":generateDependencyBom", failure()))
 
         assertThat(bomTaskOriginWithoutWaiting()).isNull()
     }
@@ -123,7 +123,7 @@ class BomTaskOutcomeServiceTest {
     fun `a task that never finishes has no origin after the bounded wait`() {
         val start = System.nanoTime()
 
-        assertThat(service.originOf(":cyclonedxDirectBom")).isNull()
+        assertThat(service.originOf(":generateDependencyBom")).isNull()
 
         assertThat(Duration.ofNanos(System.nanoTime() - start)).isGreaterThanOrEqualTo(eventWait)
     }
@@ -132,7 +132,7 @@ class BomTaskOutcomeServiceTest {
     fun `an interrupted wait has no origin and keeps the interrupt flag`() {
         Thread.currentThread().interrupt()
 
-        val origin = service.originOf(":cyclonedxDirectBom")
+        val origin = service.originOf(":generateDependencyBom")
 
         assertThat(Thread.interrupted()).isTrue()
         assertThat(origin).isNull()
@@ -141,19 +141,19 @@ class BomTaskOutcomeServiceTest {
     @Test
     fun `only the BOM task is recorded`() {
         service.onFinish(taskFinished(":compileJava", success(fromCache = true, upToDate = true)))
-        service.onFinish(taskFinished(":cyclonedxDirectBom", success(fromCache = false, upToDate = false)))
+        service.onFinish(taskFinished(":generateDependencyBom", success(fromCache = false, upToDate = false)))
 
-        assertThat(service.originOf(":cyclonedxDirectBom")).isEqualTo("produced by this build")
+        assertThat(service.originOf(":generateDependencyBom")).isEqualTo("produced by this build")
         // an event that was recorded would answer at once with "restored from the build cache"
         assertThat(service.originOf(":compileJava")).isNull()
     }
 
     @Test
     fun `outcomes are kept per task path`() {
-        service.recordExecuted(":cyclonedxDirectBom")
-        service.onFinish(taskFinished(":inc:cyclonedxDirectBom", success(fromCache = true, upToDate = true)))
+        service.recordExecuted(":generateDependencyBom")
+        service.onFinish(taskFinished(":inc:generateDependencyBom", success(fromCache = true, upToDate = true)))
 
-        assertThat(service.originOf(":cyclonedxDirectBom")).isEqualTo("produced by this build")
-        assertThat(service.originOf(":inc:cyclonedxDirectBom")).isEqualTo("restored from the build cache")
+        assertThat(service.originOf(":generateDependencyBom")).isEqualTo("produced by this build")
+        assertThat(service.originOf(":inc:generateDependencyBom")).isEqualTo("restored from the build cache")
     }
 }

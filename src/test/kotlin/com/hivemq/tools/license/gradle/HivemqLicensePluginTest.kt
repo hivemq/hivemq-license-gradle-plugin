@@ -20,6 +20,8 @@ import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import java.io.File
 
 class HivemqLicensePluginTest {
@@ -56,12 +58,70 @@ class HivemqLicensePluginTest {
     }
 
     @Test
-    fun `plugin registers cyclonedxDirectBom task`() {
+    fun `plugin registers generateDependencyBom without a group`() {
         setup()
 
-        val result = gradleRunner("tasks", "--all").build()
+        val all = gradleRunner("tasks", "--all").build()
+        val grouped = gradleRunner("tasks").build()
 
-        assertThat(result.output).contains("cyclonedxDirectBom")
+        assertThat(all.output).contains("generateDependencyBom - Writes the CycloneDX BOM of the resolved dependencies")
+        // generateSbom's description names it as well, so only an entry of its own counts
+        assertThat(grouped.output).doesNotContain("generateDependencyBom -")
+    }
+
+    @Test
+    fun `plugin adds no task or configuration of the CycloneDX plugin to the project or its subprojects`() {
+        setup(
+            """
+            gradle.projectsEvaluated {
+                for (p in allprojects) {
+                    val tasks = p.tasks.names.filter { it.contains("bom", ignoreCase = true) }
+                    val configurations = p.configurations.names.filter { it.contains("bom", ignoreCase = true) }
+                    println(p.displayName + ": tasks=" + tasks + " configurations=" + configurations)
+                }
+            }
+            """.trimIndent()
+        )
+        projectDir.resolve("settings.gradle.kts").appendText("\ninclude(\"sub\")")
+        projectDir.resolve("sub").mkdirs()
+        projectDir.resolve("sub/build.gradle.kts").writeText("plugins { java }")
+
+        val result = gradleRunner("help").build()
+
+        assertThat(result.output)
+            .contains(
+                "root project 'test-project': tasks=[generateDependencyBom, generateSbom] configurations=[sbomElements]"
+            )
+            .contains("project ':sub': tasks=[] configurations=[]")
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["includeConfigs", "skipConfigs"])
+    fun `a build script cannot change the configurations generateDependencyBom reads`(property: String) {
+        setup(
+            """
+            tasks.named<org.cyclonedx.gradle.CyclonedxDirectTask>("generateDependencyBom") {
+                $property.set(listOf("compileClasspath"))
+            }
+            """.trimIndent()
+        )
+
+        val result = gradleRunner("generateDependencyBom").buildAndFail()
+
+        assertThat(result.output)
+            .contains("The value for task ':generateDependencyBom' property '$property' cannot be changed any further")
+    }
+
+    @Test
+    fun `generateDependencyBom writes only the JSON BOM into the license build directory`() {
+        setup()
+
+        val result = gradleRunner("generateDependencyBom").build()
+
+        assertThat(result.task(":generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(projectDir.resolve("build/license").list()).containsExactly("bom.json")
+        assertThat(projectDir.resolve("build").walk().filter { it.extension == "xml" }.toList()).isEmpty()
+        assertThat(projectDir.resolve("build/license/bom.json").readText()).contains(""""bomFormat" : "CycloneDX"""")
     }
 
     @Test

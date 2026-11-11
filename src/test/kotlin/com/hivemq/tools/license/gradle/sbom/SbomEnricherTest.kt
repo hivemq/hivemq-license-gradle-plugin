@@ -122,7 +122,7 @@ class SbomEnricherTest {
 
     @Test
     fun `rejects a spec version before the minimum`() {
-        // the cyclonedxDirectBom task can be configured to write an older spec version
+        // the BOM task can be configured to write an older spec version
         assertThatThrownBy { enrich(bom(specVersion = "1.5")) }
             .isInstanceOf(SbomException::class.java)
             .hasMessage(

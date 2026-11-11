@@ -33,8 +33,8 @@ import java.time.format.DateTimeParseException
 
 /**
  * Writes a reproducible CycloneDX SBOM, with the fields [SbomEnricher] adds, from the JSON BOM in [dependencyLicense],
- * which the plugin sets to the `cyclonedxDirectBom` output; see [SbomNormalizer]. Fails like `checkApprovedLicenses` on
- * a license problem, writing no SBOM. A registration by hand must set [projectName] too, which the SBOM does not use.
+ * which the plugin sets to the `generateDependencyBom` output; see [SbomNormalizer]. Fails like `checkApprovedLicenses`
+ * on a license problem, writing no SBOM. A registration by hand must set [projectName] too, unused by the SBOM.
  */
 @DisableCachingByDefault(because = "Rewriting one file is cheaper than a cache round trip")
 abstract class GenerateSbomTask : LicenseResolvingTask() {

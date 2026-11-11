@@ -62,7 +62,7 @@ class HivemqLicensePluginIntegrationTest {
 
         val result = gradleRunner("checkApprovedLicenses").build()
 
-        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).contains("dependencies have approved licenses")
     }
@@ -109,7 +109,7 @@ class HivemqLicensePluginIntegrationTest {
 
         val result = gradleRunner("updateThirdPartyLicenses").build()
 
-        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
 
         val outputDir = projectDir.resolve("build/tmp/third-party-licenses")
@@ -166,7 +166,7 @@ class HivemqLicensePluginIntegrationTest {
 
         val result = cachedRunner("checkApprovedLicenses").buildAndFail()
 
-        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output)
             .contains("No license found for 'com.example:pomless-lib:1.0.0' (its Maven metadata is incomplete: pom-unresolved)")
     }
@@ -174,8 +174,8 @@ class HivemqLicensePluginIntegrationTest {
     // --- BOM origin in the failure message ---
 
     /**
-     * Writes a local Maven repository with one artifact whose POM declares no license, so the real cyclonedxDirectBom
-     * task produces a BOM that makes checkApprovedLicenses fail.
+     * Writes a local Maven repository with one artifact whose POM declares no license, so the real BOM task produces a
+     * BOM that makes checkApprovedLicenses fail.
      */
     private fun writeUnlicensedRepository(repoDir: File) {
         val artifactDir = repoDir.resolve("com/example/no-license-lib/1.0.0")
@@ -243,7 +243,7 @@ class HivemqLicensePluginIntegrationTest {
     }
 
     // Gradle canonicalizes the project directory, and the JUnit temp dir sits behind a symlink on macOS
-    private fun bomPath(projectDir: File) = projectDir.resolve("build/reports/cyclonedx-direct/bom.json").canonicalPath
+    private fun bomPath(projectDir: File) = projectDir.resolve("build/license/bom.json").canonicalPath
 
     // Supplied by the build (see build.gradle.kts).
     private fun testProperty(name: String) = requireNotNull(System.getProperty(name)) {
@@ -255,9 +255,9 @@ class HivemqLicensePluginIntegrationTest {
         setupWithUnlicensedDependency()
         cachedRunner("checkApprovedLicenses").buildAndFail()
 
-        val result = cachedRunner("checkApprovedLicenses", "-x", "cyclonedxDirectBom").buildAndFail()
+        val result = cachedRunner("checkApprovedLicenses", "-x", "generateDependencyBom").buildAndFail()
 
-        assertThat(result.task(":cyclonedxDirectBom")).isNull()
+        assertThat(result.task(":generateDependencyBom")).isNull()
         assertThat(result.output).contains("'${bomPath(projectDir)}':")
         assertThat(result.output).doesNotContain("'${bomPath(projectDir)}' (")
     }
@@ -268,7 +268,7 @@ class HivemqLicensePluginIntegrationTest {
 
         val result = cachedRunner("checkApprovedLicenses").buildAndFail()
 
-        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).contains("1 license problem found in '")
         assertThat(result.output).contains("' (produced by this build):")
         assertThat(result.output).contains("No license found for 'com.example:no-license-lib:1.0.0'")
@@ -280,7 +280,7 @@ class HivemqLicensePluginIntegrationTest {
 
         val result = cachedRunner("checkApprovedLicenses", "--configuration-cache").buildAndFail()
 
-        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).contains("' (produced by this build):")
     }
 
@@ -292,7 +292,7 @@ class HivemqLicensePluginIntegrationTest {
         val result = cachedRunner("checkApprovedLicenses", "--configuration-cache").buildAndFail()
 
         assertThat(result.output).contains("Reusing configuration cache.")
-        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.UP_TO_DATE)
+        assertThat(result.task(":generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.UP_TO_DATE)
         assertThat(result.output).contains("' (unchanged since an earlier build):")
     }
 
@@ -360,7 +360,7 @@ class HivemqLicensePluginIntegrationTest {
 
         val result = cachedRunner("checkApprovedLicenses").buildAndFail()
 
-        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.FROM_CACHE)
+        assertThat(result.task(":generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.FROM_CACHE)
         assertThat(result.output).contains("' (restored from the build cache):")
     }
 
@@ -371,7 +371,7 @@ class HivemqLicensePluginIntegrationTest {
 
         val result = cachedRunner("checkApprovedLicenses").buildAndFail()
 
-        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.UP_TO_DATE)
+        assertThat(result.task(":generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.UP_TO_DATE)
         assertThat(result.output).contains("' (unchanged since an earlier build):")
     }
 
@@ -420,8 +420,8 @@ class HivemqLicensePluginIntegrationTest {
 
     @Test
     fun `origin is reported per build in a composite build`() {
-        // the root build and the included build both have a ":cyclonedxDirectBom" task, so outcomes must be keyed by
-        // the task's path in the whole build tree
+        // the root build and the included build both have a ":generateDependencyBom" task, so outcomes must be keyed
+        // by the task's path in the whole build tree
         writeUnlicensedRepository(projectDir.resolve("repo"))
         projectDir.resolve("settings.gradle.kts").writeText(settingsWithLocalBuildCache("""includeBuild("inc")"""))
         projectDir.resolve("build.gradle.kts").writeText(unlicensedBuildFile("repo"))
@@ -436,8 +436,8 @@ class HivemqLicensePluginIntegrationTest {
         val result =
             cachedRunner("checkApprovedLicenses", ":inc:checkApprovedLicenses", "--continue").buildAndFail()
 
-        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.FROM_CACHE)
-        assertThat(result.task(":inc:cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.UP_TO_DATE)
+        assertThat(result.task(":generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.FROM_CACHE)
+        assertThat(result.task(":inc:generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.UP_TO_DATE)
         assertThat(result.output).contains("'${bomPath(projectDir)}' (restored from the build cache):")
         assertThat(result.output).contains("'${bomPath(includedDir)}' (unchanged since an earlier build):")
     }
@@ -465,9 +465,9 @@ class HivemqLicensePluginIntegrationTest {
         )
 
         val result =
-            cachedRunner("cyclonedxDirectBom", "updateThirdPartyLicenses", "--continue").buildAndFail()
+            cachedRunner("generateDependencyBom", "updateThirdPartyLicenses", "--continue").buildAndFail()
 
-        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.FAILED)
         val frontendReport = projectDir.resolve("frontend.json").canonicalPath
         assertThat(result.output).contains("1 license problem found in '$frontendReport':")

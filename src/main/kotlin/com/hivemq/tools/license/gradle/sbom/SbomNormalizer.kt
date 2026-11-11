@@ -79,7 +79,7 @@ internal object SbomNormalizer {
         // BomJson.read rejected a metadata that is not an object, so there is nothing else to replace here
         val metadata = root.get("metadata") as? ObjectNode ?: root.putObject("metadata")
         // TODO: once the plugin depends on a release with CycloneDX/cyclonedx-gradle-plugin#964, pass sbomTimestamp
-        //  to cyclonedxDirectBom; the override and the year check (absent from #964) stay for a merged product SBOM
+        //  to generateDependencyBom; the override and the year check (absent from #964) stay for a merged product SBOM
         metadata.put("timestamp", DateTimeFormatter.ISO_INSTANT.format(seconds))
         (metadata.get("component") as? ObjectNode)?.let { normalizeExternalReferences(it, vcsUrl) }
         (root.get("dependencies") as? ArrayNode)?.let(::sortDependsOnLists)

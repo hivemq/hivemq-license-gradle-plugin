@@ -17,12 +17,12 @@ package com.hivemq.tools.license.gradle.sbom
 
 import com.hivemq.tools.license.gradle.Coordinates
 import com.hivemq.tools.license.gradle.HivemqLicenseExtension
+import com.hivemq.tools.license.gradle.HivemqLicensePlugin.Companion.BOM_TASK_NAME
 import com.hivemq.tools.license.gradle.HivemqLicensePlugin.Companion.SBOM_CATEGORY
 import com.hivemq.tools.license.gradle.HivemqLicensePlugin.Companion.SBOM_CONFIGURATION_NAME
 import com.hivemq.tools.license.gradle.HivemqLicensePlugin.Companion.SBOM_TASK_NAME
 import com.hivemq.tools.license.gradle.HivemqLicensePlugin.Companion.TASK_GROUP
 import com.hivemq.tools.license.gradle.HivemqLicensePlugin.Companion.WRAPPER_CONFIGURATION_PREFIX
-import org.cyclonedx.gradle.CyclonedxDirectTask
 import org.gradle.api.GradleException
 import org.gradle.api.Project
 import org.gradle.api.artifacts.ConfigurationContainer
@@ -47,13 +47,13 @@ internal object SbomWiring {
 
     /**
      * Sets the conventions and registers the task and the variant. The caller sets the BOM and the license inputs of
-     * the returned task, the same way as those of the other license tasks. [bomTask] writes that BOM, and the SBOM
-     * describes the files and the completeness of the configurations it reads.
+     * the returned task, the same way as those of the other license tasks. That BOM is built from the configurations
+     * named by [bomConfigurationNames], and the SBOM describes their files and their completeness.
      */
     fun register(
         project: Project,
         extension: HivemqLicenseExtension,
-        bomTask: TaskProvider<CyclonedxDirectTask>,
+        bomConfigurationNames: Provider<List<String>>,
     ): TaskProvider<GenerateSbomTask> {
         extension.sbomName.convention(project.name)
         extension.sbomTimestamp.convention(
@@ -77,8 +77,7 @@ internal object SbomWiring {
 
         val generateSbom = project.tasks.register(SBOM_TASK_NAME, GenerateSbomTask::class.java) {
             group = TASK_GROUP
-            description =
-                "Writes a reproducible CycloneDX SBOM (<sbomName>.cdx.json) from the cyclonedxDirectBom output."
+            description = "Writes a reproducible CycloneDX SBOM (<sbomName>.cdx.json) from the $BOM_TASK_NAME output."
             // as text, because Gradle 8's configuration cache cannot store an Instant
             timestamp.set(extension.sbomTimestamp.map { it.toString() })
             vcsUrl.set(
@@ -90,9 +89,9 @@ internal object SbomWiring {
             creatorName.set(extension.sbomCreatorName)
             creator.set(extension.sbomCreator)
             artifactFileName.set(extension.sbomArtifactFileName)
-            val bomConfigurationNames = configurationNamesReadBy(bomTask, project.configurations)
-            componentFileNames.set(resolvedComponentFileNames(project, bomConfigurationNames))
-            incompleteReasons.set(incompleteGraphReasons(project, bomConfigurationNames))
+            val namesReadByBomTask = configurationNamesReadBy(bomConfigurationNames, project.configurations)
+            componentFileNames.set(resolvedComponentFileNames(project, namesReadByBomTask))
+            incompleteReasons.set(incompleteGraphReasons(project, namesReadByBomTask))
             outputFile.set(
                 project.layout.buildDirectory.file(extension.sbomName.map { "sbom/${checkSbomName(it)}.cdx.json" })
             )
@@ -121,23 +120,14 @@ internal object SbomWiring {
     }
 
     /**
-     * Names of the configurations [bomTask] builds the BOM from, as CycloneDX picks them: resolvable, matching an
-     * `includeConfigs` pattern (any name when there is none) and no `skipConfigs` one. Looked up lazily, as the
-     * wrappers exist only after evaluation; buildscript configurations of `includeBuildEnvironment` are not inspected.
+     * The [names] of configurations that exist and can be resolved, the ones the BOM task reads, as CycloneDX skips
+     * the others. Looked up lazily, as the wrappers exist only after evaluation.
      */
     private fun configurationNamesReadBy(
-        bomTask: TaskProvider<CyclonedxDirectTask>,
+        names: Provider<List<String>>,
         configurations: ConfigurationContainer,
     ): Provider<List<String>> =
-        bomTask.flatMap { it.includeConfigs }.zip(bomTask.flatMap { it.skipConfigs }) { includes, skips ->
-            // regular expressions that match the whole name, as String.matches does for CycloneDX
-            val included = includes.map(::Regex)
-            val skipped = skips.map(::Regex)
-            configurations.names.filter { name ->
-                (included.isEmpty() || included.any { it.matches(name) }) && skipped.none { it.matches(name) } &&
-                    configurations.getByName(name).isCanBeResolved
-            }
-        }
+        names.map { it.filter { name -> configurations.findByName(name)?.isCanBeResolved == true } }
 
     /**
      * The archive file name of the [Jar] task [taskName], looked up when the value is read: Shadow registers
@@ -212,7 +202,7 @@ internal object SbomWiring {
                     }
                 }
                 .fold(noReasons) { all, reasons -> all.zip(reasons) { left, right -> left + right } }
-                // a configuration and its wrapper are both read when includeConfigs matches both, and say the same
+                // runtimeClasspath and its wrapper are both read when it is also an additional one, and say the same
                 .map { it.distinct() }
         }
     }

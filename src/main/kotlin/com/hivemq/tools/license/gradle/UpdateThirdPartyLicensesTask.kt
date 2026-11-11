@@ -23,8 +23,8 @@ import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 
 /**
- * Reads the CycloneDX `bom.json` file created by the `cyclonedxDirectBom` task and creates `licenses` and
- * `licenses.html` files in the configured [outputDirectory].
+ * Reads the CycloneDX `bom.json` file written by the plugin's BOM task, `generateDependencyBom`, and creates
+ * `licenses` and `licenses.html` files in the configured [outputDirectory].
  */
 @CacheableTask
 abstract class UpdateThirdPartyLicensesTask : LicenseResolvingTask() {
