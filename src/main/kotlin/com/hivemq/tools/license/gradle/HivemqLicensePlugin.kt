@@ -15,6 +15,7 @@
  */
 package com.hivemq.tools.license.gradle
 
+import com.hivemq.tools.license.gradle.sbom.GenerateSbomTask
 import com.hivemq.tools.license.gradle.sbom.SbomWiring
 import org.cyclonedx.gradle.CyclonedxDirectTask
 import org.gradle.api.Plugin
@@ -74,12 +75,14 @@ abstract class HivemqLicensePlugin @Inject constructor(
 
         val provided = providedModules(project)
 
+        // the BOM as a convention, so a task a build script registers with its own BOM keeps it; the sets and maps as
+        // values, so a script's add or put extends the extension's entries instead of discarding a convention
         fun LicenseResolvingTask.readLicensesFromBom() {
-            projectName.set(extension.projectName)
-            dependencyLicense.set(bomJsonOutput)
-            dependencyLicenseTaskPath.set(bomTaskPath)
-            dependencyLicenseTaskOutput.set(bomJsonOutputPath)
-            taskOutcomes.set(bomTaskOutcomes)
+            projectName.convention(extension.projectName)
+            dependencyLicense.convention(bomJsonOutput)
+            dependencyLicenseTaskPath.convention(bomTaskPath)
+            dependencyLicenseTaskOutput.convention(bomJsonOutputPath)
+            taskOutcomes.convention(bomTaskOutcomes)
             usesService(bomTaskOutcomes)
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
             allowedArtifacts.set(extension.allowedArtifacts)
@@ -101,8 +104,9 @@ abstract class HivemqLicensePlugin @Inject constructor(
             outputDirectory.set(extension.thirdPartyLicenseDirectory)
         }
 
-        // the SBOM resolves the licenses like the other license tasks, so a license problem fails it the same way
-        SbomWiring.register(project, extension, bomConfigurationNames).configure {
+        SbomWiring.register(project, extension, bomConfigurationNames)
+        // every SBOM resolves the licenses like the other license tasks, so a license problem fails it the same way
+        project.tasks.withType(GenerateSbomTask::class.java).configureEach {
             readLicensesFromBom()
         }
     }

@@ -240,6 +240,40 @@ dependencies {
 The variant exists only in projects with the `java` plugin. In other projects it would be their only variant with
 attributes, so Gradle would match their consumers against it instead of handing out the `default` configuration.
 
+#### A second SBOM of the same project
+
+A project that ships its jar under a second file name, for example because an image renames it, needs a second SBOM,
+because BSI TR-03183-2 records one file name per component. The plugin configures every `GenerateSbomTask` of the
+project like `generateSbom`: the licence options (`ignoredGroupPrefixes`, `allowedArtifacts`, `overriddenLicenses`) as
+values a task can add to, everything else as a convention that `set(...)` replaces. So a second task sets only what
+differs:
+
+```kotlin
+import com.hivemq.tools.license.gradle.sbom.GenerateSbomTask
+
+val generateInitImageSbom by tasks.registering(GenerateSbomTask::class) {
+    artifactFileName.set("hivemq-platform-operator-init-app.jar")
+}
+```
+
+It writes `build/sbom/<task name>/<sbomName>.cdx.json`: the file keeps the component's name, and the directory keeps
+two tasks from overwriting each other. `sbomElements` carries only the file of `generateSbom`, so a build that hands the
+second SBOM to other projects adds a consumable configuration with a `Category` attribute of its own:
+
+```kotlin
+val initImageSbomElements by configurations.creating {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+    attributes {
+        attribute(Category.CATEGORY_ATTRIBUTE, objects.named("init-image-sbom"))
+    }
+    outgoing.artifact(generateInitImageSbom.flatMap { it.outputFile })
+}
+```
+
+On Gradle 8, which builds the artifacts of every visible configuration as part of `assemble`, the configuration also
+needs `isVisible = false`, or `assemble` writes that SBOM too.
+
 ### Custom License Tasks
 
 You can register additional `UpdateThirdPartyLicensesTask` instances for non-Gradle dependency sources like pnpm:
