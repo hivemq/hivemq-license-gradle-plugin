@@ -17,6 +17,8 @@ package com.hivemq.tools.license.gradle.sbom
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ArrayNode
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.hivemq.tools.license.gradle.Coordinates
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -317,6 +319,18 @@ class SbomEnricherTest {
         val composition = result["compositions"][0]
         assertThat(composition["aggregate"].asText()).isEqualTo("complete")
         assertThat(composition["dependencies"].map { it.asText() })
+            .containsExactly("pkg:maven/com.hivemq/app@1.0.0?project_path=%3A", "pkg:maven/org.example/lib@1.0")
+    }
+
+    @Test
+    fun `declares the dependency graph complete over a dependency target without an entry`() {
+        // CycloneDX writes an entry per node, but a merged document may target a component that has none
+        val input = mapper.readTree(bom()) as ObjectNode
+        (input["dependencies"] as ArrayNode).removeIf { it["ref"].asText() == "pkg:maven/org.example/lib@1.0" }
+
+        val result = enrich(mapper.writeValueAsBytes(input))
+
+        assertThat(result["compositions"][0]["dependencies"].map { it.asText() })
             .containsExactly("pkg:maven/com.hivemq/app@1.0.0?project_path=%3A", "pkg:maven/org.example/lib@1.0")
     }
 
