@@ -476,6 +476,102 @@ class GenerateSbomIntegrationTest {
         assertThat(errors.map { it.message }).isEmpty()
     }
 
+    // --- Conventions ---
+
+    @Test
+    fun `a build script adds to the licence options of a second SBOM task`() {
+        setup(
+            """
+            overriddenLicenses.set(mapOf("com.google.guava:guava" to "MIT"))
+            $fixedTimestamp
+            """.trimIndent()
+        )
+        projectDir.resolve("build.gradle.kts").appendText(
+            "\n" + """
+            tasks.register<com.hivemq.tools.license.gradle.sbom.GenerateSbomTask>("generateOtherSbom") {
+                overriddenLicenses.put("com.google.guava:failureaccess", "MIT")
+            }
+            """.trimIndent()
+        )
+
+        gradleRunner("generateOtherSbom").build()
+
+        // the task's entry and the extension's entry both apply, the put extended the extension's map
+        val sbom = mapper.readTree(projectDir.resolve("build/sbom/generateOtherSbom/sbom-project.cdx.json"))
+        for (name in listOf("guava", "failureaccess")) {
+            val component = sbom["components"].first { it["name"].asText() == name }
+            val concluded = component["licenses"].filter { it["license"]["acknowledgement"].asText() == "concluded" }
+            assertThat(concluded.map { it["license"]["id"].asText() }).describedAs(name).containsExactly("MIT")
+        }
+    }
+
+    @Test
+    fun `a value the build script sets wins over the conventions`() {
+        // registered before the plugin is applied, so the plugin configures the task after the build script does
+        projectDir.resolve("settings.gradle.kts").writeText("""rootProject.name = "sbom-project"""")
+        projectDir.resolve("build.gradle.kts").writeText(
+            """
+            import com.hivemq.tools.license.gradle.HivemqLicenseExtension
+            import com.hivemq.tools.license.gradle.sbom.GenerateSbomTask
+            import java.time.Instant
+
+            plugins {
+                java
+                id("com.hivemq.tools.license") apply false
+            }
+            tasks.register<GenerateSbomTask>("generateOtherSbom") {
+                creatorName.set("Example GmbH")
+                outputFile.set(layout.buildDirectory.file("other.cdx.json"))
+            }
+            apply(plugin = "com.hivemq.tools.license")
+            configure<HivemqLicenseExtension> {
+                thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+                $fixedTimestamp
+            }
+            repositories {
+                mavenCentral()
+            }
+            dependencies {
+                implementation("com.google.guava:guava:33.4.0-jre")
+            }
+            """.trimIndent()
+        )
+
+        val result = gradleRunner("generateOtherSbom").build()
+
+        assertThat(result.task(":generateOtherSbom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(projectDir.resolve("build/sbom/generateOtherSbom")).doesNotExist()
+        val sbom = mapper.readTree(projectDir.resolve("build/other.cdx.json"))
+        assertThat(sbom["metadata"]["manufacturer"]["name"].asText()).isEqualTo("Example GmbH")
+        // what the build script leaves out still comes from the conventions
+        assertThat(sbom["metadata"]["timestamp"].asText()).isEqualTo("2026-01-02T03:04:05Z")
+    }
+
+    @Test
+    fun `applies the conventions to a GenerateSbomTask the build registers`() {
+        setup(fixedTimestamp)
+        projectDir.resolve("build.gradle.kts").appendText(
+            "\n" + """
+            tasks.register<com.hivemq.tools.license.gradle.sbom.GenerateSbomTask>("generateInitImageSbom") {
+                artifactFileName.set("init-app.jar")
+            }
+            """.trimIndent()
+        )
+        // makes the graph incomplete, which an SBOM task without the conventions would declare complete
+        addVendoredJar()
+
+        val result = gradleRunner("generateSbom", "generateInitImageSbom").build()
+
+        assertThat(result.task(":generateInitImageSbom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        // the file keeps the component's name, the directory keeps it apart from the file of generateSbom
+        val initImage = mapper.readTree(projectDir.resolve("build/sbom/generateInitImageSbom/sbom-project.cdx.json"))
+        assertThat(initImage["metadata"]["component"]["properties"].map { it["name"].asText() to it["value"].asText() })
+            .contains("bsi:component:filename" to "init-app.jar")
+        val generateSbom = mapper.readTree(sbom())
+        assertThat(initImage["components"]).isNotEmpty().isEqualTo(generateSbom["components"])
+        assertThat(initImage["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
+    }
+
     // --- Output ---
 
     @Test
