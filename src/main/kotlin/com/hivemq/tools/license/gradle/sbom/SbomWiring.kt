@@ -35,7 +35,6 @@ import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.gradle.api.artifacts.result.UnresolvedDependencyResult
 import org.gradle.api.attributes.Category
 import org.gradle.api.provider.Provider
-import org.gradle.api.tasks.TaskProvider
 import org.gradle.api.tasks.bundling.Jar
 import org.gradle.util.GradleVersion
 
@@ -46,15 +45,15 @@ internal object SbomWiring {
     private val shadowPluginIds = listOf("com.gradleup.shadow", "com.github.johnrengelman.shadow")
 
     /**
-     * Sets the conventions and registers the task and the variant. The caller sets the BOM and the license inputs of
-     * the returned task, the same way as those of the other license tasks. That BOM is built from the configurations
-     * named by [bomConfigurationNames], and the SBOM describes their files and their completeness.
+     * Sets the conventions, also of every [GenerateSbomTask], and registers `generateSbom` and the variant. The caller
+     * sets the BOM and the license inputs of those tasks, the same way as those of the other license tasks. The SBOM
+     * describes the files and the completeness of [bomConfigurationNames], the configurations the BOM is built from.
      */
     fun register(
         project: Project,
         extension: HivemqLicenseExtension,
         bomConfigurationNames: Provider<List<String>>,
-    ): TaskProvider<GenerateSbomTask> {
+    ) {
         extension.sbomName.convention(project.name)
         extension.sbomTimestamp.convention(
             project.providers.of(SbomTimestampSource::class.java) {
@@ -75,26 +74,36 @@ internal object SbomWiring {
             }
         }
 
+        // as text, because Gradle 8's configuration cache cannot store an Instant
+        val timestampText = extension.sbomTimestamp.map { it.toString() }
+        // one value source for every SBOM task of the project, so git runs once and a warning is logged once
+        val projectVcsUrl = project.providers.of(SbomVcsUrlSource::class.java) {
+            parameters.projectDirectory.set(project.layout.projectDirectory)
+            parameters.projectPath.set(project.path)
+        }
+        val namesReadByBomTask = configurationNamesReadBy(bomConfigurationNames, project.configurations)
+        val projectComponentFileNames = resolvedComponentFileNames(project, namesReadByBomTask)
+        val projectIncompleteReasons = incompleteGraphReasons(project, namesReadByBomTask)
+
+        // conventions, so a value the build script sets wins in any order; a second SBOM of the project, such as one
+        // for a renamed copy of the jar, then sets only what differs
+        project.tasks.withType(GenerateSbomTask::class.java).configureEach {
+            timestamp.convention(timestampText)
+            vcsUrl.convention(projectVcsUrl)
+            creatorName.convention(extension.sbomCreatorName)
+            creator.convention(extension.sbomCreator)
+            artifactFileName.convention(extension.sbomArtifactFileName)
+            componentFileNames.convention(projectComponentFileNames)
+            incompleteReasons.convention(projectIncompleteReasons)
+            val taskName = name
+            outputFile.convention(
+                project.layout.buildDirectory.file(extension.sbomName.map { sbomOutputPath(taskName, it) })
+            )
+        }
+
         val generateSbom = project.tasks.register(SBOM_TASK_NAME, GenerateSbomTask::class.java) {
             group = TASK_GROUP
             description = "Writes a reproducible CycloneDX SBOM (<sbomName>.cdx.json) from the $BOM_TASK_NAME output."
-            // as text, because Gradle 8's configuration cache cannot store an Instant
-            timestamp.set(extension.sbomTimestamp.map { it.toString() })
-            vcsUrl.set(
-                project.providers.of(SbomVcsUrlSource::class.java) {
-                    parameters.projectDirectory.set(project.layout.projectDirectory)
-                    parameters.projectPath.set(project.path)
-                }
-            )
-            creatorName.set(extension.sbomCreatorName)
-            creator.set(extension.sbomCreator)
-            artifactFileName.set(extension.sbomArtifactFileName)
-            val namesReadByBomTask = configurationNamesReadBy(bomConfigurationNames, project.configurations)
-            componentFileNames.set(resolvedComponentFileNames(project, namesReadByBomTask))
-            incompleteReasons.set(incompleteGraphReasons(project, namesReadByBomTask))
-            outputFile.set(
-                project.layout.buildDirectory.file(extension.sbomName.map { "sbom/${checkSbomName(it)}.cdx.json" })
-            )
         }
 
         // Without the java plugin, an attributed consumable configuration would switch the project's consumers from
@@ -116,7 +125,6 @@ internal object SbomWiring {
                 outgoing.artifact(generateSbom.flatMap { it.outputFile })
             }
         }
-        return generateSbom
     }
 
     /**
@@ -218,6 +226,12 @@ internal object SbomWiring {
             )
         }
         return name
+    }
+
+    // another SBOM task writes into a directory of its own name, so it cannot overwrite the file of generateSbom
+    private fun sbomOutputPath(taskName: String, sbomName: String): String {
+        val fileName = "${checkSbomName(sbomName)}.cdx.json"
+        return if (taskName == SBOM_TASK_NAME) "sbom/$fileName" else "sbom/$taskName/$fileName"
     }
 
     // file names, sorted and without paths, so the task input depends on neither the machine nor the artifact order
