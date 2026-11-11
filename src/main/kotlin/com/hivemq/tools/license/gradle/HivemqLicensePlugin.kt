@@ -17,7 +17,6 @@ package com.hivemq.tools.license.gradle
 
 import com.hivemq.tools.license.gradle.sbom.SbomWiring
 import org.cyclonedx.gradle.CyclonedxDirectTask
-import org.cyclonedx.gradle.CyclonedxPlugin
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.provider.Provider
@@ -32,26 +31,6 @@ abstract class HivemqLicensePlugin @Inject constructor(
         val extension = project.extensions.create("hivemqLicense", HivemqLicenseExtensionImpl::class.java)
         extension.projectName.convention(project.name)
 
-        project.plugins.apply(CyclonedxPlugin::class.java)
-
-        // The CycloneDX plugin creates a consumable "cyclonedxDirectBom" configuration for aggregate BOM collection.
-        // We don't use the aggregate BOM, and leaving it consumable causes issues: other plugins (e.g. Shadow) and
-        // the Gradle Tooling API (used by Buildship / Eclipse JDT.LS) can trigger variant observation that consumes
-        // this configuration before CycloneDX's deferred artifact wiring runs, resulting in
-        // "Cannot mutate the artifacts of configuration" errors.
-        //
-        // CycloneDX 3.x auto-propagates to subprojects via a per-project plugin class that differs from the root
-        // CyclonedxPlugin, so a plugins.withType(CyclonedxPlugin) hook only catches the root. Watch the
-        // configurations container in every project instead — configureEach fires synchronously when the
-        // configuration is added, before any model builder or variant resolution can observe it.
-        project.allprojects {
-            configurations.configureEach {
-                if (name == "cyclonedxDirectBom") {
-                    isCanBeConsumed = false
-                }
-            }
-        }
-
         project.afterEvaluate {
             for (configName in extension.additionalConfigurations.get()) {
                 project.configurations.create("$WRAPPER_CONFIGURATION_PREFIX$configName") {
@@ -62,34 +41,40 @@ abstract class HivemqLicensePlugin @Inject constructor(
             }
         }
 
-        val cyclonedxDirectBom = project.tasks.named(BOM_TASK_NAME, CyclonedxDirectTask::class.java)
-        cyclonedxDirectBom.configure {
+        val bomConfigurationNames = bomConfigurationNames(extension)
+        val bomTask = project.tasks.register(BOM_TASK_NAME, CyclonedxDirectTask::class.java) {
+            description =
+                "Writes the CycloneDX BOM of the resolved dependencies that the license tasks and generateSbom read."
+            jsonOutput.convention(project.layout.buildDirectory.file("license/bom.json"))
             projectType.set(org.cyclonedx.model.Component.Type.APPLICATION)
-            includeConfigs.set(bomConfigurationNames(extension))
+            // CycloneDX matches includeConfigs as regular expressions, so escape the names to read them literally
+            includeConfigs.set(bomConfigurationNames.map { names -> names.map { Regex.escape(it) } })
+            // generateSbom describes the files of exactly these configurations, so a build script cannot pick others
+            includeConfigs.disallowChanges()
+            skipConfigs.disallowChanges()
         }
 
-        val cyclonedxJsonOutput = cyclonedxDirectBom.flatMap { it.jsonOutput }
+        val bomJsonOutput = bomTask.flatMap { it.jsonOutput }
         // The location alone carries no dependency on the task, so it can be read even when a consumer pointed
         // dependencyLicense elsewhere and the BOM task does not run.
-        val cyclonedxJsonOutputPath =
-            cyclonedxDirectBom.flatMap { it.jsonOutput.locationOnly }.map { it.asFile.absolutePath }
+        val bomJsonOutputPath = bomTask.flatMap { it.jsonOutput.locationOnly }.map { it.asFile.absolutePath }
         // the task's path in the whole build tree, which is what task finish events carry
-        val bomTaskPath = "${project.buildTreePath.trimEnd(':')}:${cyclonedxDirectBom.name}"
+        val bomTaskPath = "${project.buildTreePath.trimEnd(':')}:${bomTask.name}"
 
         // The plugin is applied per project; Gradle registers the service and the listener once per provider.
         val bomTaskOutcomes = project.gradle.sharedServices
             .registerIfAbsent(BomTaskOutcomeService.NAME, BomTaskOutcomeService::class.java) {}
         buildEventsListenerRegistry.onTaskCompletion(bomTaskOutcomes)
-        cyclonedxDirectBom.configure {
+        bomTask.configure {
             usesService(bomTaskOutcomes)
             doFirst { bomTaskOutcomes.get().recordExecuted(bomTaskPath) }
         }
 
         fun LicenseResolvingTask.readLicensesFromBom() {
             projectName.set(extension.projectName)
-            dependencyLicense.set(cyclonedxJsonOutput)
+            dependencyLicense.set(bomJsonOutput)
             dependencyLicenseTaskPath.set(bomTaskPath)
-            dependencyLicenseTaskOutput.set(cyclonedxJsonOutputPath)
+            dependencyLicenseTaskOutput.set(bomJsonOutputPath)
             taskOutcomes.set(bomTaskOutcomes)
             usesService(bomTaskOutcomes)
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
@@ -112,15 +97,15 @@ abstract class HivemqLicensePlugin @Inject constructor(
         }
 
         // the SBOM resolves the licenses like the other license tasks, so a license problem fails it the same way
-        SbomWiring.register(project, extension, cyclonedxDirectBom).configure {
+        SbomWiring.register(project, extension, bomConfigurationNames).configure {
             readLicensesFromBom()
         }
     }
 
     /**
-     * Names of the configurations the BOM is built from, unless a build script sets the `includeConfigs` of
-     * `cyclonedxDirectBom` itself: `runtimeClasspath`, then the wrapper of each additional configuration. The wrappers
-     * are only created after evaluation, so this is a provider of names, not of configurations.
+     * Names of the configurations the BOM is built from: `runtimeClasspath`, then the wrapper of each additional
+     * configuration. The wrappers are only created after evaluation, so this is a provider of names, not of
+     * configurations.
      */
     private fun bomConfigurationNames(extension: HivemqLicenseExtension): Provider<List<String>> =
         extension.additionalConfigurations.map { additionalConfigs ->
@@ -128,8 +113,8 @@ abstract class HivemqLicensePlugin @Inject constructor(
         }
 
     companion object {
-        /** The CycloneDX task whose BOM the license tasks read. */
-        const val BOM_TASK_NAME = "cyclonedxDirectBom"
+        /** The CycloneDX task that writes the BOM the license tasks and the SBOM read, registered without a group. */
+        const val BOM_TASK_NAME = "generateDependencyBom"
 
         /** The task that writes the reproducible SBOM and the variant that carries it. */
         const val SBOM_TASK_NAME = "generateSbom"

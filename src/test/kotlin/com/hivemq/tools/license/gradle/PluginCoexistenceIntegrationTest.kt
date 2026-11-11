@@ -25,13 +25,8 @@ import java.io.File
 /**
  * Verifies that this plugin coexists with other Gradle plugins commonly applied to the same project, and that a
  * command-line build still produces the license report without error. The combinations exercised are the Shadow
- * plugin, the OCI plugin, and `maven-publish`, alone and combined.
- *
- * These are command-line coexistence checks. They do not cover the Gradle Tooling API import race that the
- * `cyclonedxDirectBom` non-consumable workaround guards against: that failure ("Cannot mutate the artifacts of
- * configuration ... after the configuration was consumed as a variant") only surfaces during IDE project imports
- * (Buildship, Eclipse JDT.LS, IntelliJ) and is not reproducible from a headless command-line or single Tooling API
- * model fetch.
+ * plugin, the OCI plugin, and `maven-publish`, alone and combined; none of them may make the build fail with "Cannot
+ * mutate the artifacts of configuration".
  */
 class PluginCoexistenceIntegrationTest {
 
@@ -96,7 +91,7 @@ class PluginCoexistenceIntegrationTest {
 
         val result = gradleRunner("updateThirdPartyLicenses", "shadowJar").build()
 
-        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.task(":shadowJar")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).doesNotContain("Cannot mutate the artifacts of configuration")
@@ -131,7 +126,7 @@ class PluginCoexistenceIntegrationTest {
 
         val result = gradleRunner("updateThirdPartyLicenses").build()
 
-        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).doesNotContain("Cannot mutate the artifacts of configuration")
 
@@ -179,7 +174,7 @@ class PluginCoexistenceIntegrationTest {
             "updateThirdPartyLicenses",
         ).build()
 
-        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.task(":publishMavenPublicationToMavenRepository")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).doesNotContain("Cannot mutate the artifacts of configuration")
@@ -229,7 +224,7 @@ class PluginCoexistenceIntegrationTest {
             "updateThirdPartyLicenses",
         ).build()
 
-        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.task(":shadowJar")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.task(":publishMavenPublicationToMavenRepository")?.outcome).isEqualTo(TaskOutcome.SUCCESS)

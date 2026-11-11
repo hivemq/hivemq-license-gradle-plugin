@@ -38,8 +38,8 @@ import java.util.concurrent.TimeoutException
  * up to date, and Gradle delivers those events asynchronously, "some time soon" after the task completed. [originOf]
  * therefore waits [eventWait] for the event and gives up without an origin if it does not arrive.
  *
- * Tasks are keyed by their path in the whole build tree, since every build of a composite has its own
- * `:cyclonedxDirectBom` and the finish events of all of them reach every listener.
+ * Tasks are keyed by their path in the whole build tree, since every build of a composite has its own BOM task
+ * `:generateDependencyBom` and the finish events of all of them reach every listener.
  */
 abstract class BomTaskOutcomeService : BuildService<BuildServiceParameters.None>, OperationCompletionListener {
 

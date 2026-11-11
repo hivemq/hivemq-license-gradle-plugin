@@ -97,24 +97,6 @@ class GenerateSbomIntegrationTest {
         )
     }
 
-    /**
-     * Registers `printComponentFileNames`, which prints the `componentFileNames` input of `generateSbom`: the files of
-     * modules the BOM does not hold show nowhere else.
-     */
-    private fun addComponentFileNamesPrinter() {
-        projectDir.resolve("build.gradle.kts").appendText(
-            "\n" + """
-            tasks.register("printComponentFileNames") {
-                val sbomTask = tasks.named<com.hivemq.tools.license.gradle.sbom.GenerateSbomTask>("generateSbom")
-                val fileNames = sbomTask.flatMap { it.componentFileNames }
-                doLast {
-                    println("componentFileNames=" + fileNames.get())
-                }
-            }
-            """.trimIndent()
-        )
-    }
-
     private val fixedTimestamp = """sbomTimestamp.set(Instant.parse("2026-01-02T03:04:05Z"))"""
 
     private fun sbom() = projectDir.resolve("build/sbom/sbom-project.cdx.json")
@@ -223,7 +205,7 @@ class GenerateSbomIntegrationTest {
         val result = gradleRunner("generateSbom").build()
 
         // CycloneDX resolves leniently: it leaves the module out and only logs it
-        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.task(":generateSbom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         val sbom = mapper.readTree(sbom())
         assertThat(sbom["components"].map { it["name"].asText() }).contains("guava").doesNotContain("does-not-exist")
@@ -336,132 +318,6 @@ class GenerateSbomIntegrationTest {
     }
 
     @Test
-    fun `follows includeConfigs of cyclonedxDirectBom by the whole name of a configuration`() {
-        setup(fixedTimestamp)
-        // a pattern has to match the whole name, as for CycloneDX, so Classpath matches no configuration at all
-        projectDir.resolve("build.gradle.kts").appendText(
-            "\n" + """
-            tasks.named<org.cyclonedx.gradle.CyclonedxDirectTask>("cyclonedxDirectBom") {
-                includeConfigs.set(listOf("Classpath"))
-            }
-            """.trimIndent()
-        )
-        addComponentFileNamesPrinter()
-
-        val result = gradleRunner("generateSbom", "printComponentFileNames").build()
-
-        assertThat(result.output).contains("componentFileNames={}")
-        val components = mapper.readTree(sbom()).path("components")
-        assertThat(components.flatMap { it.path("properties") }.map { it["name"].asText() })
-            .doesNotContain("bsi:component:filename")
-    }
-
-    @Test
-    fun `follows includeConfigs of cyclonedxDirectBom for the files and the completeness`() {
-        setup(fixedTimestamp, externalDependencies = false)
-        // a build that picks the configurations of the BOM itself, instead of runtimeClasspath and the additional ones
-        projectDir.resolve("build.gradle.kts").appendText(
-            "\n" + """
-            val custom by configurations.creating
-            tasks.named<org.cyclonedx.gradle.CyclonedxDirectTask>("cyclonedxDirectBom") {
-                includeConfigs.set(listOf("custom"))
-            }
-            repositories {
-                mavenCentral()
-            }
-            dependencies {
-                custom("org.slf4j:slf4j-api:2.0.16")
-            }
-            """.trimIndent()
-        )
-        addVendoredJar(configuration = "custom")
-
-        val result = gradleRunner("generateSbom").build()
-
-        val sbom = mapper.readTree(sbom())
-        val slf4j = sbom["components"].first { it["name"].asText() == "slf4j-api" }
-        assertThat(slf4j["properties"].map { it["name"].asText() to it["value"].asText() })
-            .contains("bsi:component:filename" to "slf4j-api-2.0.16.jar")
-        assertThat(sbom["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
-        assertThat(result.output).contains(
-            "The SBOM of project ':' declares its dependency graph incomplete: custom has file dependencies: " +
-                "vendored.jar"
-        )
-    }
-
-    @Test
-    fun `follows includeConfigs of cyclonedxDirectBom only for configurations that can be resolved`() {
-        setup(fixedTimestamp)
-        // the pattern also matches runtimeElements and runtimeOnly, which cannot be resolved, and CycloneDX skips them
-        projectDir.resolve("build.gradle.kts").appendText(
-            "\n" + """
-            tasks.named<org.cyclonedx.gradle.CyclonedxDirectTask>("cyclonedxDirectBom") {
-                includeConfigs.set(listOf("runtime.*"))
-            }
-            """.trimIndent()
-        )
-
-        val result = gradleRunner("generateSbom").build()
-
-        assertThat(result.task(":generateSbom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
-        val guava = mapper.readTree(sbom())["components"].first { it["name"].asText() == "guava" }
-        assertThat(guava["properties"].map { it["name"].asText() to it["value"].asText() })
-            .contains("bsi:component:filename" to "guava-33.4.0-jre.jar")
-    }
-
-    @Test
-    fun `follows includeConfigs of cyclonedxDirectBom when it is empty for every resolvable configuration`() {
-        setup("additionalConfigurations.add(\"extra\")\n$fixedTimestamp")
-        // the additional configuration is read as itself and through the wrapper that the plugin resolves in its place
-        projectDir.resolve("build.gradle.kts").appendText(
-            "\n" + """
-            val extra by configurations.creating
-            tasks.named<org.cyclonedx.gradle.CyclonedxDirectTask>("cyclonedxDirectBom") {
-                includeConfigs.set(emptyList())
-            }
-            """.trimIndent()
-        )
-        addVendoredJar(configuration = "extra")
-
-        val result = gradleRunner("generateSbom").build()
-
-        val guava = mapper.readTree(sbom())["components"].first { it["name"].asText() == "guava" }
-        assertThat(guava["properties"].map { it["name"].asText() to it["value"].asText() })
-            .contains("bsi:component:filename" to "guava-33.4.0-jre.jar")
-        assertThat(result.output).containsOnlyOnce("extra has file dependencies: vendored.jar")
-    }
-
-    @Test
-    fun `follows skipConfigs of cyclonedxDirectBom for the files and the completeness`() {
-        setup(fixedTimestamp)
-        addVendoredJar()
-        // the BOM leaves out runtimeClasspath with its modules and its file dependency, and reads custom alone
-        projectDir.resolve("build.gradle.kts").appendText(
-            "\n" + """
-            val custom by configurations.creating
-            tasks.named<org.cyclonedx.gradle.CyclonedxDirectTask>("cyclonedxDirectBom") {
-                includeConfigs.set(listOf("runtimeClasspath", "custom"))
-                skipConfigs.set(listOf("runtimeClasspath"))
-            }
-            dependencies {
-                custom("org.slf4j:slf4j-api:2.0.16")
-            }
-            """.trimIndent()
-        )
-        addComponentFileNamesPrinter()
-
-        val result = gradleRunner("generateSbom", "printComponentFileNames").build()
-
-        // CycloneDX leaves the modules of runtimeClasspath out of the BOM, so only the task input shows their files
-        assertThat(result.output)
-            .contains("componentFileNames={org.slf4j:slf4j-api:2.0.16=slf4j-api-2.0.16.jar}")
-            .doesNotContain("declares its dependency graph incomplete")
-        val sbom = mapper.readTree(sbom())
-        assertThat(sbom["components"].map { it["name"].asText() }).containsExactly("slf4j-api")
-        assertThat(sbom["compositions"][0]["aggregate"].asText()).isEqualTo("complete")
-    }
-
-    @Test
     fun `keeps the file names and the incomplete graph when the configuration cache is reused`() {
         setup(fixedTimestamp)
         addVendoredJar()
@@ -485,6 +341,17 @@ class GenerateSbomIntegrationTest {
         assertThat(guava["properties"].map { it["name"].asText() to it["value"].asText() })
             .contains("bsi:component:filename" to "guava-33.4.0-jre.jar")
         assertThat(sbom["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
+    }
+
+    @Test
+    fun `names a file dependency once when runtimeClasspath is an additional configuration too`() {
+        setup("additionalConfigurations.add(\"runtimeClasspath\")\n$fixedTimestamp", externalDependencies = false)
+        addVendoredJar()
+
+        // the BOM task reads runtimeClasspath and the wrapper the plugin resolves in its place, which find the same jar
+        val result = gradleRunner("generateSbom").build()
+
+        assertThat(result.output).containsOnlyOnce("runtimeClasspath has file dependencies: vendored.jar")
     }
 
     @Test
@@ -564,6 +431,28 @@ class GenerateSbomIntegrationTest {
     }
 
     @Test
+    fun `reads an additional configuration whose name contains a regular expression metacharacter`() {
+        setup("additionalConfigurations.add(\"extra+libs\")\n$fixedTimestamp", externalDependencies = false)
+        projectDir.resolve("build.gradle.kts").appendText(
+            """
+
+            repositories {
+                mavenCentral()
+            }
+            configurations.create("extra+libs")
+            dependencies {
+                "extra+libs"("org.slf4j:slf4j-api:2.0.16")
+            }
+            """.trimIndent()
+        )
+
+        gradleRunner("generateSbom").build()
+
+        assertThat(projectDir.resolve("build/license/bom.json").readText()).contains("slf4j-api")
+        assertThat(sbom().readText()).contains("slf4j-api")
+    }
+
+    @Test
     fun `sbomCreator and sbomArtifactFileName override the defaults`() {
         setup("sbomCreator.set(\"security@example.com\")\nsbomArtifactFileName.set(\"hivemq.jar\")\n$fixedTimestamp")
 
@@ -618,7 +507,7 @@ class GenerateSbomIntegrationTest {
 
         val result = gradleRunner("generateSbom").build()
 
-        assertThat(result.task(":cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.task(":generateSbom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(sbom().readText())
             .contains(""""timestamp" : "2026-01-02T03:04:05Z"""")
@@ -699,7 +588,7 @@ class GenerateSbomIntegrationTest {
         gradleRunner("generateSbom").withEnvironment(GitTestRepository.isolatedEnv(projectDir, ci)).build()
 
         // CycloneDX wrote both references from the environment; on GitHub Actions its run URL wins over BUILD_URL
-        assertThat(projectDir.resolve("build/reports/cyclonedx-direct/bom.json").readText())
+        assertThat(projectDir.resolve("build/license/bom.json").readText())
             .contains("build-system")
             .contains("other/wrong")
         assertThat(sbom().readText())
@@ -729,7 +618,7 @@ class GenerateSbomIntegrationTest {
             .build()
 
         // CycloneDX wrote a different serial number, timestamp and references, the normalized files are the same
-        val bom = "build/reports/cyclonedx-direct/bom.json"
+        val bom = "build/license/bom.json"
         assertThat(otherMachine.resolve(bom).readBytes()).isNotEqualTo(projectDir.resolve(bom).readBytes())
         assertThat(otherMachine.resolve("build/sbom/sbom-project.cdx.json").readBytes()).isEqualTo(sbom().readBytes())
     }
@@ -1013,6 +902,6 @@ class GenerateSbomIntegrationTest {
 
         assertThat(result.task(":app:compileJava")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.task(":lib:generateSbom")).isNull()
-        assertThat(result.task(":lib:cyclonedxDirectBom")).isNull()
+        assertThat(result.task(":lib:generateDependencyBom")).isNull()
     }
 }

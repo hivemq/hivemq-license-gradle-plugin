@@ -24,11 +24,8 @@ import java.io.File
 
 /**
  * Covers a multi-project build where the plugin is applied independently in several subprojects rather than once at
- * the root.
- *
- * On apply the plugin runs a `project.allprojects { configurations.configureEach { ... } }` sweep. With per-subproject
- * application every applying subproject reaches across the whole build, so this test verifies that multiple
- * applications coexist and every `updateThirdPartyLicenses` task runs without cross-project configuration errors.
+ * the root: every subproject gets a BOM task of its own, and every `updateThirdPartyLicenses` task runs without
+ * cross-project configuration errors.
  */
 class MultiProjectApplyIntegrationTest {
 
@@ -77,8 +74,8 @@ class MultiProjectApplyIntegrationTest {
 
         val result = gradleRunner("updateThirdPartyLicenses").build()
 
-        assertThat(result.task(":module-a:cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
-        assertThat(result.task(":module-b:cyclonedxDirectBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":module-a:generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":module-b:generateDependencyBom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.task(":module-a:updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.task(":module-b:updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.output).doesNotContain("Cannot mutate the artifacts of configuration")
