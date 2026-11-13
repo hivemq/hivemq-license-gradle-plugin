@@ -27,6 +27,7 @@ abstract class HivemqLicensePlugin @Inject constructor(
     private val buildEventsListenerRegistry: BuildEventsListenerRegistry,
 ) : Plugin<Project> {
 
+    @Suppress("UnstableApiUsage")
     override fun apply(project: Project) {
         val extension = project.extensions.create("hivemqLicense", HivemqLicenseExtensionImpl::class.java)
         extension.projectName.convention(project.name)
