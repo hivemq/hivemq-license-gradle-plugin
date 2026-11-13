@@ -24,8 +24,20 @@ import java.time.Instant
 interface HivemqLicenseExtension {
     val projectName: Property<String>
     val thirdPartyLicenseDirectory: DirectoryProperty
+    /**
+     * Group prefixes of the build's own modules, `com.hivemq` by default; a package without a group, from a pnpm
+     * report, is matched by its name, `@hivemq/` for example. A module under them is listed when [allowedArtifacts]
+     * matches it and left out otherwise, its dependencies attached to the dependant; one that may be public (declares
+     * a license, or has incomplete Maven metadata) fails the build unless listed; pnpm packages and projects never do.
+     */
     val ignoredGroupPrefixes: SetProperty<String>
+
+    /**
+     * Own modules listed like third-party libraries, as `group:name` or a package name, where `*` matches anything;
+     * HiveMQ's libraries on Maven Central by default. Add to the set, `set` replaces the defaults.
+     */
     val allowedArtifacts: SetProperty<String>
+
     val additionalConfigurations: SetProperty<String>
     val overriddenLicenses: MapProperty<String, String>
 

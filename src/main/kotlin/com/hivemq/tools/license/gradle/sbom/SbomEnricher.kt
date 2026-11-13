@@ -20,6 +20,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ArrayNode
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.hivemq.tools.license.gradle.Coordinates
+import com.hivemq.tools.license.gradle.OwnModules
 import java.math.BigInteger
 import java.net.URI
 import java.net.URISyntaxException
@@ -32,9 +33,6 @@ import java.net.URISyntaxException
 internal object SbomEnricher {
 
     private val mapper = ObjectMapper()
-
-    // only on the purl of a Gradle project, included builds too, so a composite of our repositories gets our creator
-    private val projectPath = Regex("[?&]project_path=")
 
     private val mailto = Regex("^mailto:", RegexOption.IGNORE_CASE)
 
@@ -70,18 +68,23 @@ internal object SbomEnricher {
         requireSpecVersion(root)
         requireCreator(details.creator)
         enrichMetadata(root, details)
-        (root.get("components") as? ArrayNode)?.forEach { node ->
-            val component = node as? ObjectNode ?: return@forEach
+        for (component in BomFilter.components(root)) {
             // with the version, because the BOM can hold a module in two versions, each with its own file and license
             val coordinates = coordinates(component).toString()
-            details.componentFileNames[coordinates]?.let { describeFile(component, it) }
+            // an identified component ships no file with this artifact, whatever the build resolved for its coordinates
+            if (!isIdentified(component, details)) {
+                details.componentFileNames[coordinates]?.let { describeFile(component, it) }
+            }
             addCreator(component, details)
             addSourceDistribution(component)
             acknowledgeLicenses(component, details.concludedLicenses[coordinates].orEmpty())
         }
-        declareCompleteness(root, details.incompleteReasons)
+        declareCompleteness(root, details.incompleteReasons, details.identifiedComponents)
         return root
     }
+
+    private fun isIdentified(component: ObjectNode, details: SbomDetails) =
+        BomFilter.refOf(component)?.let { it in details.identifiedComponents } == true
 
     // the BOM task can be set to write an older spec that rejects these fields; a new major may rename or drop them
     private fun requireSpecVersion(root: ObjectNode) {
@@ -205,9 +208,9 @@ internal object SbomEnricher {
         component.putObject("manufacturer").putArray("url").add(url)
     }
 
-    private fun isProjectOfThisBuild(component: ObjectNode) = listOf("purl", "bom-ref").any { name ->
-        component.get(name)?.asText()?.let(projectPath::containsMatchIn) == true
-    }
+    // a project of this build or of an included one, so a composite of our repositories gets our creator
+    private fun isProjectOfThisBuild(component: ObjectNode) =
+        OwnModules.isProjectComponent(component.get("purl")?.asText(), component.get("bom-ref")?.asText())
 
     private fun addSourceDistribution(component: ObjectNode) {
         val references = component.get("externalReferences") as? ArrayNode ?: return
@@ -263,8 +266,9 @@ internal object SbomEnricher {
         }
     }
 
-    // BSI TR-03183-2 wants completeness stated truthfully, so any reason the build reported makes the graph incomplete
-    private fun declareCompleteness(root: ObjectNode, incompleteReasons: List<String>) {
+    // BSI TR-03183-2 wants completeness stated truthfully: any reason the build reported makes the graph incomplete,
+    // and an identified component, whose dependencies the host's SBOM describes, is incomplete here in any case
+    private fun declareCompleteness(root: ObjectNode, incompleteReasons: List<String>, identified: Set<String>) {
         val dependencies = root.get("dependencies") as? ArrayNode ?: return
         // only text, each once, because the schema wants unique strings; sorted, so the list does not depend on the
         // order of the entries
@@ -275,9 +279,14 @@ internal object SbomEnricher {
         if (refs.isEmpty()) return
         val compositions = root.arrayOrNew("compositions") ?: return
         compositions.removeAll()
-        val aggregate = if (incompleteReasons.isEmpty()) "complete" else "incomplete"
-        val composition = compositions.addObject().put("aggregate", aggregate)
-        val list = composition.putArray("dependencies")
+        if (incompleteReasons.isNotEmpty()) return compositions.addComposition("incomplete", refs)
+        val (identifiedRefs, describedRefs) = refs.partition { it in identified }
+        if (describedRefs.isNotEmpty()) compositions.addComposition("complete", describedRefs)
+        if (identifiedRefs.isNotEmpty()) compositions.addComposition("incomplete", identifiedRefs)
+    }
+
+    private fun ArrayNode.addComposition(aggregate: String, refs: List<String>) {
+        val list = addObject().put("aggregate", aggregate).putArray("dependencies")
         refs.forEach(list::add)
     }
 

@@ -113,6 +113,59 @@ class HivemqLicensePluginTest {
     }
 
     @Test
+    fun `a build script cannot turn off the metadata lookup of generateDependencyBom`() {
+        setup(
+            """
+            tasks.named<org.cyclonedx.gradle.CyclonedxDirectTask>("generateDependencyBom") {
+                includeMetadataResolution.set(false)
+            }
+            """.trimIndent()
+        )
+
+        val result = gradleRunner("generateDependencyBom").buildAndFail()
+
+        // without the lookup no component would carry a license, and an unlisted public module would pass as internal
+        assertThat(result.output).contains(
+            "The value for task ':generateDependencyBom' property 'includeMetadataResolution' cannot be changed any " +
+                "further"
+        )
+    }
+
+    @Test
+    fun `an action registered before the plugin cannot change the BOM settings the plugin owns`() {
+        projectDir.resolve("settings.gradle.kts").writeText("""rootProject.name = "test-project"""")
+        projectDir.resolve("build.gradle.kts").writeText(
+            """
+            plugins {
+                java
+                id("com.hivemq.tools.license") apply false
+            }
+            // runs before the plugin configures the task, whose values must win over these
+            tasks.withType<org.cyclonedx.gradle.CyclonedxDirectTask>().configureEach {
+                skipConfigs.set(listOf("runtimeClasspath"))
+                includeMetadataResolution.set(false)
+            }
+            apply(plugin = "com.hivemq.tools.license")
+            repositories {
+                maven { url = uri("repo") }
+            }
+            dependencies {
+                implementation("com.example:lib:1.0")
+            }
+            """.trimIndent()
+        )
+        FixtureRepository.module(projectDir.resolve("repo"), "lib", "1.0", license = "MIT License")
+
+        gradleRunner("generateDependencyBom").build()
+
+        // the configuration is read, and the lookup gives the component the license its POM declares
+        assertThat(projectDir.resolve("build/license/bom.json").readText())
+            .contains(""""name" : "lib"""")
+            .contains(""""licenses" : [""")
+            .contains("MIT")
+    }
+
+    @Test
     fun `generateDependencyBom writes only the JSON BOM into the license build directory`() {
         setup()
 
@@ -144,7 +197,10 @@ class HivemqLicensePluginTest {
         assertThat(result.output)
             .contains("projectName=test-project")
             .contains("ignoredGroupPrefixes=[com.hivemq]")
-            .contains("allowedArtifacts=[com.hivemq:hivemq-mqtt-client]")
+            .contains("allowedArtifacts=[com.hivemq:")
+            .contains("com.hivemq:hivemq-amazon-kinesis-extension-customization-sdk, ")
+            .contains("com.hivemq:hivemq-extension-sdk, ")
+            .contains("com.hivemq:hivemq-mqtt-client, ")
     }
 
     @Test
