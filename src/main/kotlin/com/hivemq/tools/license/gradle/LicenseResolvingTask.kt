@@ -53,16 +53,21 @@ abstract class LicenseResolvingTask : DefaultTask() {
     @get:Internal
     abstract val taskOutcomes: Property<BomTaskOutcomeService>
 
+    /** Group prefixes of the build's own modules: listed when in [allowedArtifacts], left out otherwise. */
     @get:Input
     abstract val ignoredGroupPrefixes: SetProperty<String>
 
+    /** Own modules listed like third-party libraries, `group:name` or a package name, `*` matching anything. */
     @get:Input
     abstract val allowedArtifacts: SetProperty<String>
 
     @get:Input
     abstract val overriddenLicenses: MapProperty<String, String>
 
-    /** `group:name` of the modules the host provides at runtime; left out of the report, the check and the SBOM. */
+    /**
+     * `group:name` of the modules the host provides at runtime: left out of the report and the check unless public;
+     * the SBOM keeps the first one on each path, identified only.
+     */
     @get:Input
     abstract val providedModules: SetProperty<String>
 

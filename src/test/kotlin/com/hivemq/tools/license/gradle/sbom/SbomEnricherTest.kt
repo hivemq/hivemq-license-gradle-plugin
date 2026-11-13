@@ -98,6 +98,30 @@ class SbomEnricherTest {
         assertThat(result["metadata"]["manufacturer"]["name"].asText()).isEqualTo("HiveMQ GmbH")
     }
 
+    @Test
+    fun `enriches a component nested in another one like a top-level one`() {
+        val nested = """
+            {
+              "type": "library", "bom-ref": "pkg:maven/org.example/outer@1.0",
+              "group": "org.example", "name": "outer", "version": "1.0",
+              "licenses": [ { "license": { "id": "Apache-2.0" } } ],
+              "components": [
+                {
+                  "type": "library", "bom-ref": "pkg:maven/org.example/lib@1.0",
+                  "group": "org.example", "name": "lib", "version": "1.0",
+                  "licenses": [ { "license": { "id": "Apache-2.0" } } ]
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val lib = enrich(bom(components = nested)).component("outer")["components"].single()
+
+        assertThat(lib.property("bsi:component:filename")).isEqualTo("lib-1.0.jar")
+        assertThat(lib["licenses"].map { it["license"]["acknowledgement"].asText() })
+            .containsExactly("declared", "concluded")
+    }
+
     @ParameterizedTest
     @ValueSource(strings = ["{}", "garbage"])
     fun `rejects a BOM that is followed by more content`(trailing: String) {
@@ -311,6 +335,20 @@ class SbomEnricherTest {
     // --- Dependencies ---
 
     @Test
+    fun `declares everything incomplete when the build reports a gap, identified components included`() {
+        val lib = "pkg:maven/org.example/lib@1.0"
+        val result = enrich(
+            with = details.copy(incompleteReasons = listOf(FILE_DEPENDENCY), identifiedComponents = setOf(lib))
+        )
+
+        // one composition says it all, a second one with the same aggregate would add nothing
+        assertThat(result["compositions"]).hasSize(1)
+        assertThat(result["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
+        assertThat(result["compositions"][0]["dependencies"].map { it.asText() })
+            .containsExactly("pkg:maven/com.hivemq/app@1.0.0?project_path=%3A", lib)
+    }
+
+    @Test
     fun `declares the dependency graph complete`() {
         val result = enrich()
 
@@ -328,6 +366,20 @@ class SbomEnricherTest {
         assertThat(composition["aggregate"].asText()).isEqualTo("incomplete")
         assertThat(composition["dependencies"].map { it.asText() })
             .containsExactly("pkg:maven/com.hivemq/app@1.0.0?project_path=%3A", "pkg:maven/org.example/lib@1.0")
+    }
+
+    @Test
+    fun `declares the identified components incomplete in a composition of their own`() {
+        val lib = "pkg:maven/org.example/lib@1.0"
+
+        val result = enrich(with = details.copy(identifiedComponents = setOf(lib)))
+
+        // an identified component depends on nothing here because the host's SBOM describes it, not because it has
+        // no dependencies, so the graph is complete for the others only
+        assertThat(result["compositions"].map { it["aggregate"].asText() }).containsExactly("complete", "incomplete")
+        assertThat(result["compositions"][0]["dependencies"].map { it.asText() })
+            .containsExactly("pkg:maven/com.hivemq/app@1.0.0?project_path=%3A")
+        assertThat(result["compositions"][1]["dependencies"].map { it.asText() }).containsExactly(lib)
     }
 
     @Test
@@ -393,6 +445,16 @@ class SbomEnricherTest {
 
         assertThat(component.property("bsi:component:filename")).isEqualTo("app-1.0.0.jar")
         assertThat(component.property("bsi:component:executable")).isEqualTo("executable")
+    }
+
+    @Test
+    fun `gives an identified component no file description, whatever the build resolved for its coordinates`() {
+        val identified = details.copy(identifiedComponents = setOf("pkg:maven/org.example/lib@1.0"))
+
+        val lib = enrich(with = identified).component("lib")
+
+        assertThat(lib.property("bsi:component:filename")).isNull()
+        assertThat(lib.property("bsi:component:executable")).isNull()
     }
 
     @Test
@@ -631,6 +693,16 @@ class SbomEnricherTest {
     }
 
     @Test
+    fun `is idempotent with identified components`() {
+        val with = details.copy(identifiedComponents = setOf("pkg:maven/org.example/lib@1.0"))
+        val once = SbomEnricher.enrich(BomJson.read(bom()), with)
+
+        val twice = SbomEnricher.enrich(once.deepCopy(), with)
+
+        assertThat(twice.toString()).isEqualTo(once.toString())
+    }
+
+    @Test
     fun `writes a document that is valid for the spec version it declares`() {
         val cddl = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to listOf("CDDL-1.1")))
         val publicDomain = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to listOf("Public Domain")))
@@ -641,6 +713,8 @@ class SbomEnricherTest {
             "tagged email creator" to (bom() to details.copy(creator = "first.last+sbom@example.com")),
             "international email creator" to (bom() to details.copy(creator = "info@m\u00fcller-gmbh.de")),
             "incomplete dependency graph" to (bom() to details.copy(incompleteReasons = listOf(FILE_DEPENDENCY))),
+            "identified components" to
+                (bom() to details.copy(identifiedComponents = setOf("pkg:maven/org.example/lib@1.0"))),
             "license that is not an SPDX id" to (bom() to publicDomain),
             "expression license with a concluded one" to (bom(EXPRESSION_COMPONENT) to cddl),
             "expression license without a concluded one" to

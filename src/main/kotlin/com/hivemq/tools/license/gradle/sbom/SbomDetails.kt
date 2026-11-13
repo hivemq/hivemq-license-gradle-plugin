@@ -40,4 +40,9 @@ internal data class SbomDetails(
      * could not be resolved; empty when it is complete.
      */
     val incompleteReasons: List<String>,
+    /**
+     * The `bom-ref`s of the components the host provides and this SBOM only identifies: their file and their
+     * dependencies are the host's to describe, so they get no file description and the graph is not complete for them.
+     */
+    val identifiedComponents: Set<String> = emptySet(),
 )

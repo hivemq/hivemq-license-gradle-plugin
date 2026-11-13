@@ -55,7 +55,13 @@ abstract class HivemqLicensePlugin @Inject constructor(
             includeConfigs.set(bomConfigurationNames.map { names -> names.map { Regex.escape(it) } })
             // generateSbom describes the files of exactly these configurations, so a build script cannot pick others
             includeConfigs.disallowChanges()
+            // set too, not only locked, so an action registered before the plugin applied cannot have skipped any
+            skipConfigs.set(emptyList())
             skipConfigs.disallowChanges()
+            // set, not only locked, like skipConfigs: the licenses and the incomplete-metadata marker that tell an own
+            // module's kind come from this lookup, without which an unlisted public module would pass as internal
+            includeMetadataResolution.set(true)
+            includeMetadataResolution.disallowChanges()
         }
 
         val bomJsonOutput = bomTask.flatMap { it.jsonOutput }
@@ -86,7 +92,6 @@ abstract class HivemqLicensePlugin @Inject constructor(
             taskOutcomes.convention(bomTaskOutcomes)
             usesService(bomTaskOutcomes)
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
-            allowedArtifacts.set(extension.allowedArtifacts)
             overriddenLicenses.set(extension.overriddenLicenses)
             providedModules.set(provided)
         }
@@ -103,6 +108,12 @@ abstract class HivemqLicensePlugin @Inject constructor(
             readLicensesFromBom()
             outputFileNamePrefix.convention("")
             outputDirectory.set(extension.thirdPartyLicenseDirectory)
+        }
+
+        // every license task, also one a build script registers such as a frontend report, lists own modules by the
+        // extension's list; as a value, so a task's add extends it and its set replaces it
+        project.tasks.withType(LicenseResolvingTask::class.java).configureEach {
+            allowedArtifacts.set(extension.allowedArtifacts)
         }
 
         SbomWiring.register(project, extension, bomConfigurationNames)
