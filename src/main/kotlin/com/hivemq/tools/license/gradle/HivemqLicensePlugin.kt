@@ -86,7 +86,6 @@ abstract class HivemqLicensePlugin @Inject constructor(
             taskOutcomes.convention(bomTaskOutcomes)
             usesService(bomTaskOutcomes)
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
-            allowedArtifacts.set(extension.allowedArtifacts)
             overriddenLicenses.set(extension.overriddenLicenses)
             providedModules.set(provided)
         }
@@ -103,6 +102,12 @@ abstract class HivemqLicensePlugin @Inject constructor(
             readLicensesFromBom()
             outputFileNamePrefix.convention("")
             outputDirectory.set(extension.thirdPartyLicenseDirectory)
+        }
+
+        // every license task, also one a build script registers such as a frontend report, lists own modules by the
+        // extension's list; as a value, so a task's add extends it and its set replaces it
+        project.tasks.withType(LicenseResolvingTask::class.java).configureEach {
+            allowedArtifacts.set(extension.allowedArtifacts)
         }
 
         SbomWiring.register(project, extension, bomConfigurationNames)

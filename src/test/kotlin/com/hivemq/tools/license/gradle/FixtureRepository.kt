@@ -19,27 +19,39 @@ import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
-/** Writes modules of the group `com.example` into a local Maven repository, each a jar and a POM without a license. */
+/** Writes modules into a local Maven repository as jar and POM, `com.example` unless a group is given. */
 internal object FixtureRepository {
 
     /** `com.example:no-license-lib:1.0.0`, whose missing license makes checkApprovedLicenses fail for a dependant. */
     fun unlicensedLib(repoDir: File) = module(repoDir, "no-license-lib", "1.0.0")
 
-    /** `com.example:<name>:<version>`, whose POM depends on each `name:version` of [dependencies], same group. */
-    fun module(repoDir: File, name: String, version: String, vararg dependencies: String) {
-        val dir = repoDir.resolve("com/example/$name/$version").apply { mkdirs() }
+    /**
+     * `<group>:<name>:<version>`, whose POM depends on each `name:version` of [dependencies] in `com.example` and
+     * declares [license] by name when given, as the POM of a published library does.
+     */
+    fun module(
+        repoDir: File,
+        name: String,
+        version: String,
+        vararg dependencies: String,
+        group: String = "com.example",
+        license: String? = null,
+    ) {
+        val dir = repoDir.resolve("${group.replace('.', '/')}/$name/$version").apply { mkdirs() }
         val declared = dependencies.joinToString("") { dependency ->
             val (artifactId, dependencyVersion) = dependency.split(':')
             "<dependency><groupId>com.example</groupId><artifactId>$artifactId</artifactId>" +
                 "<version>$dependencyVersion</version></dependency>"
         }
+        val licenses = license?.let { "<licenses><license><name>$it</name></license></licenses>" }.orEmpty()
         dir.resolve("$name-$version.pom").writeText(
             """
             <project xmlns="http://maven.apache.org/POM/4.0.0">
               <modelVersion>4.0.0</modelVersion>
-              <groupId>com.example</groupId>
+              <groupId>$group</groupId>
               <artifactId>$name</artifactId>
               <version>$version</version>
+              $licenses
               <dependencies>$declared</dependencies>
             </project>
             """.trimIndent()

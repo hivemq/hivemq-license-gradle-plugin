@@ -144,7 +144,10 @@ class HivemqLicensePluginTest {
         assertThat(result.output)
             .contains("projectName=test-project")
             .contains("ignoredGroupPrefixes=[com.hivemq]")
-            .contains("allowedArtifacts=[com.hivemq:hivemq-mqtt-client]")
+            .contains("allowedArtifacts=[com.hivemq:")
+            .contains("com.hivemq:hivemq-amazon-kinesis-extension-customization-sdk, ")
+            .contains("com.hivemq:hivemq-extension-sdk, ")
+            .contains("com.hivemq:hivemq-mqtt-client, ")
     }
 
     @Test

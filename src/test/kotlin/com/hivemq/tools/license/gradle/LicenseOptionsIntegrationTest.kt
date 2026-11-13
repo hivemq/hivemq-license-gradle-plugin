@@ -71,7 +71,7 @@ class LicenseOptionsIntegrationTest {
     }
 
     @Test
-    fun `allowedArtifacts re-includes a single artifact excluded by ignoredGroupPrefixes`() {
+    fun `fails for an own module that declares a license when allowedArtifacts names another one only`() {
         projectDir.resolve("settings.gradle.kts").writeText("""rootProject.name = "allowed-project"""")
         projectDir.resolve("build.gradle.kts").writeText(
             """
@@ -81,7 +81,7 @@ class LicenseOptionsIntegrationTest {
             }
             hivemqLicense {
                 thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
-                // Ignore the whole com.google.guava group, then re-include only guava itself.
+                // the whole com.google.guava group counts as ours, guava itself is listed as public
                 ignoredGroupPrefixes.add("com.google.guava")
                 allowedArtifacts.add("com.google.guava:guava")
             }
@@ -95,14 +95,14 @@ class LicenseOptionsIntegrationTest {
             """.trimIndent()
         )
 
-        val result = gradleRunner("updateThirdPartyLicenses").build()
+        val result = gradleRunner("updateThirdPartyLicenses").buildAndFail()
 
-        assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
-
-        val plaintext = projectDir.resolve("build/tmp/third-party-licenses/licenses").readText()
-        // guava is re-included by allowedArtifacts despite matching the ignored prefix.
-        assertThat(plaintext).contains("com.google.guava:guava")
-        // failureaccess shares the ignored group and is not on the allow-list, so it stays excluded.
-        assertThat(plaintext).doesNotContain("com.google.guava:failureaccess")
+        // failureaccess shares the group and declares a license, as only a public module does, so the build fails
+        // until allowedArtifacts names it too
+        assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output).contains(
+            "Own module 'com.google.guava:failureaccess' (ignored group prefix 'com.google.guava') declares a " +
+                "license but is not in allowedArtifacts"
+        )
     }
 }

@@ -17,7 +17,8 @@ package com.hivemq.tools.license.gradle
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.databind.node.ArrayNode
+import com.fasterxml.jackson.databind.node.ObjectNode
+import com.hivemq.tools.license.gradle.sbom.BomFilter
 import java.io.File
 import java.util.*
 
@@ -94,58 +95,72 @@ object LicenseResolver {
     }
 
     // the approved license with this SPDX ID, matched regardless of case, or null
-
-    /** `group:name` of a BOM component [node]; a missing group or name counts as empty. */
-    private fun moduleIdOf(node: JsonNode): String =
-        "${node.get("group")?.asText().orEmpty()}:${node.get("name")?.asText().orEmpty()}"
-
     private fun knownLicense(spdxId: String): KnownLicense? =
         SPDX_ID_MAP[spdxId] ?: SPDX_IDS_IGNORING_CASE[spdxId.lowercase()]
 
     /**
      * The licenses of the components in [dependencyLicenseFile], or a failure that lists every license problem found.
-     * A BOM component whose `group:name` is in [providedModules] is left out in every version, as the host provides it.
+     * Before the licenses are read, the BOM is filtered ([BomFilter]): the internal own modules go, the modules in
+     * [providedModules] go unless public, and an unlisted own module that may be public is a problem.
      */
     fun resolveLicenses(
         dependencyLicenseFile: File,
         ignoredGroupPrefixes: Set<String>,
         allowedArtifacts: Set<String>,
         overriddenLicenses: Map<String, String> = emptyMap(),
-        dependencyLicenseOrigin: () -> String? = { null },
         providedModules: Set<String> = emptySet(),
+        dependencyLicenseOrigin: () -> String? = { null },
     ): TreeMap<String, ResolvedDependency> {
         val objectMapper = ObjectMapper()
         val tree = objectMapper.readTree(dependencyLicenseFile)
         val source = LicenseSource(dependencyLicenseFile, dependencyLicenseOrigin)
+        val own = OwnModules(ignoredGroupPrefixes, allowedArtifacts)
         // an override naming an unknown license is a problem of its own, and its module is not resolved any further
         val invalidOverrides = overriddenLicenses.filterValues { knownLicense(it) == null }
         val problems = invalidOverrides.map { (moduleId, spdxId) ->
             "Overridden license '$spdxId' for '$moduleId' is not a known SPDX license ID"
         }.toMutableList()
-        if (!tree.has("components")) {
-            return resolvePnpmLicenses(
-                source,
-                tree,
-                ignoredGroupPrefixes,
-                allowedArtifacts,
-                overriddenLicenses,
-                invalidOverrides.keys,
-                problems,
-            )
+        // a CycloneDX BOM may leave out an empty components array; a pnpm report, keyed by license name, has neither
+        val root = tree as? ObjectNode
+        if (root == null || (root.get("bomFormat")?.textValue() != "CycloneDX" && !root.has("components"))) {
+            return resolvePnpmLicenses(source, tree, own, overriddenLicenses, invalidOverrides.keys, problems)
         }
-        // out before the typed model is built, so a provided component is left out whatever its fields hold
-        (tree.get("components") as? ArrayNode)?.removeIf { moduleIdOf(it) in providedModules }
-        val bom = objectMapper.treeToValue(tree, DependencyReport.Bom::class.java)
+        // own modules are classified on the whole tree first, so a new one cannot hide behind hivemqProvided; the
+        // filter runs on the tree, so a left-out component never reaches the model
+        val unlisted = linkedMapOf<String, Pair<Coordinates, String?>>()
+        for (component in BomFilter.components(root)) {
+            val coordinates = BomFilter.coordinatesOf(component) ?: continue
+            val kind = own.classify(coordinates, BomFilter.isProject(component), BomFilter.mayBePublic(component))
+            if (kind != OwnModules.Kind.UNLISTED) continue
+            // once per module, whatever the number of versions; a declared license, in any version, is the stronger
+            // sign of a public module, so its message wins over incomplete metadata
+            val unresolved = BomFilter.unresolvedMetadata(component).takeIf { !BomFilter.declaresLicense(component) }
+            if (coordinates.moduleId !in unlisted || unresolved == null) {
+                unlisted[coordinates.moduleId] = coordinates to unresolved
+            }
+        }
+        for ((coordinates, unresolved) in unlisted.values) {
+            problems += own.describeUnlisted(coordinates, unresolved)
+        }
+        // the same filter as the SBOM's, but the provided components that stay are the public ones, listed with nothing
+        // nested in them, as none of that ships
+        val publicProvided = BomFilter.keepShipped(root, own, providedModules) { _, _ ->
+            { component: ObjectNode -> own.isPublic(BomFilter.moduleIdOf(component)) }
+        }
+        BomFilter.dropNested(root) { it in publicProvided }
+        // reported above; gone before binding, which a version-less one would otherwise fail with another message;
+        // after the filter, so that what a provided unlisted module carried has gone with it
+        BomFilter.dropModules(root, unlisted.keys) { true }
+        val bom = objectMapper.treeToValue(root, DependencyReport.Bom::class.java)
         val entries = TreeMap<String, ResolvedDependency>()
-        for (component in bom.components) {
-            val group = component.group ?: continue
+        fun resolveOne(component: DependencyReport.Component) {
+            val group = component.group ?: return
             val coordinates = Coordinates(group, component.name, component.version)
-            if (shouldIgnore(coordinates, ignoredGroupPrefixes, allowedArtifacts)) continue
-            if (coordinates.moduleId in invalidOverrides) continue
+            if (coordinates.moduleId in invalidOverrides) return
             val resolvedLicense = resolveOverriddenOrBuiltIn(coordinates.moduleId, overriddenLicenses)
             if (resolvedLicense != null) {
                 entries[coordinates.moduleId] = ResolvedDependency(coordinates, listOf(resolvedLicense))
-                continue
+                return
             }
             // every entry is one way the component may be used
             val options = (component.licenses ?: emptyList()).mapNotNull { choice ->
@@ -163,17 +178,33 @@ object LicenseResolver {
                 }
             }
             if (options.isEmpty()) {
+                // Apache-2.0 for a public HiveMQ module built as a project, which has no POM and so no license in the
+                // BOM; a published version of the same module declares its license
+                val project = OwnModules.isProjectComponent(component.purl, component.bomRef)
+                if (project && coordinates.moduleId in OwnModules.PUBLIC_HIVEMQ_MODULES) {
+                    entries[coordinates.moduleId] = ResolvedDependency(coordinates, listOf(KnownLicense.APACHE_2_0))
+                    return
+                }
                 problems += "No license found for '$coordinates'" + describeUnresolvedMetadata(component)
-                continue
+                return
             }
             val chosenLicenses = chooseOption(options.map { it.licenses })
             if (chosenLicenses == null) {
-                problems += "License not on the approved list for '$coordinates'${describeUnresolvedMetadata(component)}: " +
-                        options.joinToString { it.name }
-                continue
+                problems += "License not on the approved list for '$coordinates'" +
+                    "${describeUnresolvedMetadata(component)}: ${options.joinToString { it.name }}"
+                return
             }
             entries[coordinates.moduleId] = ResolvedDependency(coordinates, chosenLicenses)
         }
+        // nested components are resolved on their own, in document order; the filter above already decided which stay
+        fun resolve(components: List<DependencyReport.Component>) {
+            for (component in components) {
+                resolveOne(component)
+                resolve(component.components.orEmpty())
+            }
+        }
+        resolve(bom.components)
+        resolve(bom.metadata?.component?.components.orEmpty())
         failOnProblems(source, problems)
         return entries
     }
@@ -209,8 +240,7 @@ object LicenseResolver {
     private fun resolvePnpmLicenses(
         source: LicenseSource,
         tree: JsonNode,
-        ignoredGroupPrefixes: Set<String>,
-        allowedArtifacts: Set<String>,
+        own: OwnModules,
         overriddenLicenses: Map<String, String>,
         invalidOverrides: Set<String>,
         problems: MutableList<String>,
@@ -222,7 +252,9 @@ object LicenseResolver {
                 val version = pkg.get("versions")?.firstOrNull()?.asText() ?: continue
                 val spdxId = pkg.get("license")?.asText()
                 val coordinates = Coordinates("", name, version)
-                if (shouldIgnore(coordinates, ignoredGroupPrefixes, allowedArtifacts)) continue
+                // an own package is hidden unless listed, whatever it declares: internal frontend packages carry
+                // licenses, so a license tells nothing about being public here
+                if (own.classify(coordinates) == OwnModules.Kind.INTERNAL) continue
                 if (coordinates.moduleId in invalidOverrides) continue
                 val resolvedLicense = resolveOverriddenOrBuiltIn(coordinates.moduleId, overriddenLicenses)
                 if (resolvedLicense != null) {
@@ -243,18 +275,6 @@ object LicenseResolver {
         }
         failOnProblems(source, problems)
         return entries
-    }
-
-    fun shouldIgnore(
-        coordinates: Coordinates,
-        ignoredGroupPrefixes: Set<String>,
-        allowedArtifacts: Set<String>
-    ): Boolean {
-        return coordinates.moduleId !in allowedArtifacts && ignoredGroupPrefixes.any {
-            coordinates.group.startsWith(it) || (coordinates.group.isEmpty() && coordinates.name.startsWith(
-                it
-            ))
-        }
     }
 
     // the caller has already set aside modules whose override names an unknown license, so one here is a bug

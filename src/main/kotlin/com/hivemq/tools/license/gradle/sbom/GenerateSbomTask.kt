@@ -16,7 +16,9 @@
 package com.hivemq.tools.license.gradle.sbom
 
 import com.fasterxml.jackson.core.JsonProcessingException
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.hivemq.tools.license.gradle.LicenseResolvingTask
+import com.hivemq.tools.license.gradle.OwnModules
 import org.gradle.api.GradleException
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
@@ -33,9 +35,9 @@ import java.time.format.DateTimeParseException
 
 /**
  * Writes a reproducible CycloneDX SBOM, with the fields [SbomEnricher] adds, from the JSON BOM in [dependencyLicense];
- * see [SbomNormalizer]. Fails like `checkApprovedLicenses` on a license problem, writing no SBOM. The SBOM lists
- * neither the modules in [providedModules] nor references to them. The plugin applies the `generateSbom` conventions
- * to every instance, so a second one sets only what differs, usually [artifactFileName].
+ * see [SbomNormalizer]. Fails like `checkApprovedLicenses` on a license problem, writing no SBOM; leaves out the
+ * internal modules ([OwnModules]) and the provided ones but for the first on each path, which stays identified. Every
+ * instance gets the `generateSbom` conventions, so a second one sets only what differs, usually [artifactFileName].
  */
 @DisableCachingByDefault(because = "Rewriting one file is cheaper than a cache round trip")
 abstract class GenerateSbomTask : LicenseResolvingTask() {
@@ -101,12 +103,28 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
             )
         }
         val provided = providedModules.get()
+        val own = OwnModules(ignoredGroupPrefixes.get(), allowedArtifacts.get())
         val normalized = try {
             // before the license resolver, so a file that is not a JSON object gets the reader's message, not the raw
             // one of the resolver; filter, enricher and normalizer then work on this one tree
             val root = BomJson.read(bomFile.readBytes())
-            // the shipped artifact does not contain what the host provides at runtime, so neither does its SBOM
-            BomFilter.dropModules(root, provided)
+            // without the graph nobody can tell which provided components the shipped code depends on directly
+            val hasProvided = BomFilter.components(root).any { BomFilter.moduleIdOf(it) in provided }
+            val hasGraph = root.get("dependencies")?.let { it.isArray && !it.isEmpty } == true
+            if (hasProvided && !hasGraph) {
+                throw SbomException("The BOM has no dependency graph, needed to identify the modules the host provides")
+            }
+            // the shipped artifact contains nothing the host provides at runtime, so neither does its SBOM, except the
+            // first provided component on each path: identified, so the host's SBOM continues from it (TR-03183-2 5.1)
+            val identified = BomFilter.keepShipped(root, own, provided) { tree, isProvided ->
+                val refs = BomFilter.directlyDependedOn(tree, isProvided)
+                val isIdentified = { component: ObjectNode -> BomFilter.refOf(component)?.let { it in refs } == true }
+                isIdentified
+            }
+            val identifiedRefs = identified.mapNotNullTo(sortedSetOf(), BomFilter::refOf)
+            // identified only: the host's SBOM describes it, here it depends on nothing and ships no file
+            BomFilter.detachComponents(root, identifiedRefs)
+            BomFilter.removeProperties(root, identifiedRefs, "bsi:component:")
             // fails on a license problem with the message of checkApprovedLicenses, which is not wrapped below
             val concluded = resolveLicenses().values.associate { dependency ->
                 // by the version the license was resolved for, which another version of the module may not share
@@ -119,6 +137,7 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
                 componentFileNames = componentFileNames.get(),
                 concludedLicenses = concluded,
                 incompleteReasons = reasons,
+                identifiedComponents = identifiedRefs,
             )
             SbomNormalizer.normalize(SbomEnricher.enrich(root, details), instant, vcsUrl.orNull)
         } catch (e: SbomException) {
