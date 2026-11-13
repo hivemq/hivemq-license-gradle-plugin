@@ -63,7 +63,8 @@ object LicenseResolver {
         KnownLicense.LGPL_2_1_OR_LATER,
     )
 
-    // built-in license mappings for well-known artifacts that don't report license metadata in CycloneDX
+    // well-known artifacts whose POM declares no license, or one the BOM maps to another id or expression; like the
+    // overrides, these win over the BOM
     val BUILT_IN_LICENSES = mapOf(
         "javax.activation:javax.activation-api" to KnownLicense.CDDL_1_1,
         "javax.annotation:javax.annotation-api" to KnownLicense.CDDL_1_1,

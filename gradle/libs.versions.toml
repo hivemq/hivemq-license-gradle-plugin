@@ -1,6 +1,6 @@
 [versions]
 assertj = "3.27.7"
-cyclonedx = "3.5.1"
+cyclonedx = "3.6.1"
 jackson = "2.23.0"
 junit-jupiter = "5.11.0"
 # Applied only in TestKit integration builds to verify coexistence; kept here so Renovate auto-updates them.
