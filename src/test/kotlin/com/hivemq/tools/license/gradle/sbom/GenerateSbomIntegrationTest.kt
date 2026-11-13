@@ -148,7 +148,7 @@ class GenerateSbomIntegrationTest {
             """.trimIndent()
         )
         projectDir.resolve("lib").mkdirs()
-        // a project has no license, so lib takes a group the default ignoredGroupPrefixes skips, or generateSbom fails
+        // a project has no license, so lib takes an own group, which leaves it out, or generateSbom fails
         projectDir.resolve("lib/build.gradle.kts").writeText(
             """
             plugins {
@@ -277,13 +277,13 @@ class GenerateSbomIntegrationTest {
             """.trimIndent()
         )
         projectDir.resolve("lib").mkdirs()
-        // a project has no license, so lib takes a group the default ignoredGroupPrefixes skips, or generateSbom fails
+        // a project has no license, so an override gives lib one, or generateSbom fails
         projectDir.resolve("lib/build.gradle.kts").writeText(
             """
             plugins {
                 java
             }
-            group = "com.hivemq"
+            group = "com.example"
             """.trimIndent()
         )
         projectDir.resolve("app").mkdirs()
@@ -297,6 +297,7 @@ class GenerateSbomIntegrationTest {
             }
             hivemqLicense {
                 thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+                overriddenLicenses.put("com.example:lib", "Apache-2.0")
                 $fixedTimestamp
             }
             dependencies {

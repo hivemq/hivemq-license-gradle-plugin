@@ -728,6 +728,51 @@ class UpdateThirdPartyLicensesTaskTest {
     // --- Custom ignored prefixes ---
 
     @Test
+    fun `fails for an own module that is on neither list, writing no report`() {
+        setup()
+        writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "org.internal",
+                  "name": "new-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "license": { "id": "Apache-2.0" } }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        projectDir.resolve("build.gradle.kts").writeText(
+            """
+            plugins {
+                java
+                id("com.hivemq.tools.license")
+            }
+            hivemqLicense {
+                ignoredGroupPrefixes.set(setOf("org.internal"))
+                thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+            }
+            tasks.named<com.hivemq.tools.license.gradle.UpdateThirdPartyLicensesTask>("updateThirdPartyLicenses") {
+                dependencyLicense.set(file("build/reports/cyclonedx/bom.json"))
+            }
+            """.trimIndent()
+        )
+
+        val result = gradleRunner().buildAndFail()
+
+        assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output).contains(
+            "Own module 'org.internal:new-lib' (ignored group prefix 'org.internal') is in neither allowedArtifacts " +
+                "nor internalArtifacts: add it to allowedArtifacts to list it, or to internalArtifacts to leave it out"
+        )
+        assertThat(projectDir.resolve("build/tmp/third-party-licenses/licenses")).doesNotExist()
+    }
+
+    @Test
     fun `respects custom ignoredGroupPrefixes`() {
         setup()
         writeBom(
@@ -762,6 +807,7 @@ class UpdateThirdPartyLicensesTaskTest {
             }
             hivemqLicense {
                 ignoredGroupPrefixes.set(setOf("org.internal"))
+                internalArtifacts.set(setOf("org.internal:*"))
                 thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
             }
             tasks.named<com.hivemq.tools.license.gradle.UpdateThirdPartyLicensesTask>("updateThirdPartyLicenses") {

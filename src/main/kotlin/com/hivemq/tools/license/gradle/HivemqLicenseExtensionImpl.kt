@@ -28,10 +28,13 @@ abstract class HivemqLicenseExtensionImpl @Inject constructor(
 ) : HivemqLicenseExtension {
     override val projectName: Property<String> = objectFactory.property(String::class.java)
     override val thirdPartyLicenseDirectory: DirectoryProperty = objectFactory.directoryProperty()
+    // values, not conventions: a build script's add extends them, while add on a convention discards it
     override val ignoredGroupPrefixes: SetProperty<String> = objectFactory.setProperty(String::class.java)
-        .convention(setOf("com.hivemq"))
+        .value(setOf("com.hivemq"))
     override val allowedArtifacts: SetProperty<String> = objectFactory.setProperty(String::class.java)
-        .convention(setOf("com.hivemq:hivemq-mqtt-client"))
+        .value(OwnModules.PUBLIC_HIVEMQ_MODULES)
+    override val internalArtifacts: SetProperty<String> = objectFactory.setProperty(String::class.java)
+        .value(OwnModules.INTERNAL_HIVEMQ_MODULES)
     override val additionalConfigurations: SetProperty<String> = objectFactory.setProperty(String::class.java)
         .convention(emptySet())
     override val overriddenLicenses: MapProperty<String, String> =

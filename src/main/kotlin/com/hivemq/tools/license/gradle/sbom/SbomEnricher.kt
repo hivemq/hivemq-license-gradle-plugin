@@ -20,6 +20,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ArrayNode
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.hivemq.tools.license.gradle.Coordinates
+import com.hivemq.tools.license.gradle.OwnModules
 import java.math.BigInteger
 import java.net.URI
 import java.net.URISyntaxException
@@ -32,9 +33,6 @@ import java.net.URISyntaxException
 internal object SbomEnricher {
 
     private val mapper = ObjectMapper()
-
-    // only on the purl of a Gradle project, included builds too, so a composite of our repositories gets our creator
-    private val projectPath = Regex("[?&]project_path=")
 
     private val mailto = Regex("^mailto:", RegexOption.IGNORE_CASE)
 
@@ -70,8 +68,7 @@ internal object SbomEnricher {
         requireSpecVersion(root)
         requireCreator(details.creator)
         enrichMetadata(root, details)
-        (root.get("components") as? ArrayNode)?.forEach { node ->
-            val component = node as? ObjectNode ?: return@forEach
+        for (component in BomFilter.components(root)) {
             // with the version, because the BOM can hold a module in two versions, each with its own file and license
             val coordinates = coordinates(component).toString()
             details.componentFileNames[coordinates]?.let { describeFile(component, it) }
@@ -205,9 +202,9 @@ internal object SbomEnricher {
         component.putObject("manufacturer").putArray("url").add(url)
     }
 
-    private fun isProjectOfThisBuild(component: ObjectNode) = listOf("purl", "bom-ref").any { name ->
-        component.get(name)?.asText()?.let(projectPath::containsMatchIn) == true
-    }
+    // a project of this build or of an included one, so a composite of our repositories gets our creator
+    private fun isProjectOfThisBuild(component: ObjectNode) =
+        OwnModules.isProjectComponent(component.get("purl")?.asText(), component.get("bom-ref")?.asText())
 
     private fun addSourceDistribution(component: ObjectNode) {
         val references = component.get("externalReferences") as? ArrayNode ?: return

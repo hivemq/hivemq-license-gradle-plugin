@@ -19,15 +19,21 @@ import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
-/** Writes modules of the group `com.example` into a local Maven repository, each a jar and a POM without a license. */
+/** Writes modules, `com.example` unless a group is given, into a local Maven repository: jar and POM, no license. */
 internal object FixtureRepository {
 
     /** `com.example:no-license-lib:1.0.0`, whose missing license makes checkApprovedLicenses fail for a dependant. */
     fun unlicensedLib(repoDir: File) = module(repoDir, "no-license-lib", "1.0.0")
 
-    /** `com.example:<name>:<version>`, whose POM depends on each `name:version` of [dependencies], same group. */
-    fun module(repoDir: File, name: String, version: String, vararg dependencies: String) {
-        val dir = repoDir.resolve("com/example/$name/$version").apply { mkdirs() }
+    /** `<group>:<name>:<version>`, whose POM depends on each `name:version` of [dependencies] in `com.example`. */
+    fun module(
+        repoDir: File,
+        name: String,
+        version: String,
+        vararg dependencies: String,
+        group: String = "com.example",
+    ) {
+        val dir = repoDir.resolve("${group.replace('.', '/')}/$name/$version").apply { mkdirs() }
         val declared = dependencies.joinToString("") { dependency ->
             val (artifactId, dependencyVersion) = dependency.split(':')
             "<dependency><groupId>com.example</groupId><artifactId>$artifactId</artifactId>" +
@@ -37,7 +43,7 @@ internal object FixtureRepository {
             """
             <project xmlns="http://maven.apache.org/POM/4.0.0">
               <modelVersion>4.0.0</modelVersion>
-              <groupId>com.example</groupId>
+              <groupId>$group</groupId>
               <artifactId>$name</artifactId>
               <version>$version</version>
               <dependencies>$declared</dependencies>

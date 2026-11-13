@@ -14,6 +14,7 @@ Gradle plugin that generates and validates third-party license reports from Cycl
 
 - `src/main/kotlin/com/hivemq/tools/license/gradle/License.kt` — `KnownLicense` enum (alphabetically ordered) and `UnknownLicense` data class
 - `src/main/kotlin/com/hivemq/tools/license/gradle/LicenseResolver.kt` — `LICENSE_ORDER` (priority-ordered), `BUILT_IN_LICENSES`, `SPDX_ID_MAP`, license resolution logic
+- `src/main/kotlin/com/hivemq/tools/license/gradle/OwnModules.kt`, classifies the modules of the build's own groups (public: listed, internal: left out, neither: the build fails) and holds the HiveMQ defaults of both lists
 - `src/main/kotlin/com/hivemq/tools/license/gradle/HivemqLicenseExtension.kt` — Plugin extension configuration
 - `src/main/kotlin/com/hivemq/tools/license/gradle/HivemqLicensePlugin.kt` — Plugin entry point
 - `src/main/kotlin/com/hivemq/tools/license/gradle/LicenseResolvingTask.kt`, shared inputs of `checkApprovedLicenses`, `updateThirdPartyLicenses` and `generateSbom`, and the license resolution call that fails on any license problem

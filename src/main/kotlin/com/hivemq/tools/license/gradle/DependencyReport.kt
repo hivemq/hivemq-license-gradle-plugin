@@ -22,8 +22,28 @@ class DependencyReport {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     class Bom(
+        @JsonProperty("components")
+        components: List<Component>? = null,
+
+        @param:JsonProperty("metadata")
+        val metadata: Metadata? = null,
+    ) {
+        /** Empty when the BOM has no component, since CycloneDX leaves an empty list out. */
+        val components: List<Component> = components.orEmpty()
+    }
+
+    /** The part of the metadata the resolver reads: the top-level component, for the components nested in it. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    class Metadata(
+        @param:JsonProperty("component")
+        val component: TopLevelComponent? = null,
+    )
+
+    /** Only the nested components: the top-level component itself is never resolved, and may lack a version. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    class TopLevelComponent(
         @param:JsonProperty("components")
-        val components: List<Component> = emptyList(),
+        val components: List<Component>? = null,
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -42,6 +62,10 @@ class DependencyReport {
 
         @param:JsonProperty("properties")
         val properties: List<Property>? = null,
+
+        /** Components nested in this one, which CycloneDX allows and cyclonedx-gradle-plugin never writes. */
+        @param:JsonProperty("components")
+        val components: List<Component>? = null,
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)

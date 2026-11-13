@@ -132,6 +132,49 @@ class CheckApprovedLicensesTaskTest {
     }
 
     @Test
+    fun `fails for an own module that is on neither list`() {
+        setup()
+        writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "org.internal",
+                  "name": "new-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "license": { "id": "Apache-2.0" } }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        projectDir.resolve("build.gradle.kts").writeText(
+            """
+            plugins {
+                java
+                id("com.hivemq.tools.license")
+            }
+            hivemqLicense {
+                ignoredGroupPrefixes.set(setOf("org.internal"))
+            }
+            tasks.named<com.hivemq.tools.license.gradle.CheckApprovedLicensesTask>("checkApprovedLicenses") {
+                dependencyLicense.set(file("build/reports/cyclonedx/bom.json"))
+            }
+            """.trimIndent()
+        )
+
+        val result = gradleRunner().buildAndFail()
+
+        assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output).contains(
+            "Own module 'org.internal:new-lib' (ignored group prefix 'org.internal') is in neither allowedArtifacts " +
+                "nor internalArtifacts: add it to allowedArtifacts to list it, or to internalArtifacts to leave it out"
+        )
+    }
+
+    @Test
     fun `fails with unapproved license`() {
         setup()
         writeBom(
@@ -219,12 +262,17 @@ class CheckApprovedLicensesTaskTest {
     }
 
     @Test
-    fun `ignores com_hivemq dependencies by default`() {
+    fun `leaves internal com_hivemq dependencies out and checks public ones by default`() {
         setup()
         writeBom(
             """
             {
               "components": [
+                {
+                  "group": "com.hivemq",
+                  "name": "hivemq-platform-sdk",
+                  "version": "4.0.0"
+                },
                 {
                   "group": "com.hivemq",
                   "name": "hivemq-extension-sdk",
@@ -241,8 +289,9 @@ class CheckApprovedLicensesTaskTest {
 
         val result = gradleRunner().build()
 
+        // the platform SDK has no license and is internal, so it is neither checked nor counted
         assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
-        assertThat(result.output).contains("0 dependencies have approved licenses")
+        assertThat(result.output).contains("All 1 dependencies have approved licenses")
     }
 
     @Test
@@ -299,6 +348,7 @@ class CheckApprovedLicensesTaskTest {
             }
             hivemqLicense {
                 ignoredGroupPrefixes.set(setOf("org.internal"))
+                internalArtifacts.set(setOf("org.internal:*"))
             }
             tasks.named<com.hivemq.tools.license.gradle.CheckApprovedLicensesTask>("checkApprovedLicenses") {
                 dependencyLicense.set(file("build/reports/cyclonedx/bom.json"))

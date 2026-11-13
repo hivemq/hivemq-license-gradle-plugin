@@ -53,11 +53,17 @@ abstract class LicenseResolvingTask : DefaultTask() {
     @get:Internal
     abstract val taskOutcomes: Property<BomTaskOutcomeService>
 
+    /** Group prefixes of the build's own modules, each in [allowedArtifacts] or [internalArtifacts], or a project. */
     @get:Input
     abstract val ignoredGroupPrefixes: SetProperty<String>
 
+    /** Own modules listed like third-party libraries, `group:name` or a package name, `*` matching anything. */
     @get:Input
     abstract val allowedArtifacts: SetProperty<String>
+
+    /** Own modules left out, same syntax; a project of this build or of an included build counts as one. */
+    @get:Input
+    abstract val internalArtifacts: SetProperty<String>
 
     @get:Input
     abstract val overriddenLicenses: MapProperty<String, String>
@@ -70,6 +76,7 @@ abstract class LicenseResolvingTask : DefaultTask() {
         dependencyLicenseFile = dependencyLicense.get().asFile.absoluteFile,
         ignoredGroupPrefixes = ignoredGroupPrefixes.get(),
         allowedArtifacts = allowedArtifacts.get(),
+        internalArtifacts = internalArtifacts.get(),
         overriddenLicenses = overriddenLicenses.get(),
         providedModules = providedModules.get(),
         dependencyLicenseOrigin = ::dependencyLicenseOrigin,

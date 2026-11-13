@@ -92,7 +92,32 @@ class GenerateSbomTaskTest {
         )
     }
 
+    /** Adds `com.hivemq:internal`, an own component with a license nobody approved, to the BOM. */
+    private fun addOwnComponent() {
+        val internal = """{ "group": "com.hivemq", "name": "internal", "version": "1.0", """ +
+            """"purl": "pkg:maven/com.hivemq/internal@1.0?type=jar", """ +
+            """"licenses": [ { "license": { "id": "Proprietary-9.9" } } ] },"""
+        projectDir.resolve("bom.json").writeText(
+            projectDir.resolve("bom.json").readText().replace(""""components": [""", """"components": [ $internal""")
+        )
+    }
+
     // --- Output ---
+
+    @Test
+    fun `fails for an own component on neither list, writing no SBOM`() {
+        setup()
+        addOwnComponent()
+
+        val result = gradleRunner().buildAndFail()
+
+        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output).contains(
+            "Own module 'com.hivemq:internal' (ignored group prefix 'com.hivemq') is in neither allowedArtifacts nor " +
+                "internalArtifacts: add it to allowedArtifacts to list it, or to internalArtifacts to leave it out"
+        )
+        assertThat(projectDir.resolve("build/sbom/app.cdx.json")).doesNotExist()
+    }
 
     @Test
     fun `fails like checkApprovedLicenses on a license that is not approved`() {
@@ -217,6 +242,61 @@ class GenerateSbomTaskTest {
     }
 
     @Test
+    fun `keeps a public provided component with neither dependencies nor file description`() {
+        setup()
+        // a BOM supplied by hand may already describe the SDK's file and its dependency on a shipped library
+        val sdk = """{ "group": "com.hivemq", "name": "hivemq-extension-sdk", "version": "4.0.0", """ +
+            """"bom-ref": "pkg:maven/com.hivemq/hivemq-extension-sdk@4.0.0?type=jar", """ +
+            """"purl": "pkg:maven/com.hivemq/hivemq-extension-sdk@4.0.0?type=jar", """ +
+            """"licenses": [ { "license": { "id": "Apache-2.0" } } ], """ +
+            """"properties": [ { "name": "bsi:component:filename", "value": "hivemq-extension-sdk-4.0.0.jar" } ] },"""
+        val sdkDependency = """{ "ref": "pkg:maven/com.hivemq/hivemq-extension-sdk@4.0.0?type=jar", """ +
+            """"dependsOn": [ "pkg:maven/org.example/lib@1.0?type=jar" ] },"""
+        projectDir.resolve("bom.json").writeText(
+            projectDir.resolve("bom.json").readText()
+                .replace(""""components": [""", """"components": [ $sdk""")
+                .replace(""""dependencies": [""", """"dependencies": [ $sdkDependency""")
+        )
+        projectDir.resolve("build.gradle.kts").writeText(
+            projectDir.resolve("build.gradle.kts").readText().replace(
+                "allowedArtifacts.set(emptySet())",
+                "allowedArtifacts.set(setOf(\"com.hivemq:hivemq-extension-sdk\"))\n" +
+                    "    providedModules.set(setOf(\"com.hivemq:hivemq-extension-sdk\"))",
+            )
+        )
+
+        gradleRunner().build()
+
+        val sbom = ObjectMapper().readTree(projectDir.resolve("build/sbom/app.cdx.json"))
+        val component = sbom["components"].first { it["name"].asText() == "hivemq-extension-sdk" }
+        assertThat(component.path("properties").map { it["name"].asText() }).doesNotContain("bsi:component:filename")
+        // the fixture references components by their purl, as CycloneDX does with its bom-refs
+        val entry = sbom["dependencies"].first { it["ref"].asText() == component["purl"].asText() }
+        assertThat(entry["dependsOn"]).isEmpty()
+        assertThat(sbom["components"].map { it["name"].asText() })
+            .containsExactlyInAnyOrder("hivemq-extension-sdk", "lib")
+    }
+
+    @Test
+    fun `leaves an internal own component out, whatever its license`() {
+        setup()
+        addOwnComponent()
+        projectDir.resolve("build.gradle.kts").writeText(
+            projectDir.resolve("build.gradle.kts").readText().replace(
+                "allowedArtifacts.set(emptySet())",
+                "allowedArtifacts.set(emptySet())\n    internalArtifacts.set(setOf(\"com.hivemq:internal\"))",
+            )
+        )
+
+        val result = gradleRunner().build()
+
+        // the license is neither checked nor written: the component is not in the SBOM
+        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        val components = ObjectMapper().readTree(projectDir.resolve("build/sbom/app.cdx.json"))["components"]
+        assertThat(components.map { it["name"].asText() }).containsExactly("lib")
+    }
+
+    @Test
     fun `leaves out the provided modules and every reference to them`() {
         setup()
         val app = "pkg:maven/org.example/app@1.0"
@@ -255,26 +335,6 @@ class GenerateSbomTaskTest {
         assertThat(sbom["components"].map { it["name"].asText() }).containsExactly("lib")
         assertThat(sbom["dependencies"].map { it["ref"].asText() }).containsExactly(app, lib)
         assertThat(sbom["dependencies"].flatMap { it["dependsOn"] }.map { it.asText() }).containsExactly(lib)
-    }
-
-    @Test
-    fun `writes only the declared license of a component in an ignored group`() {
-        setup()
-        val internal = """{ "group": "com.hivemq", "name": "internal", "version": "1.0", """ +
-            """"purl": "pkg:maven/com.hivemq/internal@1.0?type=jar", """ +
-            """"licenses": [ { "license": { "id": "Proprietary-9.9" } } ] },"""
-        projectDir.resolve("bom.json").writeText(
-            projectDir.resolve("bom.json").readText().replace(""""components": [""", """"components": [ $internal""")
-        )
-
-        val result = gradleRunner().build()
-
-        // the license tasks leave the group out, so its license is neither checked nor concluded
-        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
-        val component = ObjectMapper().readTree(projectDir.resolve("build/sbom/app.cdx.json"))["components"]
-            .first { it["name"].asText() == "internal" }
-        assertThat(component["licenses"].map { it["license"]["acknowledgement"].asText() })
-            .containsExactly("declared")
     }
 
     @Test

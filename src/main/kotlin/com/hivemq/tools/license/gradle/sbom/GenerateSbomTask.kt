@@ -17,6 +17,7 @@ package com.hivemq.tools.license.gradle.sbom
 
 import com.fasterxml.jackson.core.JsonProcessingException
 import com.hivemq.tools.license.gradle.LicenseResolvingTask
+import com.hivemq.tools.license.gradle.OwnModules
 import org.gradle.api.GradleException
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
@@ -33,9 +34,9 @@ import java.time.format.DateTimeParseException
 
 /**
  * Writes a reproducible CycloneDX SBOM, with the fields [SbomEnricher] adds, from the JSON BOM in [dependencyLicense];
- * see [SbomNormalizer]. Fails like `checkApprovedLicenses` on a license problem, writing no SBOM. The SBOM lists
- * neither the modules in [providedModules] nor references to them. The plugin applies the `generateSbom` conventions
- * to every instance, so a second one sets only what differs, usually [artifactFileName].
+ * see [SbomNormalizer]. Fails like `checkApprovedLicenses` on a license problem, writing no SBOM; leaves out the
+ * provided and the internal modules, see [OwnModules]. The plugin applies the `generateSbom` conventions to every
+ * instance, so a second one sets only what differs, usually [artifactFileName].
  */
 @DisableCachingByDefault(because = "Rewriting one file is cheaper than a cache round trip")
 abstract class GenerateSbomTask : LicenseResolvingTask() {
@@ -101,12 +102,20 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
             )
         }
         val provided = providedModules.get()
+        val own = OwnModules(ignoredGroupPrefixes.get(), allowedArtifacts.get(), internalArtifacts.get())
         val normalized = try {
             // before the license resolver, so a file that is not a JSON object gets the reader's message, not the raw
             // one of the resolver; filter, enricher and normalizer then work on this one tree
             val root = BomJson.read(bomFile.readBytes())
-            // the shipped artifact does not contain what the host provides at runtime, so neither does its SBOM
-            BomFilter.dropModules(root, provided)
+            val publicProvided = provided.filterTo(sortedSetOf()) { own.isPublic(it) }
+            // the shipped artifact contains nothing the host provides at runtime, so neither does its SBOM; a public
+            // module among them stays, as the component from which the host's SBOM continues
+            BomFilter.dropModules(root, provided - publicProvided)
+            // an internal module is hidden by name only, so what is nested in it, which ships, takes its place
+            BomFilter.dropModules(root, BomFilter.internalModules(root, own), keepNested = true)
+            // the host's SBOM describes that component: here it depends on nothing and ships no file
+            BomFilter.detachModules(root, publicProvided)
+            BomFilter.removeProperties(root, publicProvided, "bsi:component:")
             // fails on a license problem with the message of checkApprovedLicenses, which is not wrapped below
             val concluded = resolveLicenses().values.associate { dependency ->
                 // by the version the license was resolved for, which another version of the module may not share
@@ -116,7 +125,8 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
                 creatorName = creatorName.get(),
                 creator = creator.get(),
                 artifactFileName = artifactFileName.orNull,
-                componentFileNames = componentFileNames.get(),
+                // a provided module ships no file with this artifact, public or not, so its component gets none
+                componentFileNames = componentFileNames.get().filterKeys { it.substringBeforeLast(':') !in provided },
                 concludedLicenses = concluded,
                 incompleteReasons = reasons,
             )

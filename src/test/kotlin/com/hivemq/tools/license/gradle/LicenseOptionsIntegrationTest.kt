@@ -71,7 +71,7 @@ class LicenseOptionsIntegrationTest {
     }
 
     @Test
-    fun `allowedArtifacts re-includes a single artifact excluded by ignoredGroupPrefixes`() {
+    fun `allowedArtifacts lists a single artifact of a group internalArtifacts leaves out`() {
         projectDir.resolve("settings.gradle.kts").writeText("""rootProject.name = "allowed-project"""")
         projectDir.resolve("build.gradle.kts").writeText(
             """
@@ -81,8 +81,9 @@ class LicenseOptionsIntegrationTest {
             }
             hivemqLicense {
                 thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
-                // Ignore the whole com.google.guava group, then re-include only guava itself.
+                // the whole com.google.guava group is ours and internal, guava itself is the public exception
                 ignoredGroupPrefixes.add("com.google.guava")
+                internalArtifacts.add("com.google.guava:*")
                 allowedArtifacts.add("com.google.guava:guava")
             }
             repositories {
@@ -100,9 +101,9 @@ class LicenseOptionsIntegrationTest {
         assertThat(result.task(":updateThirdPartyLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
 
         val plaintext = projectDir.resolve("build/tmp/third-party-licenses/licenses").readText()
-        // guava is re-included by allowedArtifacts despite matching the ignored prefix.
+        // guava is listed as the public exception of the own group
         assertThat(plaintext).contains("com.google.guava:guava")
-        // failureaccess shares the ignored group and is not on the allow-list, so it stays excluded.
+        // failureaccess shares the group and matches only the internal pattern, so it stays out
         assertThat(plaintext).doesNotContain("com.google.guava:failureaccess")
     }
 }

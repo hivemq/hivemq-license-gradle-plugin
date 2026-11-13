@@ -76,7 +76,8 @@ abstract class HivemqLicensePlugin @Inject constructor(
         val provided = providedModules(project)
 
         // the BOM as a convention, so a task a build script registers with its own BOM keeps it; the sets and maps as
-        // values, so a script's add or put extends the extension's entries instead of discarding a convention
+        // values, so a script's add or put extends the extension's entries instead of discarding a convention; the
+        // own-module lists are set on every LicenseResolvingTask below
         fun LicenseResolvingTask.readLicensesFromBom() {
             projectName.convention(extension.projectName)
             dependencyLicense.convention(bomJsonOutput)
@@ -85,7 +86,6 @@ abstract class HivemqLicensePlugin @Inject constructor(
             taskOutcomes.convention(bomTaskOutcomes)
             usesService(bomTaskOutcomes)
             ignoredGroupPrefixes.set(extension.ignoredGroupPrefixes)
-            allowedArtifacts.set(extension.allowedArtifacts)
             overriddenLicenses.set(extension.overriddenLicenses)
             providedModules.set(provided)
         }
@@ -102,6 +102,13 @@ abstract class HivemqLicensePlugin @Inject constructor(
             readLicensesFromBom()
             outputFileNamePrefix.convention("")
             outputDirectory.set(extension.thirdPartyLicenseDirectory)
+        }
+
+        // every license task, also one a build script registers such as a frontend report, classifies own modules by
+        // the extension's lists; as values, so a task's add extends them and its set replaces them
+        project.tasks.withType(LicenseResolvingTask::class.java).configureEach {
+            allowedArtifacts.set(extension.allowedArtifacts)
+            internalArtifacts.set(extension.internalArtifacts)
         }
 
         SbomWiring.register(project, extension, bomConfigurationNames)

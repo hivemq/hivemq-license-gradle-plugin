@@ -92,16 +92,16 @@ class ProvidedDependenciesIntegrationTest {
         projectDir.resolve("build.gradle.kts").writeText(buildScript(*blocks))
     }
 
-    /** A subproject of the group com.example with the hivemqProvided configuration, below which go the given blocks. */
-    private fun subproject(name: String, vararg blocks: String) {
+    /** A subproject of [group] with the hivemqProvided configuration, below which go the given blocks. */
+    private fun subproject(name: String, vararg blocks: String, group: String = "com.example") {
         val dir = projectDir.resolve(name).apply { mkdirs() }
-        val script = buildScript("""group = "com.example"""", providedConfiguration, *blocks)
+        val script = buildScript("""group = "$group"""", providedConfiguration, *blocks)
         dir.resolve("build.gradle.kts").writeText(script)
     }
 
-    /** `com.example:<name>:<version>` in the project's `repo` directory, depending on each `name:version` given. */
-    private fun module(name: String, version: String, vararg dependencies: String) =
-        FixtureRepository.module(projectDir.resolve("repo"), name, version, *dependencies)
+    /** `<group>:<name>:<version>` in the project's `repo` directory, depending on each com.example `name:version`. */
+    private fun module(name: String, version: String, vararg dependencies: String, group: String = "com.example") =
+        FixtureRepository.module(projectDir.resolve("repo"), name, version, *dependencies, group = group)
 
     private fun licenses(dir: File = projectDir) =
         dir.resolve("build/tmp/third-party-licenses/licenses").readText()
@@ -331,5 +331,275 @@ class ProvidedDependenciesIntegrationTest {
         val references = sbom["dependencies"].flatMap { listOf(it["ref"]) + it["dependsOn"].toList() } +
             sbom["compositions"][0]["dependencies"].toList()
         assertThat(references.map { it.asText() }).isSubsetOf(known)
+    }
+
+    // --- Own modules ---
+
+    @Test
+    fun `a build adds to the lists instead of replacing them`() {
+        module("hivemq-brand-new", "1.0.0", group = "com.hivemq")
+        module("hivemq-platform-sdk", "1.0.0", group = "com.hivemq")
+        setup(
+            """
+            repositories {
+                maven { url = uri("repo") }
+            }
+            dependencies {
+                implementation("com.hivemq:hivemq-brand-new:1.0.0")
+                implementation("com.hivemq:hivemq-platform-sdk:1.0.0")
+                implementation("com.hivemq:hivemq-mqtt-client:1.3.0")
+            }
+            hivemqLicense {
+                internalArtifacts.add("com.hivemq:hivemq-brand-*")
+            }
+            """.trimIndent(),
+        )
+
+        gradleRunner("updateThirdPartyLicenses").build()
+
+        // the added pattern leaves the new module out; the defaults still leave out the platform SDK, which has no
+        // license and would fail the build otherwise, and still list the client
+        assertThat(licenses())
+            .contains("com.hivemq:hivemq-mqtt-client")
+            .doesNotContain("hivemq-brand-new", "hivemq-platform-sdk")
+    }
+
+    @Test
+    fun `fails for a provided own module on neither list`() {
+        module("hivemq-brand-new-sdk", "1.0.0", group = "com.hivemq")
+        setup(
+            providedConfiguration,
+            """
+            repositories {
+                maven { url = uri("repo") }
+            }
+            dependencies {
+                implementation("com.google.guava:guava:33.4.0-jre")
+                hivemqProvided("com.hivemq:hivemq-brand-new-sdk:1.0.0")
+            }
+            """.trimIndent(),
+        )
+
+        val result = gradleRunner("generateSbom").buildAndFail()
+
+        // a new public SDK must be listed as the connecting component, so it cannot vanish with the provided modules
+        assertThat(result.task(":generateSbom")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output).contains(
+            "Own module 'com.hivemq:hivemq-brand-new-sdk' (ignored group prefix 'com.hivemq') is in neither " +
+                "allowedArtifacts nor internalArtifacts"
+        )
+        assertThat(projectDir.resolve("build/sbom/provided-project.cdx.json")).doesNotExist()
+    }
+
+    @Test
+    fun `fails for an own module on neither list`() {
+        module("hivemq-brand-new", "1.0.0", group = "com.hivemq")
+        setup(
+            """
+            repositories {
+                maven { url = uri("repo") }
+            }
+            dependencies {
+                implementation("com.hivemq:hivemq-brand-new:1.0.0")
+            }
+            """.trimIndent(),
+        )
+
+        val result = gradleRunner("generateSbom").buildAndFail()
+
+        assertThat(result.task(":generateSbom")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output).contains(
+            "Own module 'com.hivemq:hivemq-brand-new' (ignored group prefix 'com.hivemq') is in neither " +
+                "allowedArtifacts nor internalArtifacts: add it to allowedArtifacts to list it, or to " +
+                "internalArtifacts to leave it out"
+        )
+        assertThat(projectDir.resolve("build/sbom/provided-project.cdx.json")).doesNotExist()
+    }
+
+    @Test
+    fun `hides a module an internal pattern matches, license or not, until allowedArtifacts names it`() {
+        // a commons module made public later still matches the internal pattern of the defaults
+        module("hivemq-newly-public", "1.0.0", group = "com.hivemq.commons")
+        setup(
+            """
+            repositories {
+                maven { url = uri("repo") }
+            }
+            dependencies {
+                implementation("com.hivemq.commons:hivemq-newly-public:1.0.0")
+            }
+            """.trimIndent(),
+        )
+
+        gradleRunner("updateThirdPartyLicenses", "generateSbom").build()
+
+        assertThat(licenses()).doesNotContain("hivemq-newly-public")
+        assertThat(sbom()["components"]).isEmpty()
+    }
+
+    @Test
+    fun `keeps a public provided module as a component without dependencies of its own`() {
+        setup(
+            providedConfiguration,
+            """
+            dependencies {
+                implementation("com.google.guava:guava:33.4.0-jre")
+                hivemqProvided("com.hivemq:hivemq-extension-sdk:4.57.0")
+            }
+            """.trimIndent(),
+        )
+
+        gradleRunner("updateThirdPartyLicenses", "generateSbom").build()
+
+        // the SDK is public, so the report lists it, and not what it brings in, which the host provides
+        assertThat(licenses())
+            .contains("com.hivemq:hivemq-extension-sdk", "com.google.guava:guava")
+            .doesNotContain("org.slf4j:slf4j-api", "io.dropwizard.metrics:metrics-core")
+        val sbom = sbom()
+        assertThat(sbom["components"].map { it["name"].asText() })
+            .contains("hivemq-extension-sdk", "guava")
+            .doesNotContain("slf4j-api", "metrics-core")
+        // the component where the host's SBOM continues: the top-level component depends on it, it on nothing
+        val sdk = sbom.refOf("hivemq-extension-sdk")
+        assertThat(sbom.dependantsOf(sdk)).containsExactly(sbom["metadata"]["component"]["bom-ref"].asText())
+        assertThat(sbom["dependencies"].first { it["ref"].asText() == sdk }["dependsOn"]).isEmpty()
+        // the artifact does not contain the SDK's file, so the component carries no file description
+        val component = sbom["components"].first { it["name"].asText() == "hivemq-extension-sdk" }
+        assertThat(component.path("properties").map { it["name"].asText() }).doesNotContain("bsi:component:filename")
+    }
+
+    @Test
+    fun `keeps a public provided project of the build as a component without file or dependencies`() {
+        // the platform composite builds the public SDK itself and provides it to the extensions
+        projectDir.resolve("settings.gradle.kts").writeText(
+            """
+            rootProject.name = "provided-project"
+            include("a", "hivemq-extension-sdk")
+            """.trimIndent()
+        )
+        subproject(
+            "a",
+            """
+            dependencies {
+                implementation("com.google.guava:guava:33.4.0-jre")
+                hivemqProvided(project(":hivemq-extension-sdk"))
+            }
+            """.trimIndent(),
+        )
+        subproject(
+            "hivemq-extension-sdk",
+            """
+            dependencies {
+                implementation("org.slf4j:slf4j-api:2.0.16")
+            }
+            """.trimIndent(),
+            group = "com.hivemq",
+        )
+
+        gradleRunner(":a:updateThirdPartyLicenses", ":a:generateSbom").build()
+
+        // the project has no POM, so its built-in license lists it; what it brings in is provided and left out
+        assertThat(licenses(projectDir.resolve("a")))
+            .contains("com.hivemq:hivemq-extension-sdk")
+            .doesNotContain("org.slf4j:slf4j-api")
+        val sbom = mapper.readTree(projectDir.resolve("a/build/sbom/a.cdx.json"))
+        assertThat(sbom["components"].map { it["name"].asText() })
+            .contains("hivemq-extension-sdk", "guava")
+            .doesNotContain("slf4j-api")
+        val sdk = sbom["components"].first { it["name"].asText() == "hivemq-extension-sdk" }
+        val sdkRef = sdk["bom-ref"].asText()
+        assertThat(sbom["dependencies"].first { it["ref"].asText() == sdkRef }["dependsOn"]).isEmpty()
+        assertThat(sdk.path("properties").map { it["name"].asText() }).doesNotContain("bsi:component:filename")
+    }
+
+    @Test
+    fun `leaves a project of the build in an own group out`() {
+        projectDir.resolve("settings.gradle.kts").writeText(
+            """
+            rootProject.name = "provided-project"
+            include("a", "b")
+            """.trimIndent()
+        )
+        subproject(
+            "a",
+            """
+            dependencies {
+                implementation(project(":b"))
+                implementation("com.google.guava:guava:33.4.0-jre")
+            }
+            """.trimIndent(),
+        )
+        // a project has no license and is on no list; as one of our own, it is left out instead of failing the build
+        subproject(
+            "b",
+            """
+            dependencies {
+                implementation("org.slf4j:slf4j-api:2.0.16")
+            }
+            """.trimIndent(),
+            group = "com.hivemq",
+        )
+
+        val result = gradleRunner(":a:generateSbom").build()
+
+        assertThat(result.task(":a:generateSbom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        val sbom = mapper.readTree(projectDir.resolve("a/build/sbom/a.cdx.json"))
+        assertThat(sbom["components"].map { it["name"].asText() }).contains("guava", "slf4j-api").doesNotContain("b")
+        // what the hidden project brings in attaches to the component that depended on the project
+        assertThat(sbom.dependantsOf(sbom.refOf("slf4j-api")))
+            .containsExactly(sbom["metadata"]["component"]["bom-ref"].asText())
+    }
+
+    @Test
+    fun `leaves an internal module out and links what it brings in to the dependant`() {
+        module("hivemq-platform-sdk", "1.0.0", "extra:1.0", group = "com.hivemq")
+        module("extra", "1.0")
+        setup(
+            """
+            repositories {
+                maven { url = uri("repo") }
+            }
+            dependencies {
+                implementation("com.hivemq:hivemq-platform-sdk:1.0.0")
+            }
+            hivemqLicense {
+                overriddenLicenses.put("com.example:extra", "Apache-2.0")
+            }
+            """.trimIndent(),
+        )
+
+        gradleRunner("updateThirdPartyLicenses", "generateSbom").build()
+
+        // the internal module has no license and is not listed; extra, which only it brings in, is
+        assertThat(licenses()).contains("com.example:extra").doesNotContain("com.hivemq:hivemq-platform-sdk")
+        val sbom = sbom()
+        assertThat(sbom["components"].map { it["name"].asText() }).containsExactly("extra")
+        assertThat(sbom.dependantsOf(sbom.refOf("extra")))
+            .containsExactly(sbom["metadata"]["component"]["bom-ref"].asText())
+    }
+
+    @Test
+    fun `lists a module an internal pattern matches once allowedArtifacts names it`() {
+        module("hivemq-newly-public", "1.0.0", group = "com.hivemq.commons")
+        setup(
+            """
+            repositories {
+                maven { url = uri("repo") }
+            }
+            dependencies {
+                implementation("com.hivemq.commons:hivemq-newly-public:1.0.0")
+            }
+            hivemqLicense {
+                allowedArtifacts.add("com.hivemq.commons:hivemq-newly-public")
+                overriddenLicenses.put("com.hivemq.commons:hivemq-newly-public", "Apache-2.0")
+            }
+            """.trimIndent(),
+        )
+
+        gradleRunner("updateThirdPartyLicenses", "generateSbom").build()
+
+        // the public list wins over the internal pattern, so the module is listed and checked like any library
+        assertThat(licenses()).contains("com.hivemq.commons:hivemq-newly-public")
+        assertThat(sbom()["components"].map { it["name"].asText() }).containsExactly("hivemq-newly-public")
     }
 }
