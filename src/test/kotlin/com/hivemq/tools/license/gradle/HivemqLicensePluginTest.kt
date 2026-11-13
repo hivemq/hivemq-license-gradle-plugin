@@ -134,6 +134,7 @@ class HivemqLicensePluginTest {
                     println("projectName=" + ext.projectName.get())
                     println("ignoredGroupPrefixes=" + ext.ignoredGroupPrefixes.get())
                     println("allowedArtifacts=" + ext.allowedArtifacts.get())
+                    println("internalArtifacts=" + ext.internalArtifacts.get())
                 }
             }
             """.trimIndent()
@@ -144,7 +145,11 @@ class HivemqLicensePluginTest {
         assertThat(result.output)
             .contains("projectName=test-project")
             .contains("ignoredGroupPrefixes=[com.hivemq]")
-            .contains("allowedArtifacts=[com.hivemq:hivemq-mqtt-client]")
+            .contains("allowedArtifacts=[com.hivemq:hivemq-amazon-kinesis-extension-customization-sdk, ")
+            .contains("com.hivemq:hivemq-extension-sdk, ")
+            .contains("com.hivemq:hivemq-mqtt-client, ")
+            .contains("internalArtifacts=[@hivemq/*, com.hivemq.commons:*, ")
+            .contains("com.hivemq:hivemq-platform-sdk, com.hivemq:hivemq-pulse-*]")
     }
 
     @Test

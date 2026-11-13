@@ -119,40 +119,6 @@ class LicenseResolverResolveLicensesTest {
     }
 
     @Test
-    fun `ignores com_hivemq artifacts`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.hivemq",
-                  "name": "hivemq-extension-sdk",
-                  "version": "4.0.0",
-                  "licenses": [
-                    { "license": { "id": "Apache-2.0" } }
-                  ]
-                },
-                {
-                  "group": "com.google.guava",
-                  "name": "guava",
-                  "version": "32.1.3-jre",
-                  "licenses": [
-                    { "license": { "id": "Apache-2.0" } }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
-
-        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
-
-        assertThat(result).hasSize(1)
-        assertThat(result).containsKey("com.google.guava:guava")
-        assertThat(result).doesNotContainKey("com.hivemq:hivemq-extension-sdk")
-    }
-
-    @Test
     fun `includes allowed artifact hivemq-mqtt-client`() {
         val bom = writeBom(
             """
@@ -501,6 +467,398 @@ class LicenseResolverResolveLicensesTest {
         assertThat(result["com.example:some-lib"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
     }
 
+    // --- own modules and nested components ---
+
+    @Test
+    fun `fails for an own module on neither list even when the host provides it`() {
+        // a new public SDK the broker provides must be listed, not disappear with the provided modules
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.hivemq",
+                  "name": "hivemq-brand-new-sdk",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "license": { "id": "Apache-2.0" } }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(
+                bom,
+                defaultIgnoredPrefixes,
+                OwnModules.PUBLIC_HIVEMQ_MODULES,
+                providedModules = setOf("com.hivemq:hivemq-brand-new-sdk"),
+                internalArtifacts = OwnModules.INTERNAL_HIVEMQ_MODULES,
+            )
+        }
+            .isInstanceOf(IllegalStateException::class.java)
+            // once, although the filter and the resolver both see the module
+            .hasMessageContaining("1 license problem found")
+            .hasMessageContaining("Own module 'com.hivemq:hivemq-brand-new-sdk' (ignored group prefix 'com.hivemq')")
+    }
+
+    @Test
+    fun `fails for an own module on neither list, with the other problems`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.hivemq",
+                  "name": "hivemq-brand-new",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "license": { "id": "Apache-2.0" } }
+                  ]
+                },
+                {
+                  "group": "com.example",
+                  "name": "no-license-lib",
+                  "version": "1.0.0"
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(
+                bom,
+                defaultIgnoredPrefixes,
+                OwnModules.PUBLIC_HIVEMQ_MODULES,
+                internalArtifacts = OwnModules.INTERNAL_HIVEMQ_MODULES,
+            )
+        }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("2 license problems found in")
+            .hasMessageContaining(
+                "Own module 'com.hivemq:hivemq-brand-new' (ignored group prefix 'com.hivemq') is in neither " +
+                    "allowedArtifacts nor internalArtifacts"
+            )
+            .hasMessageContaining("No license found for 'com.example:no-license-lib:1.0.0'")
+    }
+
+    @Test
+    fun `leaves a project of the build in an own group out without listing it`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.hivemq",
+                  "name": "some-internal-project",
+                  "version": "1.0.0",
+                  "purl": "pkg:maven/com.hivemq/some-internal-project@1.0.0?project_path=%3Asome-internal-project"
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, emptySet())
+
+        assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `leaves an internal own module out, license or not, and lists a public one`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.hivemq",
+                  "name": "hivemq-platform-sdk",
+                  "version": "4.0.0"
+                },
+                {
+                  "group": "com.hivemq",
+                  "name": "hivemq-extension-sdk",
+                  "version": "4.0.0",
+                  "licenses": [
+                    { "license": { "id": "Apache-2.0" } }
+                  ]
+                },
+                {
+                  "group": "com.google.guava",
+                  "name": "guava",
+                  "version": "32.1.3-jre",
+                  "licenses": [
+                    { "license": { "id": "Apache-2.0" } }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            OwnModules.PUBLIC_HIVEMQ_MODULES,
+            internalArtifacts = OwnModules.INTERNAL_HIVEMQ_MODULES,
+        )
+
+        assertThat(result).containsOnlyKeys("com.google.guava:guava", "com.hivemq:hivemq-extension-sdk")
+    }
+
+    @Test
+    fun `leaves out a nested provided component but resolves what is nested in a hidden one`() {
+        // a provided component nested in a kept one, and a third-party component nested in an internal one
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "org.example",
+                  "name": "lib",
+                  "version": "1.0",
+                  "licenses": [ { "license": { "id": "MIT" } } ],
+                  "components": [
+                    {
+                      "group": "org.example",
+                      "name": "provided",
+                      "version": "1.0",
+                      "licenses": [ { "license": { "id": "MIT" } } ]
+                    }
+                  ]
+                },
+                {
+                  "group": "com.hivemq",
+                  "name": "hivemq-platform-sdk",
+                  "version": "1.0",
+                  "components": [
+                    {
+                      "group": "org.example",
+                      "name": "below-internal",
+                      "version": "1.0",
+                      "licenses": [ { "license": { "id": "MIT" } } ]
+                    }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            OwnModules.PUBLIC_HIVEMQ_MODULES,
+            providedModules = setOf("org.example:provided"),
+            internalArtifacts = OwnModules.INTERNAL_HIVEMQ_MODULES,
+        )
+
+        // the hidden module ships with what is nested in it, the provided one does not ship at all
+        assertThat(result).containsOnlyKeys("org.example:below-internal", "org.example:lib")
+    }
+
+    @Test
+    fun `leaves out a project of the build it recognises by its bom-ref alone`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.hivemq",
+                  "name": "some-internal-project",
+                  "version": "1.0.0",
+                  "bom-ref": "pkg:maven/com.hivemq/some-internal-project@1.0.0?project_path=%3Asome-internal-project"
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, emptySet())
+
+        assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `leaves out a provided component nested in the top-level component`() {
+        val bom = writeBom(
+            """
+            {
+              "metadata": {
+                "component": {
+                  "group": "com.hivemq", "name": "app", "version": "1.0.0",
+                  "components": [
+                    {
+                      "group": "org.example",
+                      "name": "provided",
+                      "version": "1.0",
+                      "licenses": [ { "license": { "id": "MIT" } } ]
+                    }
+                  ]
+                }
+              },
+              "components": []
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            providedModules = setOf("org.example:provided"),
+        )
+
+        assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `leaves out an internal component without a version`() {
+        // the filter removes it before the typed model, which needs a version, is built
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.hivemq",
+                  "name": "hivemq-platform-sdk"
+                },
+                {
+                  "group": "org.slf4j",
+                  "name": "slf4j-api",
+                  "version": "2.0.9",
+                  "licenses": [
+                    { "license": { "id": "MIT" } }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            OwnModules.PUBLIC_HIVEMQ_MODULES,
+            internalArtifacts = OwnModules.INTERNAL_HIVEMQ_MODULES,
+        )
+
+        assertThat(result).containsOnlyKeys("org.slf4j:slf4j-api")
+    }
+
+    @Test
+    fun `lists a public own module built by this build through its built-in license`() {
+        // a project of the build has no POM, so CycloneDX writes no license for it
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.hivemq",
+                  "name": "hivemq-extension-sdk",
+                  "version": "4.57.0-SNAPSHOT",
+                  "purl": "pkg:maven/com.hivemq/hivemq-extension-sdk@4.57.0-SNAPSHOT?project_path=%3Asdk"
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, OwnModules.PUBLIC_HIVEMQ_MODULES)
+
+        assertThat(result.getValue("com.hivemq:hivemq-extension-sdk").licenses).containsExactly(KnownLicense.APACHE_2_0)
+    }
+
+    @Test
+    fun `recognises a CycloneDX BOM without a top-level components array`() {
+        val bom = writeBom(
+            """
+            {
+              "bomFormat": "CycloneDX",
+              "specVersion": "1.6",
+              "metadata": {
+                "component": {
+                  "group": "com.hivemq", "name": "app", "version": "1.0.0",
+                  "components": [
+                    {
+                      "group": "org.example",
+                      "name": "part",
+                      "version": "1.0",
+                      "licenses": [ { "license": { "id": "MIT" } } ]
+                    }
+                  ]
+                }
+              }
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result).containsOnlyKeys("org.example:part")
+    }
+
+    @Test
+    fun `resolves a component nested in another one like a top-level one`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "org.example",
+                  "name": "outer",
+                  "version": "1.0",
+                  "licenses": [ { "license": { "id": "MIT" } } ],
+                  "components": [
+                    {
+                      "group": "org.example",
+                      "name": "inner",
+                      "version": "1.0",
+                      "licenses": [ { "license": { "id": "Apache-2.0" } } ]
+                    }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result).containsOnlyKeys("org.example:inner", "org.example:outer")
+    }
+
+    @Test
+    fun `resolves a component nested in the top-level component like a top-level one`() {
+        val bom = writeBom(
+            """
+            {
+              "metadata": {
+                "component": {
+                  "group": "com.hivemq", "name": "app", "version": "1.0.0",
+                  "components": [
+                    {
+                      "group": "org.example",
+                      "name": "part",
+                      "version": "1.0",
+                      "licenses": [ { "license": { "id": "MIT" } } ]
+                    }
+                  ]
+                }
+              },
+              "components": []
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result).containsOnlyKeys("org.example:part")
+    }
+
     // --- license ids regardless of case ---
 
     @Test
@@ -552,6 +910,209 @@ class LicenseResolverResolveLicensesTest {
         )
 
         assertThat(result["com.example:lower-lib"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
+    }
+
+    // --- provided modules ---
+
+    @Test
+    fun `does not fail on the license problem of a provided module`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                { "group": "com.example", "name": "provided-lib", "version": "1.0.0" },
+                { "group": "com.google.guava", "name": "guava", "version": "33.4.0-jre",
+                  "licenses": [ { "license": { "id": "Apache-2.0" } } ] }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            providedModules = setOf("com.example:provided-lib"),
+        )
+
+        assertThat(result.keys).containsExactly("com.google.guava:guava")
+    }
+
+    @Test
+    fun `keeps a provided module that is public`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.hivemq",
+                  "name": "hivemq-extension-sdk",
+                  "version": "4.0.0",
+                  "licenses": [
+                    { "license": { "id": "Apache-2.0" } }
+                  ]
+                },
+                {
+                  "group": "org.slf4j",
+                  "name": "slf4j-api",
+                  "version": "2.0.9",
+                  "licenses": [
+                    { "license": { "id": "MIT" } }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            OwnModules.PUBLIC_HIVEMQ_MODULES,
+            providedModules = setOf("com.hivemq:hivemq-extension-sdk", "org.slf4j:slf4j-api"),
+        )
+
+        assertThat(result).containsOnlyKeys("com.hivemq:hivemq-extension-sdk")
+    }
+
+    @Test
+    fun `leaves out a provided component without a version`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                { "group": "com.example", "name": "provided-lib" },
+                { "group": "com.google.guava", "name": "guava", "version": "33.4.0-jre",
+                  "licenses": [ { "license": { "id": "Apache-2.0" } } ] }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            providedModules = setOf("com.example:provided-lib"),
+        )
+
+        assertThat(result.keys).containsExactly("com.google.guava:guava")
+    }
+
+    @Test
+    fun `leaves out a provided third-party module whatever the public patterns match`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "org.slf4j",
+                  "name": "slf4j-api",
+                  "version": "2.0.9",
+                  "licenses": [
+                    { "license": { "id": "MIT" } }
+                  ]
+                },
+                {
+                  "group": "com.hivemq",
+                  "name": "hivemq-anything",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "license": { "id": "Apache-2.0" } }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        // the public exception covers own modules only, so a pattern that matches everything keeps just our own
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            setOf("*"),
+            providedModules = setOf("org.slf4j:slf4j-api", "com.hivemq:hivemq-anything"),
+        )
+
+        assertThat(result).containsOnlyKeys("com.hivemq:hivemq-anything")
+    }
+
+    @Test
+    fun `skips a provided module`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                { "group": "org.slf4j", "name": "slf4j-api", "version": "2.0.16",
+                  "licenses": [ { "license": { "id": "MIT" } } ] },
+                { "group": "com.google.guava", "name": "guava", "version": "33.4.0-jre",
+                  "licenses": [ { "license": { "id": "Apache-2.0" } } ] }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            providedModules = setOf("org.slf4j:slf4j-api"),
+        )
+
+        assertThat(result.keys).containsExactly("com.google.guava:guava")
+    }
+
+    @Test
+    fun `skips every version of a provided module`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                { "group": "org.slf4j", "name": "slf4j-api", "version": "1.7.36",
+                  "licenses": [ { "license": { "id": "MIT" } } ] },
+                { "group": "org.slf4j", "name": "slf4j-api", "version": "2.0.16",
+                  "licenses": [ { "license": { "id": "MIT" } } ] },
+                { "group": "com.google.guava", "name": "guava", "version": "33.4.0-jre",
+                  "licenses": [ { "license": { "id": "Apache-2.0" } } ] }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            providedModules = setOf("org.slf4j:slf4j-api"),
+        )
+
+        assertThat(result.keys).containsExactly("com.google.guava:guava")
+    }
+
+    @Test
+    fun `still fails on the license problem of a module that is not provided`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                { "group": "com.example", "name": "provided-lib", "version": "1.0.0" },
+                { "group": "com.example", "name": "no-license-lib", "version": "1.0.0" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy {
+            LicenseResolver.resolveLicenses(
+                bom,
+                defaultIgnoredPrefixes,
+                defaultAllowedArtifacts,
+                providedModules = setOf("com.example:provided-lib"),
+            )
+        }.isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("1 license problem found")
+            .hasMessageContaining("No license found for 'com.example:no-license-lib:1.0.0'")
+            .hasMessageNotContaining("provided-lib")
     }
 
     // --- SPDX expressions ---
@@ -1350,7 +1911,7 @@ class LicenseResolverResolveLicensesTest {
             .hasMessageContaining("1 license problem found in '")
     }
 
-    // --- pnpm reports (no "components" key) ---
+    // --- pnpm reports (neither "bomFormat" nor "components") ---
 
     @Test
     fun `resolves pnpm licenses when the report has no components`() {
@@ -1376,7 +1937,7 @@ class LicenseResolverResolveLicensesTest {
     }
 
     @Test
-    fun `pnpm ignores scoped packages via ignoredGroupPrefixes`() {
+    fun `pnpm leaves internal scoped packages out`() {
         val report = writeBom(
             """
             {
@@ -1388,9 +1949,34 @@ class LicenseResolverResolveLicensesTest {
             """.trimIndent()
         )
 
-        val result = LicenseResolver.resolveLicenses(report, setOf("@example/"), emptySet())
+        val result = LicenseResolver.resolveLicenses(
+            report,
+            setOf("@example/"),
+            emptySet(),
+            internalArtifacts = setOf("@example/*"),
+        )
 
         assertThat(result).containsOnlyKeys("react")
+    }
+
+    @Test
+    fun `pnpm fails for a scoped package on neither list`() {
+        val report = writeBom(
+            """
+            {
+              "MIT": [
+                { "name": "@example/internal-widget", "versions": ["1.0.0"], "license": "MIT" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertThatThrownBy { LicenseResolver.resolveLicenses(report, setOf("@example/"), emptySet()) }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining(
+                "Own module '@example/internal-widget' (ignored group prefix '@example/') is in neither " +
+                    "allowedArtifacts nor internalArtifacts"
+            )
     }
 
     @Test

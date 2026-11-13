@@ -35,6 +35,12 @@ which writes `build/license/bom.json` and no XML file. The `cyclonedxDirectBom` 
   `runtimeClasspath` is always read.
 - Other settings of `cyclonedxDirectBom`, such as `projectType`, go to `generateDependencyBom`. Its `includeConfigs`
   and `skipConfigs` belong to the plugin, and a build script that changes them fails.
+- `ignoredGroupPrefixes` no longer hides a whole group by itself: every module under a prefix matches `allowedArtifacts`
+  or the new `internalArtifacts`, or the build fails and says which list to add it to. HiveMQ builds get both lists as
+  defaults, so their reports now list HiveMQ's public libraries (the extension SDK, every MQTT client module, the
+  customization SDKs) and their SBOMs leave the internal modules out like the reports always did. A build with another
+  own group adds `group:*` to `internalArtifacts`. A build that called `allowedArtifacts.set(...)` lost the defaults
+  and now fails on the first HiveMQ module it meets; it calls `add` instead.
 
 ## Configuration
 
@@ -44,8 +50,9 @@ The `hivemqLicense` extension provides the following properties:
 |------------------------------|-------------------------------|-------------------------------------|----------|------------------------------------------------------------------------|
 | `projectName`                | `Property<String>`            | `project.name`                      | No       | Display name used in license report headers                            |
 | `thirdPartyLicenseDirectory` | `DirectoryProperty`           | -                                   | Yes      | Directory where license report files are generated                     |
-| `ignoredGroupPrefixes`       | `SetProperty<String>`         | `["com.hivemq"]`                    | No       | Group ID prefixes to exclude from reports (internal dependencies)      |
-| `allowedArtifacts`           | `SetProperty<String>`         | `["com.hivemq:hivemq-mqtt-client"]` | No       | Specific artifacts to include despite matching an ignored group prefix |
+| `ignoredGroupPrefixes`       | `SetProperty<String>`         | `["com.hivemq"]`                    | No       | Group prefixes of the build's own modules, classified by the two below |
+| `allowedArtifacts`           | `SetProperty<String>`         | HiveMQ's Maven Central libraries    | No       | Own modules listed like third-party ones; `group:name`, `*` wildcard   |
+| `internalArtifacts`          | `SetProperty<String>`         | HiveMQ's private modules            | No       | Own modules left out; same syntax; a project of this build counts too  |
 | `additionalConfigurations`   | `SetProperty<String>`         | `[]`                                | No       | Extra Gradle configurations to include in the CycloneDX BOM            |
 | `overriddenLicenses`         | `MapProperty<String, String>` | `{}`                                | No       | Override license SPDX IDs for specific artifacts                       |
 | `sbomName`                   | `Property<String>`            | `project.name`                      | No       | SBOM file name without `.cdx.json`; blank, `/` or `\` fails the build  |
@@ -54,14 +61,42 @@ The `hivemqLicense` extension provides the following properties:
 | `sbomCreator`                | `Property<String>`            | `security@hivemq.com`               | No       | Email address or http(s) URL of that organisation, or the build fails  |
 | `sbomArtifactFileName`       | `Property<String>`            | `jar` or `shadowJar` file name      | No       | Top-level component's file name; the default needs the `java` plugin   |
 
+### Own modules
+
+Every module in a group that `ignoredGroupPrefixes` names is one of the build's own (a package without a group, from a
+pnpm report, is matched by its name, `@hivemq/` for example), and two lists say what happens to it. A module matching
+`allowedArtifacts` is public: listed in the reports, checked and kept in the SBOM like any third-party library. A module
+matching `internalArtifacts`, or built by this build or an included build, is internal: left out of the reports, the
+check and the SBOM, which attaches what it brings in to the component that depended on it, so a library that only an
+internal module brings in stays listed. An own module on neither list fails `checkApprovedLicenses`,
+`updateThirdPartyLicenses` and `generateSbom`, also when `hivemqProvided` resolves it, so a new module is classified
+before it is listed or hidden by accident.
+Both lists take `group:name`, or a package name, where `*` matches any run of characters. Add to them, as `set` replaces
+the defaults: HiveMQ's libraries on Maven Central (the extension SDK, the MQTT client modules, the customization SDKs
+and others) are public, its modules from private repositories (`com.hivemq.commons:*`, `com.hivemq:hivemq-pulse-*`,
+the platform SDK, Data Hub, clustering and others) and its `@hivemq/*` packages internal. A build whose own group is not
+HiveMQ's names it in `ignoredGroupPrefixes`, adds `group:*` to `internalArtifacts` and its public modules to
+`allowedArtifacts`.
+
+In a project with a `hivemqProvided` configuration (the HiveMQ extension Gradle plugin creates it for the dependencies
+the broker supplies at runtime), everything that configuration resolves is left out of the reports, the check and the
+SBOM, the same rule the extension jar applies when it leaves those libraries out; the broker's own report covers them,
+and its SBOM will once it has one. The public modules among them stay, in the SBOM as components without dependencies
+of their own and without a file description, since the artifact does not contain their file: the point from which the
+broker's SBOM continues. There is no extension property for it. The CycloneDX
+BOM, `build/license/bom.json`, still lists these modules, and `checkApprovedLicenses`, `updateThirdPartyLicenses` and
+`generateSbom` skip them when they read it: CycloneDX cannot drop part of `runtimeClasspath`, which contains them
+because `implementation` extends `hivemqProvided`.
+
 ### Advanced Example
 
 ```kotlin
 hivemqLicense {
     projectName = "My Application"
     thirdPartyLicenseDirectory = layout.buildDirectory.dir("third-party-licenses")
-    ignoredGroupPrefixes.set(setOf("com.hivemq", "com.mycompany"))
-    allowedArtifacts.set(setOf("com.hivemq:hivemq-mqtt-client", "com.mycompany:public-lib"))
+    ignoredGroupPrefixes.add("com.mycompany")
+    internalArtifacts.add("com.mycompany:*")
+    allowedArtifacts.add("com.mycompany:public-lib")
     overriddenLicenses.set(mapOf(
         "org.example:some-lib" to "Apache-2.0",
         "org.jline:jline" to "BSD-3-Clause",
@@ -171,20 +206,21 @@ requires beyond CycloneDX's defaults:
 - A `compositions` entry declaring the dependency graph `complete`, or `incomplete` when the configurations the BOM is
   built from resolve a file dependency, such as a jar checked into the repository, or fail to resolve a module:
   CycloneDX leaves both out of the BOM, and `generateSbom` warns with the reasons. A file dependency counts no matter
-  which project declares it: this one, or one it depends on, in this build or in an included build.
+  which project declares it: this one, or one it depends on, in this build or in an included build. `complete` refers to
+  the dependency graph of the shipped artifact, without the modules a `hivemqProvided` configuration resolves.
 - Licenses: the entries CycloneDX wrote from the POM are tagged `declared`; the license this plugin resolves for the
   reports (overrides included) is added as `concluded`, one entry per license when several apply. When a component's
   declared license is a single SPDX expression and a concluded license is added, the expression is kept whole as the
   `name` of the declared entry, because a CycloneDX license list holds either single licenses or one expression. A
-  component the reports leave out (a module matched by `ignoredGroupPrefixes` and not listed in `allowedArtifacts`),
-  or in a version the reports do not list, keeps only its declared entries.
+  component in a version the reports do not list keeps only its declared entries.
 
 The file names and the completeness follow the configurations the BOM is built from: `runtimeClasspath` and the
 `additionalConfigurations`, which are the only ones `generateDependencyBom` reads.
 
 Known gaps: first-party components (the top-level component and the projects of this build and of included builds) carry
-no license, so a project dependency fails `generateSbom` like it fails `checkApprovedLicenses` unless
-`ignoredGroupPrefixes` covers its group or an override names it; concluded licenses are written as one license object
+no license, so a project dependency of a group that is not the build's own fails `generateSbom` like it fails
+`checkApprovedLicenses` unless an override names it (a project of an own group is internal and left out, a public one
+takes its built-in license); concluded licenses are written as one license object
 per license instead of the single SPDX expression the guideline shows, because a CycloneDX 1.6 license list cannot mix
 an expression with the declared license objects; files other than `.jar` and `.zip` get a file name but no executable,
 archive or structured property; and a component whose POM inherits `<organization>` and `<scm>` from a parent POM gets
@@ -193,7 +229,20 @@ no creator, as described above.
 Deliberate deviations: the serial number is derived from the content, while CycloneDX recommends a new serial number
 for every generated BOM even when the content is unchanged; and the timestamp is `sbomTimestamp`, by default
 `SOURCE_DATE_EPOCH` or the commit time, instead of the time the SBOM data was compiled, which is what BSI TR-03183-2
-names. Both keep the file reproducible, so that archives containing it stay cacheable.
+names. Both keep the file reproducible, so that archives containing it stay cacheable. BSI TR-03183-2 section 5.1 also
+requires identifying, on each path, the first component outside the scope of delivery, so that the SBOM can be chained
+with the SBOM of the environment the software runs in; the SBOM of a HiveMQ extension keeps the public SDK it links
+against as that component and names nothing else the broker provides, and no SBOM names the internal modules it leaves
+out (see Own modules), only what they bring in.
+
+Every version of the modules a `hivemqProvided` configuration resolves, the public ones excepted, and of the internal
+own modules is left out, with its dependency entries, nested in another component or not. A provided module takes the
+components nested in it along, an internal one leaves them in its place, since they ship inside it. A reference to a
+left-out module is replaced by references to the components that stay and that it leads to, directly or through other
+left-out modules, so the graph still reaches every component that stays, such as a module that only another version of
+a provided module brings in; a reference from a `provides` list, a vulnerability or a composition is removed. A public
+provided module stays with an empty `dependsOn` list, its targets handed to its dependants, and without a file
+description, whatever the BOM carried.
 
 The manufacturer fields, the license acknowledgements and the `source-distribution` reference exist from CycloneDX
 specification 1.6 on, which is what `generateDependencyBom` writes by default; `generateSbom` fails on a BOM that
@@ -223,6 +272,40 @@ dependencies {
 The variant exists only in projects with the `java` plugin. In other projects it would be their only variant with
 attributes, so Gradle would match their consumers against it instead of handing out the `default` configuration.
 
+#### A second SBOM of the same project
+
+A project that ships its jar under a second file name, for example because an image renames it, needs a second SBOM,
+because BSI TR-03183-2 records one file name per component. The plugin configures every `GenerateSbomTask` of the
+project like `generateSbom`: the licence options (`ignoredGroupPrefixes`, `allowedArtifacts`, `internalArtifacts`,
+`overriddenLicenses`) as values a task can add to, everything else as a convention that `set(...)` replaces. So a second
+task sets only what differs:
+
+```kotlin
+import com.hivemq.tools.license.gradle.sbom.GenerateSbomTask
+
+val generateInitImageSbom by tasks.registering(GenerateSbomTask::class) {
+    artifactFileName.set("hivemq-platform-operator-init-app.jar")
+}
+```
+
+It writes `build/sbom/<task name>/<sbomName>.cdx.json`: the file keeps the component's name, and the directory keeps
+two tasks from overwriting each other. `sbomElements` carries only the file of `generateSbom`, so a build that hands the
+second SBOM to other projects adds a consumable configuration with a `Category` attribute of its own:
+
+```kotlin
+val initImageSbomElements by configurations.creating {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+    attributes {
+        attribute(Category.CATEGORY_ATTRIBUTE, objects.named("init-image-sbom"))
+    }
+    outgoing.artifact(generateInitImageSbom.flatMap { it.outputFile })
+}
+```
+
+On Gradle 8, which builds the artifacts of every visible configuration as part of `assemble`, the configuration also
+needs `isVisible = false`, or `assemble` writes that SBOM too.
+
 ### Custom License Tasks
 
 You can register additional `UpdateThirdPartyLicensesTask` instances for non-Gradle dependency sources like pnpm:
@@ -235,9 +318,13 @@ tasks.register("updateThirdPartyLicensesFrontend", com.hivemq.tools.license.grad
     outputFileNamePrefix.set("frontend-")
     dependencyLicense.set(file("path/to/licenses-frontend.json"))
     ignoredGroupPrefixes.set(setOf("@mycompany/"))
+    internalArtifacts.add("@mycompany/*")
     outputDirectory.set(layout.projectDirectory.dir("src/distribution/third-party-licenses"))
 }
 ```
+
+Such a task starts with the extension's `allowedArtifacts` and `internalArtifacts`, so `add` extends them and `set`
+replaces them; a task that leaves `@hivemq/` as its prefix needs no list of its own, the defaults cover that scope.
 
 ## Input Formats
 
@@ -327,6 +414,9 @@ Some well-known artifacts don't report license metadata in CycloneDX. The plugin
 | `org.picocontainer:picocontainer`            | BSD-3-Clause |
 | `org.w3c.css:sac`                            | W3C-19980720 |
 
+HiveMQ's public libraries, the default `allowedArtifacts`, are mapped to Apache-2.0 as well: a composite build
+includes them as projects, which have no POM to read a license from.
+
 These can be overridden using the `overriddenLicenses` configuration. An override must name an SPDX ID from the
 approved table, matched regardless of case, and every override is checked, whether or not its module turns up in the
 BOM.
@@ -337,7 +427,8 @@ BOM.
    [CycloneDX Gradle Plugin](https://github.com/CycloneDX/cyclonedx-gradle-plugin), without applying that plugin; the
    task writes `build/license/bom.json` from `runtimeClasspath` and the `additionalConfigurations`.
 2. The three tasks, `checkApprovedLicenses`, `updateThirdPartyLicenses` and `generateSbom`, parse the generated BOM and resolve licenses using SPDX IDs, license name patterns, and URL-based matching; the first two also read pnpm JSON.
-3. Dependencies matching the configured `ignoredGroupPrefixes` are excluded (unless listed in `allowedArtifacts`).
+3. Own modules, the ones under `ignoredGroupPrefixes`, are listed when `allowedArtifacts` names them, left out when
+   `internalArtifacts` names them or this build builds them, and fail the build otherwise.
 
 ## Requirements
 

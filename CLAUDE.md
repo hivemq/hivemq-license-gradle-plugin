@@ -14,6 +14,7 @@ Gradle plugin that generates and validates third-party license reports from Cycl
 
 - `src/main/kotlin/com/hivemq/tools/license/gradle/License.kt` — `KnownLicense` enum (alphabetically ordered) and `UnknownLicense` data class
 - `src/main/kotlin/com/hivemq/tools/license/gradle/LicenseResolver.kt` — `LICENSE_ORDER` (priority-ordered), `BUILT_IN_LICENSES`, `SPDX_ID_MAP`, license resolution logic
+- `src/main/kotlin/com/hivemq/tools/license/gradle/OwnModules.kt`, classifies the modules of the build's own groups (public: listed, internal: left out, neither: the build fails) and holds the HiveMQ defaults of both lists
 - `src/main/kotlin/com/hivemq/tools/license/gradle/HivemqLicenseExtension.kt` — Plugin extension configuration
 - `src/main/kotlin/com/hivemq/tools/license/gradle/HivemqLicensePlugin.kt` — Plugin entry point
 - `src/main/kotlin/com/hivemq/tools/license/gradle/LicenseResolvingTask.kt`, shared inputs of `checkApprovedLicenses`, `updateThirdPartyLicenses` and `generateSbom`, and the license resolution call that fails on any license problem
@@ -21,6 +22,7 @@ Gradle plugin that generates and validates third-party license reports from Cycl
 - `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/SbomNormalizer.kt`, rewrites the CycloneDX JSON so identical inputs give identical bytes (timestamp, serial number, ordering, CI references)
 - `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/GenerateSbomTask.kt`, the task around it, a `LicenseResolvingTask`, so a license problem fails it like `checkApprovedLicenses`; the plugin registers it as `generateSbom` and exposes the file as the `sbomElements` variant
 - `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/SbomWiring.kt`, what the plugin's `apply` does for the SBOM: the `sbom*` conventions, the `generateSbom` registration with its SBOM inputs (the plugin sets the BOM and the license inputs, as for the other license tasks), and the `sbomElements` variant when the `java` plugin is applied
+- `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/BomFilter.kt`, removes the components a `hivemqProvided` configuration resolves from the BOM tree before the enricher sees it, and re-links the dependency references that went through them
 - `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/SbomTimestampSource.kt`, the value source behind the default `sbomTimestamp` (`SOURCE_DATE_EPOCH`, then the HEAD commit time, then now with a warning)
 - `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/SbomVcsUrlSource.kt`, the value source behind the SBOM's `vcs` reference (the project's own `origin` remote)
 - `src/main/kotlin/com/hivemq/tools/license/gradle/sbom/GitCommand.kt`, runs git for both value sources with untranslated messages, and gives null when git cannot be started

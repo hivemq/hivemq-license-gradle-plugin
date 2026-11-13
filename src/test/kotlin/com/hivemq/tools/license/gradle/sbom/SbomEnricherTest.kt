@@ -83,6 +83,30 @@ class SbomEnricherTest {
     // --- Input ---
 
     @Test
+    fun `enriches a component nested in another one like a top-level one`() {
+        val nested = """
+            {
+              "type": "library", "bom-ref": "pkg:maven/org.example/outer@1.0",
+              "group": "org.example", "name": "outer", "version": "1.0",
+              "licenses": [ { "license": { "id": "Apache-2.0" } } ],
+              "components": [
+                {
+                  "type": "library", "bom-ref": "pkg:maven/org.example/lib@1.0",
+                  "group": "org.example", "name": "lib", "version": "1.0",
+                  "licenses": [ { "license": { "id": "Apache-2.0" } } ]
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val lib = enrich(bom(components = nested)).component("outer")["components"].single()
+
+        assertThat(lib.property("bsi:component:filename")).isEqualTo("lib-1.0.jar")
+        assertThat(lib["licenses"].map { it["license"]["acknowledgement"].asText() })
+            .containsExactly("declared", "concluded")
+    }
+
+    @Test
     fun `accepts a BOM that ends with a newline`() {
         val result = enrich(bom() + "\n".toByteArray())
 

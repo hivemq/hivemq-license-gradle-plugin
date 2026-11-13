@@ -36,10 +36,11 @@ class PnpmFrontendLicensesIntegrationTest {
     @TempDir
     lateinit var projectDir: File
 
-    private fun gradleRunner(vararg args: String) = GradleRunner.create()
+    /** Runs the frontend task, the only one these tests register. */
+    private fun gradleRunner() = GradleRunner.create()
         .withProjectDir(projectDir)
         .withPluginClasspath()
-        .withArguments(*args)
+        .withArguments("updateFrontendLicenses")
 
     @Test
     fun `manually registered task generates a prefixed report from a pnpm license file`() {
@@ -73,12 +74,13 @@ class PnpmFrontendLicensesIntegrationTest {
                 outputFileNamePrefix.set("frontend-")
                 dependencyLicense.set(layout.projectDirectory.file("frontend-licenses.json"))
                 ignoredGroupPrefixes.set(setOf("@example/"))
+                internalArtifacts.add("@example/*")
                 outputDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
             }
             """.trimIndent()
         )
 
-        val result = gradleRunner("updateFrontendLicenses").build()
+        val result = gradleRunner().build()
 
         assertThat(result.task(":updateFrontendLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
 
@@ -95,7 +97,88 @@ class PnpmFrontendLicensesIntegrationTest {
             .contains("18.2.0")
             .contains("lru-cache")
             .contains("ISC")
-        // Scoped internal packages are excluded via ignoredGroupPrefixes.
+        // a scoped package of the own prefix is left out when internalArtifacts names it
         assertThat(text).doesNotContain("@example/internal-widget")
+    }
+
+    @Test
+    fun `manually registered task leaves the default internal scope out without a list of its own`() {
+        projectDir.resolve("settings.gradle.kts").writeText("""rootProject.name = "frontend-project"""")
+        projectDir.resolve("frontend-licenses.json").writeText(
+            """
+            {
+              "MIT": [
+                { "name": "react", "versions": ["18.2.0"], "license": "MIT" },
+                { "name": "@hivemq/ui-library", "versions": ["1.0.0"], "license": "MIT" }
+              ]
+            }
+            """.trimIndent()
+        )
+        projectDir.resolve("build.gradle.kts").writeText(
+            """
+            import com.hivemq.tools.license.gradle.UpdateThirdPartyLicensesTask
+
+            plugins {
+                java
+                id("com.hivemq.tools.license")
+            }
+
+            tasks.register("updateFrontendLicenses", UpdateThirdPartyLicensesTask::class.java) {
+                projectName.set("Frontend")
+                outputFileNamePrefix.set("frontend-")
+                dependencyLicense.set(layout.projectDirectory.file("frontend-licenses.json"))
+                ignoredGroupPrefixes.set(setOf("@hivemq/"))
+                outputDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+            }
+            """.trimIndent()
+        )
+
+        val result = gradleRunner().build()
+
+        assertThat(result.task(":updateFrontendLicenses")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        // the extension's internalArtifacts, @hivemq/* among them, reach a task the build registers
+        val text = projectDir.resolve("build/tmp/third-party-licenses/frontend-licenses").readText()
+        assertThat(text).contains("react").doesNotContain("@hivemq/ui-library")
+    }
+
+    @Test
+    fun `manually registered task replaces a default list with set`() {
+        projectDir.resolve("settings.gradle.kts").writeText("""rootProject.name = "frontend-project"""")
+        projectDir.resolve("frontend-licenses.json").writeText(
+            """
+            {
+              "MIT": [
+                { "name": "@hivemq/ui-library", "versions": ["1.0.0"], "license": "MIT" }
+              ]
+            }
+            """.trimIndent()
+        )
+        projectDir.resolve("build.gradle.kts").writeText(
+            """
+            import com.hivemq.tools.license.gradle.UpdateThirdPartyLicensesTask
+
+            plugins {
+                java
+                id("com.hivemq.tools.license")
+            }
+
+            tasks.register("updateFrontendLicenses", UpdateThirdPartyLicensesTask::class.java) {
+                projectName.set("Frontend")
+                outputFileNamePrefix.set("frontend-")
+                dependencyLicense.set(layout.projectDirectory.file("frontend-licenses.json"))
+                ignoredGroupPrefixes.set(setOf("@hivemq/"))
+                internalArtifacts.set(setOf("@other/*"))
+                outputDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+            }
+            """.trimIndent()
+        )
+
+        val result = gradleRunner().buildAndFail()
+
+        // set discards the extension's lists, so the package the defaults would have left out is unclassified
+        assertThat(result.output).contains(
+            "Own module '@hivemq/ui-library' (ignored group prefix '@hivemq/') is in neither allowedArtifacts nor " +
+                "internalArtifacts"
+        )
     }
 }
