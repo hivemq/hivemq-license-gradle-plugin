@@ -54,6 +54,9 @@ The `hivemqLicense` extension provides the following properties:
 | `sbomCreator`                | `Property<String>`            | `security@hivemq.com`               | No       | Email address or http(s) URL of that organisation, or the build fails  |
 | `sbomArtifactFileName`       | `Property<String>`            | `jar` or `shadowJar` file name      | No       | Top-level component's file name; the default needs the `java` plugin   |
 
+`sbomTimestamp`, `sbomCreatorName` and `sbomCreator` also apply to every `MergeSbomsTask`, see
+[Product-level SBOMs](#product-level-sboms).
+
 ### Advanced Example
 
 ```kotlin
@@ -222,6 +225,111 @@ dependencies {
 
 The variant exists only in projects with the `java` plugin. In other projects it would be their only variant with
 attributes, so Gradle would match their consumers against it instead of handing out the `default` configuration.
+
+### Product-level SBOMs
+
+A ZIP or a Docker image ships several components, each with its own `<component>.cdx.json`. The product as placed on
+the market needs one SBOM of its own, which the plugin builds from those files: register a
+`com.hivemq.tools.license.gradle.sbom.MergeSbomsTask` per deliverable and feed it the SBOMs of the parts, from the
+`sbomElements` variant of every part built in the same composite and from the `sbom/` folder of a zip that comes from
+a repository. In the example, `buildPlatformZip` is the `Zip` task that builds the deliverable and `dnsZip` is a
+resolvable configuration that holds the published zip of an extension:
+
+```kotlin
+import com.hivemq.tools.license.gradle.sbom.MergeSbomsTask
+
+val platformSboms by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    attributes {
+        attribute(Category.CATEGORY_ATTRIBUTE, objects.named("sbom"))
+    }
+}
+dependencies {
+    platformSboms("com.hivemq:hivemq-enterprise")
+    platformSboms("com.hivemq.extensions:hivemq-kafka-extension")
+}
+val mergePlatformZipSbom by tasks.registering(MergeSbomsTask::class) {
+    productName.set("hivemq-platform")
+    productVersion.set(project.version.toString())
+    artifactFileName.set(buildPlatformZip.flatMap { it.archiveFileName })
+    sboms.from(
+        platformSboms,
+        zipTree(dnsZip.elements.map { it.single().asFile }).matching { include("**/sbom/*.cdx.json") },
+    )
+    expectedParts.set(listOf("hivemq-enterprise", "hivemq-kafka-extension", "hivemq-dns-cluster-discovery"))
+}
+```
+
+The zip goes in as a provider, `dnsZip.elements.map { it.single().asFile }`, so that the configuration resolves when
+the task runs; `dnsZip.singleFile` would resolve it while the build is configured. A zip that a task of the same build
+produces needs `dependsOn(thatTask)` on the merge task, or `sboms.builtBy(thatTask)`, because
+`zipTree(...).matching { ... }` does not carry the task dependency the plain `zipTree(...)` would; a zip resolved from a
+repository needs nothing.
+
+The plugin applies the `sbomTimestamp`, `sbomCreatorName` and `sbomCreator` conventions, the project's `origin`
+remote and the output `build/sbom/<productName>.cdx.json` to every instance, so the registration sets the files, the
+product name and its version; `artifactFileName` and `expectedParts` are optional. The conventions come from the
+plugin, so the project that registers the task must apply it (`id("com.hivemq.tools.license")`); that also registers
+the plugin's other tasks in that project, which stay unused there.
+
+A `productName` equal to the project's `sbomName` fails the task, because `generateSbom` writes the same file. The names
+are compared without regard to case, since a file system that ignores case, such as the default one of macOS, would
+make one file of them. Setting `outputFile` on the task, or another `sbomName`, gets past that rule.
+
+Scanners read the `components` list as the inventory and do not reliably read components nested under another one, so
+the merge is flat: every component keeps its `bom-ref`, the top-level component of each part becomes an `application`
+component (without its `build-system` reference, which points at the CI run that built it), the product's top-level
+component (`bom-ref` `<productName>@<productVersion>`) depends on every part, and a library two parts share appears
+once, with the `dependsOn` lists of both. Components are sorted by `bom-ref` and parts by name, so the order of the
+files does not change the output; the timestamp, serial number, `vcs` and `source-distribution` references follow the
+same rules as `generateSbom`, so a rebuild from the same commit writes identical bytes. The output `specVersion` is the
+highest one among the parts.
+
+The task fails when `sboms` holds no file, on a file that is not a JSON object with `"bomFormat": "CycloneDX"`, a
+`specVersion` of 1.6 or a later 1.x and a top-level component that has a `bom-ref` and a name, on any other component
+without a `bom-ref`, on a component with nested components, which the merge does not flatten, on a file with a non-empty
+`services` or `formulation` list or a dependency entry with a non-empty `provides` list, which the merge does not carry,
+on a `dependencies` entry, a `dependsOn` target or an `evidence` tool (of a component or of a pedigree component below
+it) that names anything but the top-level component or an entry of `components`, such as a tool in `metadata.tools`,
+because the merge keeps no other element of a file, on two parts whose top-level components have the same `bom-ref`, on
+a `bom-ref` defined below a component that another node of the product defines too, such as a license `bom-ref` two
+parts use below different components, on a file that gives a component, its top-level component or a node below one the
+`bom-ref` of the product, on two entries for one `bom-ref` that name different components, and on one hash algorithm
+with different digests, within one entry or between two entries for the same `bom-ref`.
+
+Entries for the same `bom-ref` must name the same component, because a `bom-ref` is only unique within its own document
+and two parts can reuse one: a `purl`, `group`, `name` or `version` that both carry must be equal. They are united field
+by field: a field only one of them carries is kept, and any other field several carry, a description for example, keeps
+the value of a part's top-level component, and otherwise of the part that sorts first by name, the entry that wins. The
+`scope` is the exception: it is the strongest one any of the entries states, `required` over `optional` over `excluded`,
+and the united entry carries it only when it is `optional` or `excluded`, because no `scope` means `required`. Two lists
+are united by their entries instead: the `properties` by name, where the properties of the winning entry stay and those
+of the others are appended when their name is new, and the `hashes` by algorithm, where every digest of an algorithm,
+within one entry and between entries, must agree, compared without regard to case. Every other list, `licenses`
+included, comes from the winning entry alone.
+
+The `compositions` entry of the product is `complete` only when every part declares itself complete and every name in
+`expectedParts` contributed a file; otherwise it is `incomplete` and the task warns with the reasons. A part declares
+itself complete when every `compositions` entry of its SBOM that has an `aggregate` says `complete` and those entries
+list, together in their `dependencies`, the top-level component, every entry of the part's `dependencies` and every
+target of their `dependsOn` lists. A part whose complete entries list only some of those is only partly complete, and
+one with no entry that lists `dependencies`, such as one that lists `assemblies` alone, says nothing about its
+dependency graph; neither makes the product complete, so the product never claims more than its parts do. `generateSbom`
+writes one entry over every `ref`, so a part it wrote counts as complete whenever `generateSbom` declared it complete (a
+part with a file dependency stays incomplete). A name in `expectedParts` is the name of a part's top-level component,
+which for a project built with this plugin is by default the project name; `sbomName` only names the file. The product's
+own composition lists every dependency entry and every target, so a product SBOM passes the same rule when it is merged
+again as a part of a larger deliverable.
+
+The file name of a `.zip` deliverable gets the archive flags BSI TR-03183-2 asks for; an image has no file name, so
+leave `artifactFileName` unset there.
+
+Known gaps: the top-level component of the product carries no license and no hash; the same library listed under
+different `bom-ref`s by different tools appears twice, because components are matched by `bom-ref` alone; a directory or
+an unreadable file in `sboms` fails the task, so pass the files, for example those of a `fileTree`; and a patent
+assertion (CycloneDX 1.7) on a component is copied as it is, although the patents it references live in `definitions`
+and an asserter it names by `bom-ref` can live in the metadata, neither of which the merge carries.
 
 ### Custom License Tasks
 
