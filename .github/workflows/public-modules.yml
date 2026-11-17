@@ -1,0 +1,82 @@
+name: Public modules on Maven Central
+
+# PUBLIC_HIVEMQ_MODULES names HiveMQ's libraries on Maven Central; a new one that is not listed fails every build that
+# depends on it, so the list is compared with the repository index once a week and a difference becomes a pull request.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+# the token secret carries the write access: a push made with the workflow's own token starts no workflow, so CI Check
+# would never run on the pull request and the check master requires would block it
+permissions:
+  contents: read
+
+concurrency: public-modules
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      BRANCH: public-modules/update
+    steps:
+      - name: Require the token
+        env:
+          TOKEN: ${{ secrets.JENKINS_GITHUB_TOKEN }}
+        # the organization's token of the Jenkins GitHub user, shared with this repository like with the others that
+        # push from a workflow; its workflow scope covers a force-push over a branch whose base moved a workflow file
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Secret JENKINS_GITHUB_TOKEN is not shared with this repository"
+            exit 1
+          fi
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # a manual run from another branch must not carry that branch's commits into the pull request
+          ref: ${{ github.event.repository.default_branch }}
+          token: ${{ secrets.JENKINS_GITHUB_TOKEN }}
+      - name: Test the script
+        run: python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
+      - name: Update the list from Maven Central
+        id: update
+        run: >
+          python3 -B .github/scripts/check_public_modules.py
+          src/main/kotlin/com/hivemq/tools/license/gradle/OwnModules.kt body.md
+      - name: Open or refresh the pull request
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.JENKINS_GITHUB_TOKEN }}
+          TITLE: Update PUBLIC_HIVEMQ_MODULES from Maven Central
+        # one branch and one pull request against the default branch, replaced on every run that finds a difference; a
+        # pull request from a fork with the same branch name is not ours
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git commit -am "$TITLE"
+          git push --force origin "$BRANCH"
+          number=$(gh pr list --head "$BRANCH" --state open --json number,isCrossRepository \
+            --jq '[.[] | select(.isCrossRepository | not)][0].number // empty')
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --body-file body.md
+          else
+            gh pr create --head "$BRANCH" --title "$TITLE" --body-file body.md
+          fi
+      - name: Close the pull request once the list matches again
+        if: steps.update.outputs.changed == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.JENKINS_GITHUB_TOKEN }}
+        run: |
+          number=$(gh pr list --head "$BRANCH" --state open --json number,isCrossRepository \
+            --jq '[.[] | select(.isCrossRepository | not)][0].number // empty')
+          if [ -n "$number" ]; then
+            gh pr close "$number" --delete-branch \
+              --comment "The list matches Maven Central again, nothing left to merge."
+          fi
+      - name: Fail while an artifact needs a look
+        if: steps.update.outputs.unresolved == 'true'
+        run: |
+          cat body.md >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::An artifact needs a look; see the summary"
+          exit 1
