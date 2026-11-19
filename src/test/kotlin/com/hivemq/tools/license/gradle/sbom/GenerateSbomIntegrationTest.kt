@@ -16,6 +16,7 @@
 package com.hivemq.tools.license.gradle.sbom
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.hivemq.tools.license.gradle.FixtureRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.cyclonedx.Version
 import org.cyclonedx.parsers.JsonParser
@@ -515,6 +516,37 @@ class GenerateSbomIntegrationTest {
         val schema = Version.fromVersionString(mapper.readTree(sbom())["specVersion"].asText())
         val errors = JsonParser().validate(sbom().readBytes(), schema)
         assertThat(errors.map { it.message }).isEmpty()
+    }
+
+    @Test
+    fun `writes one concluded expression for a dependency offering a choice of licenses`() {
+        // the two license elements of the POM of jakarta.annotation-api, which CycloneDX maps to an id each
+        FixtureRepository.module(
+            projectDir.resolve("repo"), "dual-lib", "1.0.0", licenses = listOf("EPL 2.0", "GPL2 w/ CPE"),
+        )
+        setup(fixedTimestamp, externalDependencies = false)
+        projectDir.resolve("build.gradle.kts").appendText(
+            "\n" + """
+            repositories {
+                maven { url = uri("repo") }
+            }
+            dependencies {
+                implementation("com.example:dual-lib:1.0.0")
+            }
+            """.trimIndent()
+        )
+
+        gradleRunner("generateSbom", "updateThirdPartyLicenses").build()
+
+        val dualLib = mapper.readTree(sbom())["components"].first { it["name"].asText() == "dual-lib" }
+        val expected = """[ { "expression": "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0", """ +
+            """"acknowledgement": "concluded" } ]"""
+        assertThat(dualLib["licenses"]).isEqualTo(mapper.readTree(expected))
+        val schema = Version.fromVersionString(mapper.readTree(sbom())["specVersion"].asText())
+        assertThat(JsonParser().validate(sbom().readBytes(), schema).map { it.message }).isEmpty()
+        // the report is our compliance record and keeps the alternative this plugin elected
+        val report = projectDir.resolve("build/tmp/third-party-licenses/licenses").readText()
+        assertThat(report.lines().single { "com.example:dual-lib" in it }).contains("EPL-2.0").doesNotContain("GPL")
     }
 
     // --- Conventions ---

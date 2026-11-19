@@ -27,8 +27,9 @@ import java.net.URISyntaxException
 
 /**
  * Adds what BSI TR-03183-2 requires and CycloneDX does not write: the SBOM's creator, each component's file, file kind,
- * creator and source URI, the graph's completeness, and our reviewed license next to the declared one. Deterministic;
- * needs CycloneDX [MINIMUM_SPEC_VERSION] or a later 1.x and leaves a value of an unexpected type as it is.
+ * creator and source URI, the graph's completeness, and our reviewed license next to the declared licenses or, as one
+ * expression, in their place (see [ConcludedLicense]). Deterministic; needs CycloneDX [MINIMUM_SPEC_VERSION] or a later
+ * 1.x and leaves a value of an unexpected type as it is.
  */
 internal object SbomEnricher {
 
@@ -77,7 +78,7 @@ internal object SbomEnricher {
             }
             addCreator(component, details)
             addSourceDistribution(component)
-            acknowledgeLicenses(component, details.concludedLicenses[coordinates].orEmpty())
+            acknowledgeLicenses(component, details.concludedLicenses[coordinates])
         }
         declareCompleteness(root, details.incompleteReasons, details.identifiedComponents)
         return root
@@ -225,23 +226,42 @@ internal object SbomEnricher {
             ?.get("url")?.takeIf { it.isTextual }?.asText()
 
     /**
-     * Tags the licenses CycloneDX wrote from the POM as `declared` and adds [concluded], our reviewed ones, as
-     * `concluded`; when there are any, a declared expression first becomes a license name, see [nameExpressions],
-     * since separate ids would read as both licenses instead of either.
+     * Writes [concluded], our reviewed license, into the component: elected licenses next to the declared entries, see
+     * [addElected], an expression in their place, see [concludeExpression]. Without [concluded] the declared entries
+     * are only tagged.
      */
-    private fun acknowledgeLicenses(component: ObjectNode, concluded: List<String>) {
-        val licenses = component.get("licenses") as? ArrayNode
-        if (concluded.isNotEmpty()) licenses?.let(::nameExpressions)
+    private fun acknowledgeLicenses(component: ObjectNode, concluded: ConcludedLicense?) {
+        when (concluded) {
+            is ConcludedLicense.Expression -> concludeExpression(component, concluded.text)
+            is ConcludedLicense.Elected -> {
+                val licenses = component.get("licenses") as? ArrayNode
+                licenses?.let(::nameExpressions)
+                tagDeclared(licenses)
+                addElected(component, licenses, concluded.ids)
+            }
+            null -> tagDeclared(component.get("licenses") as? ArrayNode)
+        }
+    }
+
+    /** Tags the licenses CycloneDX wrote from the POM as `declared`, keeping a tag an entry already carries. */
+    private fun tagDeclared(licenses: ArrayNode?) {
         licenses?.forEach { entry ->
             val target = (entry.get("license") as? ObjectNode)
                 ?: (entry as? ObjectNode)?.takeIf { it.has("expression") }
             if (target != null && !target.has("acknowledgement")) target.put("acknowledgement", "declared")
         }
-        if (concluded.isEmpty()) return
+    }
+
+    /**
+     * Adds each of [ids] as a `concluded` license object unless it is there already. A declared expression has become a
+     * license name before, see [nameExpressions], since next to separate ids it would read as both licenses instead of
+     * either.
+     */
+    private fun addElected(component: ObjectNode, licenses: ArrayNode?, ids: List<String>) {
         // only an expression that is not text is left, and license objects cannot join it in the list
         if (licenses != null && licenses.any { it.has("expression") }) return
         val list = component.arrayOrNew("licenses") ?: return
-        for (id in concluded) {
+        for (id in ids) {
             // an SPDX id has no space, so a value like "Public Domain" can only be a name, and CycloneDX accepts
             // nothing but SPDX ids as `id`
             val key = if (' ' in id) "name" else "id"
@@ -251,6 +271,17 @@ internal object SbomEnricher {
             }
             if (!present) list.addObject().putObject("license").put(key, id).put("acknowledgement", "concluded")
         }
+    }
+
+    /**
+     * Makes [expression] the component's whole license list: it names every declared alternative, and CycloneDX 1.6
+     * cannot hold the declared objects next to it. Every entry goes, of whatever kind, together with the URL or text
+     * CycloneDX wrote for it; rebuilt from scratch, so enriching twice gives the same document.
+     */
+    private fun concludeExpression(component: ObjectNode, expression: String) {
+        val licenses = component.arrayOrNew("licenses") ?: return
+        licenses.removeAll()
+        licenses.addObject().put("expression", expression).put("acknowledgement", "concluded")
     }
 
     // a license takes free text as its name, so the declared expression can sit next to license ids in one piece

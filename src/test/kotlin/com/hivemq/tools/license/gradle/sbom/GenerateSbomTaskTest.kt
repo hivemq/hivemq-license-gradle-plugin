@@ -110,6 +110,16 @@ class GenerateSbomTaskTest {
         )
     }
 
+    /** Adds `org.example:dual`, which offers the two licenses of jakarta.annotation-api as alternatives. */
+    private fun addDualLicensedComponent() {
+        val dual = """{ "group": "org.example", "name": "dual", "version": "1.0", """ +
+            """"purl": "pkg:maven/org.example/dual@1.0?type=jar", "licenses": [ """ +
+            """{ "license": { "id": "EPL-2.0" } }, { "license": { "id": "GPL-2.0-with-classpath-exception" } } ] },"""
+        projectDir.resolve("bom.json").writeText(
+            projectDir.resolve("bom.json").readText().replace(""""components": [""", """"components": [ $dual""")
+        )
+    }
+
     // --- Output ---
 
     @Test
@@ -695,6 +705,24 @@ class GenerateSbomTaskTest {
     }
 
     @Test
+    fun `keeps the declared licenses of a component offering a choice when an override names its license`() {
+        setup()
+        addDualLicensedComponent()
+        val buildScript = projectDir.resolve("build.gradle.kts")
+        val overrides = """mapOf("org.example:lib" to "MIT", "org.example:dual" to "EPL-2.0")"""
+        buildScript.writeText(buildScript.readText().replace("""mapOf("org.example:lib" to "MIT")""", overrides))
+
+        gradleRunner().build()
+
+        val sbom = ObjectMapper().readTree(projectDir.resolve("build/sbom/app.cdx.json"))
+        val dual = sbom["components"].first { it["name"].asText() == "dual" }
+        val expected = """[ { "license": { "id": "EPL-2.0", "acknowledgement": "declared" } }, """ +
+            """{ "license": { "id": "GPL-2.0-with-classpath-exception", "acknowledgement": "declared" } }, """ +
+            """{ "license": { "id": "EPL-2.0", "acknowledgement": "concluded" } } ]"""
+        assertThat(dual["licenses"]).isEqualTo(ObjectMapper().readTree(expected))
+    }
+
+    @Test
     fun `leaves an own component without a license out`() {
         setup()
         addOwnComponent(licensed = false)
@@ -907,6 +935,20 @@ class GenerateSbomTaskTest {
         assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         val sbom = ObjectMapper().readTree(projectDir.resolve("build/sbom/app.cdx.json"))
         assertThat(sbom["components"].map { it["name"].asText() }).containsExactly("lib")
+    }
+
+    @Test
+    fun `writes one concluded expression for a component offering a choice of licenses`() {
+        setup()
+        addDualLicensedComponent()
+
+        gradleRunner().build()
+
+        val sbom = ObjectMapper().readTree(projectDir.resolve("build/sbom/app.cdx.json"))
+        val dual = sbom["components"].first { it["name"].asText() == "dual" }
+        val expected = """[ { "expression": "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0", """ +
+            """"acknowledgement": "concluded" } ]"""
+        assertThat(dual["licenses"]).isEqualTo(ObjectMapper().readTree(expected))
     }
 
     @Test

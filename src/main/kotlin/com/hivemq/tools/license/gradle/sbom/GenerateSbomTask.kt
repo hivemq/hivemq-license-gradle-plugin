@@ -145,7 +145,7 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
             // fails on a license problem with the message of checkApprovedLicenses, which is not wrapped below
             val concluded = resolveLicenses().values.associate { dependency ->
                 // by the version the license was resolved for, which another version of the module may not share
-                dependency.coordinates.toString() to dependency.licenses.map { it.id }
+                dependency.coordinates.toString() to ConcludedLicense.of(dependency)
             }
             val details = SbomDetails(
                 creatorName = creatorName.get(),
