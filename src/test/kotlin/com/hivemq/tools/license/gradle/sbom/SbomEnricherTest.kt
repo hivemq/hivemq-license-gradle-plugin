@@ -42,11 +42,29 @@ class SbomEnricherTest {
             "org.example:other:3.0" to "other-3.0.so",
         ),
         concludedLicenses = mapOf(
-            "org.example:lib:1.0" to listOf("MIT"),
-            "org.example:dual:1.0" to listOf("MIT", "ISC"),
+            "org.example:lib:1.0" to ConcludedLicense.Elected(listOf("MIT")),
+            "org.example:dual:1.0" to ConcludedLicense.Elected(listOf("MIT", "ISC")),
         ),
         incompleteReasons = emptyList(),
     )
+
+    /** The jakarta.annotation-api case, [CHOICE_COMPONENT]: both declared alternatives in one concluded expression. */
+    private val choiceDetails = concludingExpression(CHOICE_EXPRESSION)
+
+    /** What the enricher writes for [choiceDetails]: the expression as the whole license list. */
+    private val concludedChoiceList = concludedList(CHOICE_EXPRESSION)
+
+    /** [details] with [expression] as the concluded license of `org.example:lib` 1.0. */
+    private fun concludingExpression(expression: String) =
+        details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to ConcludedLicense.Expression(expression)))
+
+    /** The license list the enricher writes for a concluded [expression]: that expression alone. */
+    private fun concludedList(expression: String): JsonNode =
+        mapper.readTree("""[ { "expression": "$expression", "acknowledgement": "concluded" } ]""")
+
+    /** [details] with [ids] as the concluded licenses of `org.example:lib` in [version]. */
+    private fun concluding(vararg ids: String, version: String = "1.0") =
+        details.copy(concludedLicenses = mapOf("org.example:lib:$version" to ConcludedLicense.Elected(ids.toList())))
 
     /** A BOM the way the CycloneDX Gradle plugin writes it, reduced to what the enricher touches. */
     private fun bom(components: String = DEFAULT_COMPONENTS, specVersion: String = "1.6") = """
@@ -229,10 +247,13 @@ class SbomEnricherTest {
             }
         """.trimIndent()
 
-        val result = enrich(bom(components))
+        for ((variant, with) in mapOf("elected licenses" to details, "an expression" to choiceDetails)) {
+            val result = enrich(bom(components), with)
 
-        assertThat(result.component("lib")["licenses"].asText()).isEqualTo("MIT")
-        assertThat(result["metadata"]["manufacturer"]["name"].asText()).isEqualTo("HiveMQ GmbH")
+            assertThat(result.component("lib")["licenses"].asText()).describedAs(variant).isEqualTo("MIT")
+            assertThat(result["metadata"]["manufacturer"]["name"].asText()).describedAs(variant)
+                .isEqualTo("HiveMQ GmbH")
+        }
     }
 
     @ParameterizedTest
@@ -731,7 +752,7 @@ class SbomEnricherTest {
         val coordinates = Coordinates("", "local", "1")
         val withoutGroup = details.copy(
             componentFileNames = mapOf(coordinates.toString() to "local-1.jar"),
-            concludedLicenses = mapOf(coordinates.toString() to listOf("MIT")),
+            concludedLicenses = mapOf(coordinates.toString() to ConcludedLicense.Elected(listOf("MIT"))),
         )
 
         val local = enrich(bom(components), withoutGroup).component("local")
@@ -766,6 +787,20 @@ class SbomEnricherTest {
     // --- Licenses ---
 
     @Test
+    fun `adds a concluded expression to a component without any license`() {
+        val components = """
+            {
+              "type": "library", "bom-ref": "pkg:maven/org.example/lib@1.0",
+              "group": "org.example", "name": "lib", "version": "1.0"
+            }
+        """.trimIndent()
+
+        val lib = enrich(bom(components), choiceDetails).component("lib")
+
+        assertThat(lib["licenses"]).isEqualTo(concludedChoiceList)
+    }
+
+    @Test
     fun `adds a concluded license to a component without any`() {
         val components = """
             {
@@ -796,7 +831,7 @@ class SbomEnricherTest {
               "licenses": [ { "license": { "id": "Apache-2.0" } } ]
             }
         """.trimIndent()
-        val resolved = details.copy(concludedLicenses = mapOf("org.example:lib:2.0" to listOf("MIT")))
+        val resolved = concluding("MIT", version = "2.0")
 
         val result = enrich(bom(components), resolved)
 
@@ -819,6 +854,41 @@ class SbomEnricherTest {
     }
 
     @Test
+    fun `keeps the bom-ref of an expression license it turns into a named entry`() {
+        val withRef = EXPRESSION_COMPONENT.replace(
+            """"expression": "$EXPRESSION" }""",
+            """"expression": "$EXPRESSION", "bom-ref": "lic-1" }""",
+        )
+
+        val lib = enrich(bom(withRef), concluding("CDDL-1.1")).component("lib")
+
+        // something else may refer to the entry, so its ref moves with it
+        assertThat(lib["licenses"][0]["license"]["bom-ref"].asText()).isEqualTo("lic-1")
+    }
+
+    @Test
+    fun `replaces a declared expression by the concluded expression`() {
+        val lib = enrich(bom(EXPRESSION_COMPONENT), concludingExpression(EXPRESSION_CANONICAL)).component("lib")
+
+        assertThat(lib["licenses"]).isEqualTo(concludedList(EXPRESSION_CANONICAL))
+    }
+
+    @Test
+    fun `replaces the declared licenses by the concluded expression`() {
+        // with a URL, as CycloneDX writes for many POMs, which goes with its entry
+        val withUrl = CHOICE_COMPONENT.replace(
+            """{ "id": "EPL-2.0" }""",
+            """{ "id": "EPL-2.0", "url": "https://www.eclipse.org/legal/epl-2.0" }""",
+        )
+        assertThat(withUrl).describedAs("the fixture with a URL").contains("\"url\"")
+
+        val lib = enrich(bom(withUrl), choiceDetails).component("lib")
+
+        // a CycloneDX 1.6 license list cannot hold them next to an expression, which names every alternative anyway
+        assertThat(lib["licenses"]).isEqualTo(concludedChoiceList)
+    }
+
+    @Test
     fun `tags the licenses CycloneDX wrote as declared and adds ours as concluded`() {
         val lib = enrich().component("lib")
 
@@ -828,7 +898,7 @@ class SbomEnricherTest {
 
     @Test
     fun `turns an expression license into a named entry to fit the concluded one`() {
-        val concluded = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to listOf("CDDL-1.1")))
+        val concluded = concluding("CDDL-1.1")
 
         val lib = enrich(bom(EXPRESSION_COMPONENT), concluded).component("lib")
 
@@ -846,7 +916,7 @@ class SbomEnricherTest {
 
     @Test
     fun `writes a concluded license that is not an SPDX id by name`() {
-        val publicDomain = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to listOf("Public Domain")))
+        val publicDomain = concluding("Public Domain")
 
         val lib = enrich(with = publicDomain).component("lib")
 
@@ -857,7 +927,8 @@ class SbomEnricherTest {
     }
 
     @Test
-    fun `writes several concluded licenses as one license each`() {
+    fun `writes several concluded licenses without an expression as one license each`() {
+        // the shape a component keeps when its declared licenses give no SPDX expression
         val dual = enrich().component("dual")
 
         assertThat(dual["licenses"].map { it["license"]["id"].asText() to it["license"]["acknowledgement"].asText() })
@@ -924,8 +995,17 @@ class SbomEnricherTest {
     }
 
     @Test
+    fun `is idempotent for a concluded expression`() {
+        val once = SbomEnricher.enrich(BomJson.read(bom(CHOICE_COMPONENT)), choiceDetails)
+
+        val twice = SbomEnricher.enrich(once.deepCopy(), choiceDetails)
+
+        assertThat(twice.toString()).isEqualTo(once.toString())
+    }
+
+    @Test
     fun `is idempotent for a concluded license that is not an SPDX id`() {
-        val publicDomain = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to listOf("Public Domain")))
+        val publicDomain = concluding("Public Domain")
         val once = SbomEnricher.enrich(BomJson.read(bom()), publicDomain)
 
         val twice = SbomEnricher.enrich(once.deepCopy(), publicDomain)
@@ -945,7 +1025,7 @@ class SbomEnricherTest {
 
     @Test
     fun `is idempotent for an expression license next to a concluded one`() {
-        val concluded = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to listOf("CDDL-1.1")))
+        val concluded = concluding("CDDL-1.1")
         val once = SbomEnricher.enrich(BomJson.read(bom(EXPRESSION_COMPONENT)), concluded)
 
         val twice = SbomEnricher.enrich(once.deepCopy(), concluded)
@@ -985,8 +1065,8 @@ class SbomEnricherTest {
 
     @Test
     fun `writes a document that is valid for the spec version it declares`() {
-        val cddl = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to listOf("CDDL-1.1")))
-        val publicDomain = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to listOf("Public Domain")))
+        val cddl = concluding("CDDL-1.1")
+        val publicDomain = concluding("Public Domain")
         val variants = mapOf(
             "default" to (bom() to details),
             "email creator" to (bom() to details.copy(creator = "security@example.com")),
@@ -1002,6 +1082,9 @@ class SbomEnricherTest {
             "identified components" to
                 (bom() to details.copy(identifiedComponents = setOf("pkg:maven/org.example/lib@1.0"))),
             "license that is not an SPDX id" to (bom() to publicDomain),
+            "concluded expression" to (bom(CHOICE_COMPONENT) to choiceDetails),
+            "concluded expression over a declared expression" to
+                (bom(EXPRESSION_COMPONENT) to concludingExpression(EXPRESSION_CANONICAL)),
             "expression license with a concluded one" to (bom(EXPRESSION_COMPONENT) to cddl),
             "expression license without a concluded one" to
                 (bom(EXPRESSION_COMPONENT) to details.copy(concludedLicenses = emptyMap())),
@@ -1020,8 +1103,14 @@ class SbomEnricherTest {
     }
 
     private companion object {
-        // a dual license in the expression form of a license list
+        // a choice of two licenses in the expression form of a license list
         const val EXPRESSION = "(CDDL-1.0 OR GPL-2.0-with-classpath-exception)"
+
+        // EXPRESSION in the canonical form the resolver gives it
+        const val EXPRESSION_CANONICAL = "CDDL-1.0 OR GPL-2.0-only WITH Classpath-exception-2.0"
+
+        // the two alternatives of jakarta.annotation-api in current SPDX form
+        const val CHOICE_EXPRESSION = "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0"
 
         // what the plugin reports for a jar on the classpath that is no module, which CycloneDX leaves out
         const val FILE_DEPENDENCY = "runtimeClasspath has file dependencies: vendored.jar"
@@ -1034,6 +1123,18 @@ class SbomEnricherTest {
                 "component": { "type": "application", "bom-ref": "pkg:maven/com.hivemq/app@1.0.0", "name": "app" }
               },
               "compositions": [ { "aggregate": "complete" } ]
+            }
+        """.trimIndent()
+
+        // the two license elements of the POM of jakarta.annotation-api, as CycloneDX writes them
+        val CHOICE_COMPONENT = """
+            {
+              "type": "library", "bom-ref": "pkg:maven/org.example/lib@1.0",
+              "group": "org.example", "name": "lib", "version": "1.0",
+              "licenses": [
+                { "license": { "id": "EPL-2.0" } },
+                { "license": { "id": "GPL-2.0-with-classpath-exception" } }
+              ]
             }
         """.trimIndent()
 

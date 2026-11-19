@@ -278,7 +278,7 @@ class SpdxExpressionTest {
 
     @Test
     fun `is null when an alternative is null`() {
-        assertThat(SpdxExpression.expressionOf(listOf(Leaf("MIT"), null))).isNull()
+        assertThat(SpdxExpression.expressionOf(listOf(Leaf("EPL-2.0"), Leaf("MIT"), null))).isNull()
     }
 
     @Test

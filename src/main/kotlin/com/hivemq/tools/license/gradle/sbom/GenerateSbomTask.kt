@@ -144,17 +144,13 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
             BomFilter.detachComponents(root, identifiedRefs)
             BomFilter.removeProperties(root, identifiedRefs, "bsi:component:")
             // a reference from a place the filter does not rewrite would name what the SBOM left out
-            val dangling = BomFilter.referencesTo(root, refsBefore - BomFilter.refsIn(root))
-            if (dangling.isNotEmpty()) {
-                throw SbomException(
-                    "The BOM refers to something the SBOM leaves out, from a place the plugin does not rewrite: " +
-                        dangling.entries.joinToString { (pointer, ref) -> "$pointer ($ref)" }
-                )
-            }
+            requireNoDanglingReferences(
+                root, refsBefore, "something the SBOM leaves out, from a place the plugin does not rewrite"
+            )
             // fails on a license problem with the message of checkApprovedLicenses, which is not wrapped below
             val concluded = resolveLicenses().values.associate { dependency ->
                 // by the version the license was resolved for, which another version of the module may not share
-                dependency.coordinates.toString() to dependency.licenses.map { it.id }
+                dependency.coordinates.toString() to ConcludedLicense.of(dependency)
             }
             val details = SbomDetails(
                 creatorName = creatorName.get(),
@@ -165,7 +161,15 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
                 incompleteReasons = reasons + declaredReasons,
                 identifiedComponents = identifiedRefs,
             )
-            SbomNormalizer.normalize(SbomEnricher.enrich(root, details), instant, vcsUrl.orNull)
+            val refsBeforeEnrichment = BomFilter.refsIn(root)
+            val enriched = SbomEnricher.enrich(root, details)
+            // the enricher replaces some objects whole, such as declared licenses, and their bom-refs go with them
+            requireNoDanglingReferences(
+                enriched, refsBeforeEnrichment,
+                "an object the SBOM replaces, such as a declared license entry of a component concluded as " +
+                    "one expression",
+            )
+            SbomNormalizer.normalize(enriched, instant, vcsUrl.orNull)
         } catch (e: SbomException) {
             throw cannotWrite(bomFile, e)
         } catch (e: JsonProcessingException) {
@@ -181,6 +185,18 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
                     reasons.joinToString("; ")
             )
         }
+    }
+
+    /**
+     * Fails when a text in [root] still equals a `bom-ref` of [before] that [root] no longer holds; the message names
+     * [what] and where.
+     */
+    private fun requireNoDanglingReferences(root: ObjectNode, before: Set<String>, what: String) {
+        val dangling = BomFilter.referencesTo(root, before - BomFilter.refsIn(root))
+        if (dangling.isEmpty()) return
+        throw SbomException(
+            "The BOM refers to $what: " + dangling.entries.joinToString { (pointer, ref) -> "$pointer ($ref)" }
+        )
     }
 
     private fun cannotWrite(bomFile: File, cause: Exception) =
