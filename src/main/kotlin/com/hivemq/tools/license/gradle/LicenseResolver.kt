@@ -22,8 +22,18 @@ import com.hivemq.tools.license.gradle.sbom.BomFilter
 import java.io.File
 import java.util.*
 
-/** A dependency and the licenses it is used under, every one of which applies. */
-data class ResolvedDependency(val coordinates: Coordinates, val licenses: List<KnownLicense>) {
+/**
+ * A dependency and the licenses it is used under, every one of which applies. [declaredExpression] is one SPDX
+ * expression in canonical form naming every way the dependency's declared licenses allow it to be used, when they name
+ * more than one license; null for a single license, for a license not taken from the declared entries (an override, a
+ * built-in license, a project module) and when a declared entry has no SPDX form or is malformed or too complex to
+ * evaluate.
+ */
+data class ResolvedDependency(
+    val coordinates: Coordinates,
+    val licenses: List<KnownLicense>,
+    val declaredExpression: String? = null,
+) {
     init {
         require(licenses.isNotEmpty()) { "'$coordinates' needs at least one license" }
     }
@@ -168,11 +178,12 @@ object LicenseResolver {
                 val expression = choice.expression
                 when {
                     license != null -> convertLicense(license, coordinates).let {
-                        LicenseOption((it as? KnownLicense)?.let(::listOf), it.fullName)
+                        LicenseOption((it as? KnownLicense)?.let(::listOf), it.fullName, declaredLicense(license, it))
                     }
 
-                    expression != null -> evaluateExpression(expression).let { result ->
-                        LicenseOption(result.licenses, result.describe(expression))
+                    expression != null -> SpdxExpression(expression).let { parsed ->
+                        val result = parsed.evaluate()
+                        LicenseOption(result.licenses, result.describe(expression), parsed.tree)
                     }
                     else -> null
                 }
@@ -194,7 +205,8 @@ object LicenseResolver {
                     "${describeUnresolvedMetadata(component)}: ${options.joinToString { it.name }}"
                 return
             }
-            entries[coordinates.moduleId] = ResolvedDependency(coordinates, chosenLicenses)
+            val declared = SpdxExpression.expressionOf(options.map { it.declared })
+            entries[coordinates.moduleId] = ResolvedDependency(coordinates, chosenLicenses, declared)
         }
         // nested components are resolved on their own, in document order; the filter above already decided which stay
         fun resolve(components: List<DependencyReport.Component>) {
@@ -209,8 +221,18 @@ object LicenseResolver {
         return entries
     }
 
-    // one way a component may be used: the licenses that then apply together, or null when one of them is not approved
-    private class LicenseOption(val licenses: List<KnownLicense>?, val name: String)
+    /**
+     * One way a component may be used: the [licenses] that then apply together, or null when one of them is not
+     * approved, and what was [declared] as a syntax tree, null for a name that maps to no known license, an entry
+     * without an id or a name, and an expression that is malformed or too complex to evaluate.
+     */
+    private class LicenseOption(val licenses: List<KnownLicense>?, val name: String, val declared: SpdxExpression.Node?)
+
+    /** An id as written, a name as the id of the known license it maps to; an unrecognised name has no SPDX form. */
+    private fun declaredLicense(entry: DependencyReport.LicenseEntry, converted: License): SpdxExpression.Node? {
+        val id = entry.id ?: (converted as? KnownLicense)?.id ?: return null
+        return SpdxExpression.Node.Leaf(id)
+    }
 
     // the file the licenses were read from and, when known, how this build obtained it; finding out the origin may
     // wait for a build event, so it is only asked for when a message needs it
@@ -265,12 +287,14 @@ object LicenseResolver {
                     problems += "No license found for '$coordinates'"
                     continue
                 }
-                val result = evaluateExpression(spdxId)
+                val parsed = SpdxExpression(spdxId)
+                val result = parsed.evaluate()
                 if (result.licenses == null) {
                     problems += "License not on the approved list for '$coordinates': ${result.describe(spdxId)}"
                     continue
                 }
-                entries[coordinates.moduleId] = ResolvedDependency(coordinates, result.licenses)
+                val declared = SpdxExpression.expressionOf(listOf(parsed.tree))
+                entries[coordinates.moduleId] = ResolvedDependency(coordinates, result.licenses, declared)
             }
         }
         failOnProblems(source, problems)
@@ -282,8 +306,6 @@ object LicenseResolver {
         overriddenLicenses[moduleId]?.let { spdxId ->
             checkNotNull(knownLicense(spdxId)) { "Overridden license '$spdxId' for '$moduleId' was not set aside" }
         } ?: BUILT_IN_LICENSES[moduleId]
-
-    private fun evaluateExpression(expression: String): ExpressionResult = SpdxExpression(expression).evaluate()
 
     /**
      * Picks, among the ways a dependency may be used, the one with the fewest obligations: the option whose least
