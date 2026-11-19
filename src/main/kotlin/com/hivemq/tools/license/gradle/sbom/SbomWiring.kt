@@ -95,6 +95,7 @@ internal object SbomWiring {
             artifactFileName.convention(extension.sbomArtifactFileName)
             componentFileNames.convention(projectComponentFileNames)
             incompleteReasons.convention(projectIncompleteReasons)
+            declaredIncompleteReasons.convention(extension.sbomIncompleteReasons)
             val taskName = name
             outputFile.convention(
                 project.layout.buildDirectory.file(extension.sbomName.map { sbomOutputPath(taskName, it) })

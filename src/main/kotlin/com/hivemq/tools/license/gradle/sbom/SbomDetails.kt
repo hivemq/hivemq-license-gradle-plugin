@@ -37,7 +37,7 @@ internal data class SbomDetails(
     val concludedLicenses: Map<String, List<String>>,
     /**
      * Why the dependency graph is not complete, one reason per finding, such as a file dependency or a module that
-     * could not be resolved; empty when it is complete.
+     * could not be resolved, or a gap the build declares; empty when it is complete.
      */
     val incompleteReasons: List<String>,
     /**

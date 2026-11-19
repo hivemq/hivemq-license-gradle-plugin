@@ -951,6 +951,21 @@ class GenerateSbomTaskTest {
     }
 
     @Test
+    fun `reruns when a declared incomplete reason changes`() {
+        setup()
+        gradleRunner().build()
+        projectDir.resolve("build.gradle.kts").appendText(
+            "\n" + """hivemqLicense { sbomIncompleteReasons.add("bundles a frontend") }"""
+        )
+
+        val result = gradleRunner().build()
+
+        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        val sbom = ObjectMapper().readTree(projectDir.resolve("build/sbom/app.cdx.json"))
+        assertThat(sbom["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
+    }
+
+    @Test
     fun `reruns when the BOM changes`() {
         setup()
         gradleRunner().build()

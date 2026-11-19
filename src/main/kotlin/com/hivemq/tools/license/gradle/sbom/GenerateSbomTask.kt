@@ -79,10 +79,19 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
 
     /**
      * Why the dependency graph is not complete, such as a file dependency or a module that could not be resolved,
-     * both of which CycloneDX leaves out of the BOM; empty means complete.
+     * both of which CycloneDX leaves out of the BOM; empty means complete. Setting it leaves
+     * [declaredIncompleteReasons] alone.
      */
     @get:Input
     abstract val incompleteReasons: ListProperty<String>
+
+    /**
+     * Gaps the build declares because the plugin cannot detect them, such as a frontend the jar bundles from a separate
+     * build; `hivemqLicense.sbomIncompleteReasons` by default. Any of them makes the graph incomplete like
+     * [incompleteReasons] does, without the warning, and a blank one fails the task.
+     */
+    @get:Input
+    abstract val declaredIncompleteReasons: ListProperty<String>
 
     @get:OutputFile
     abstract val outputFile: RegularFileProperty
@@ -92,6 +101,14 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
         val bomFile = dependencyLicense.get().asFile
         val sbomFile = outputFile.get().asFile
         val reasons = incompleteReasons.get()
+        val declaredReasons = declaredIncompleteReasons.get()
+        // a blank reason would turn the graph incomplete without saying why
+        if (declaredReasons.any { it.isBlank() }) {
+            throw GradleException(
+                "Task '$path' got a blank declared incomplete reason (hivemqLicense.sbomIncompleteReasons): " +
+                    "$declaredReasons"
+            )
+        }
         val text = timestamp.get()
         val instant = try {
             Instant.parse(text)
@@ -136,7 +153,7 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
                 artifactFileName = artifactFileName.orNull,
                 componentFileNames = componentFileNames.get(),
                 concludedLicenses = concluded,
-                incompleteReasons = reasons,
+                incompleteReasons = reasons + declaredReasons,
                 identifiedComponents = identifiedRefs,
             )
             SbomNormalizer.normalize(SbomEnricher.enrich(root, details), instant, vcsUrl.orNull)
@@ -147,6 +164,7 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
             throw cannotWrite(bomFile, e)
         }
         sbomFile.writeBytes(normalized)
+        // only the detected gaps: the declared ones are known to the build already
         if (reasons.isNotEmpty()) {
             // the SBOM says so too, but nobody reads it during the build
             logger.warn(

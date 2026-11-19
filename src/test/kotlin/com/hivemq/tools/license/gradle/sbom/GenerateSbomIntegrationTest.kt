@@ -217,6 +217,18 @@ class GenerateSbomIntegrationTest {
     }
 
     @Test
+    fun `declares the dependency graph incomplete with a reason the build declares`() {
+        setup("sbomIncompleteReasons.add(\"bundles a frontend\")\n$fixedTimestamp", externalDependencies = false)
+
+        val result = gradleRunner("generateSbom").build()
+
+        // what the jar bundles outside dependency resolution is invisible to the plugin, so the build says so
+        assertThat(mapper.readTree(sbom())["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
+        // the build knows its own gap, so nothing warns about it
+        assertThat(result.output).doesNotContain("declares its dependency graph incomplete")
+    }
+
+    @Test
     fun `describes the dependencies with their files, licenses and creators`() {
         setup(fixedTimestamp)
 
@@ -316,6 +328,18 @@ class GenerateSbomIntegrationTest {
         // lib's component gets no file: the artifact view keeps module artifacts only, so that no jar has to be built
         val lib = sbom["components"].first { it["name"].asText() == "lib" }
         assertThat(lib.path("properties").map { it["name"].asText() }).doesNotContain("bsi:component:filename")
+    }
+
+    @Test
+    fun `fails on a blank reason the build declares`() {
+        setup("sbomIncompleteReasons.add(\" \")\n$fixedTimestamp", externalDependencies = false)
+
+        val result = gradleRunner("generateSbom").buildAndFail()
+
+        assertThat(result.output).contains(
+            "Task ':generateSbom' got a blank declared incomplete reason (hivemqLicense.sbomIncompleteReasons): [ ]"
+        )
+        assertThat(sbom()).doesNotExist()
     }
 
     @Test
@@ -462,6 +486,22 @@ class GenerateSbomIntegrationTest {
         val sbom = mapper.readTree(sbom())
         assertThat(sbom["metadata"]["manufacturer"]["contact"][0]["email"].asText()).isEqualTo("security@example.com")
         assertThat(sbom["metadata"]["component"]["properties"].map { it["value"].asText() }).contains("hivemq.jar")
+    }
+
+    @Test
+    fun `warns about the detected reasons only, not about the ones the build declares`() {
+        setup("sbomIncompleteReasons.add(\"bundles a frontend\")\n$fixedTimestamp", externalDependencies = false)
+        addVendoredJar()
+
+        val result = gradleRunner("generateSbom").build()
+
+        assertThat(mapper.readTree(sbom())["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
+        assertThat(result.output)
+            .contains(
+                "The SBOM of project ':' declares its dependency graph incomplete: runtimeClasspath has file " +
+                    "dependencies: vendored.jar"
+            )
+            .doesNotContain("bundles a frontend")
     }
 
     @Test
