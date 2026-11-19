@@ -29,10 +29,10 @@ import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 /**
- * Turns the JSON BOM written by the CycloneDX Gradle plugin into a file that is identical for identical inputs.
- *
- * It replaces the current time and the random `serialNumber`, drops the `build-system` reference to the CI run and
- * writes the remote the caller passes in as the `vcs` and the `source-distribution` reference instead of CycloneDX's.
+ * Turns the JSON BOM written by the CycloneDX Gradle plugin into a file that is identical for identical inputs: it
+ * replaces the current time and the random `serialNumber`, drops the `build-system` reference to the CI run, writes the
+ * remote the caller passes in as the `vcs` and the `source-distribution` reference instead of CycloneDX's, and removes
+ * every signature.
  */
 internal object SbomNormalizer {
 
@@ -83,6 +83,15 @@ internal object SbomNormalizer {
         metadata.put("timestamp", DateTimeFormatter.ISO_INSTANT.format(seconds))
         (metadata.get("component") as? ObjectNode)?.let { normalizeExternalReferences(it, vcsUrl) }
         (root.get("dependencies") as? ArrayNode)?.let(::sortDependsOnLists)
+        // a signatory without its signature needs an organization and an external reference, so one lacking either goes
+        (root.path("declarations").path("affirmation").get("signatories") as? ArrayNode)?.removeIf { signatory ->
+            signatory.has("signature") && !(signatory.has("externalReference") && signatory.has("organization"))
+        }
+        removeSignatures(root)
+        // entries that differed only in their signatures, or in refs the filter removed, can be equal now
+        for (name in listOf("compositions", "annotations")) {
+            (root.get(name) as? ArrayNode)?.let(BomFilter::dropDuplicates)
+        }
 
         // the serial number names the content, so it is computed over everything else
         root.remove("serialNumber")
@@ -168,6 +177,15 @@ internal object SbomNormalizer {
             dependsOn.removeAll()
             refs.forEach(dependsOn::add)
         }
+    }
+
+    /**
+     * Removes the `signature` of [node] and of all below it, each a JSF signature in the schema: the new serial number
+     * and timestamp break the document's, and one its producer made does not vouch for what the plugin writes.
+     */
+    private fun removeSignatures(node: JsonNode) {
+        (node as? ObjectNode)?.remove("signature")
+        node.forEach(::removeSignatures)
     }
 
     // keeps CycloneDX's field order, where the serial number follows the spec version

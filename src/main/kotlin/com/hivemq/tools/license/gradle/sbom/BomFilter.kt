@@ -25,9 +25,10 @@ import java.util.Collections
 import java.util.IdentityHashMap
 
 /**
- * Removes components, by module or by predicate, from a BOM tree with every reference to them, or only their edges. It
- * handles nested components and the references from `dependsOn`, `provides`, vulnerabilities, compositions and
- * annotations, although the CycloneDX Gradle plugin writes flat BOMs: the tasks read any BOM a build points them at.
+ * Removes components, by module or by predicate, from a BOM tree with the references to them from `dependsOn`,
+ * `provides`, vulnerabilities, compositions and annotations, or only their edges; [referencesTo] finds what else still
+ * names them. It handles nested components, although the CycloneDX Gradle plugin writes flat BOMs: the tasks read any
+ * BOM a build points them at.
  */
 internal object BomFilter {
 
@@ -54,6 +55,32 @@ internal object BomFilter {
 
     /** The `bom-ref` of a BOM [component], or null for one without. */
     fun refOf(component: JsonNode): String? = component.get("bom-ref")?.asText()
+
+    /** The bom-ref of [node] as non-empty text; an empty one refers to nothing, so it counts as missing. */
+    fun nonEmptyRefOf(node: JsonNode): String? =
+        node.get("bom-ref")?.takeIf { it.isTextual && it.asText().isNotEmpty() }?.asText()
+
+    /**
+     * Whether to keep a [composition] the plugin changed, or wrote its own compositions next to: false when it names
+     * nothing and has no non-empty bom-ref, so the caller drops it; one only its bom-ref keeps is set to the aggregate
+     * `not_specified`, the schema's default.
+     */
+    fun keepComposition(composition: ObjectNode): Boolean {
+        val namesSomething = compositionLists.any { field ->
+            // a value of another type is not the plugin's to judge, so it counts as naming something
+            composition.get(field)?.let { it !is ArrayNode || !it.isEmpty } == true
+        }
+        if (namesSomething) return true
+        if (nonEmptyRefOf(composition) == null) return false
+        composition.put("aggregate", "not_specified")
+        return true
+    }
+
+    /** Removes every entry of [list] equal to an earlier one, as the schema's `uniqueItems` wants. */
+    fun dropDuplicates(list: ArrayNode) {
+        val seen = hashSetOf<JsonNode>()
+        list.removeIf { !seen.add(it) }
+    }
 
     /** Whether a BOM [component] declares at least one license, as the POM of a published module does. */
     fun declaresLicense(component: JsonNode): Boolean = (component.get("licenses") as? ArrayNode)?.any { entry ->
@@ -129,10 +156,10 @@ internal object BomFilter {
     }
 
     /**
-     * Changes [root] in place: every component [drop] accepts goes, nested or not, `metadata.component` stays. The
-     * nested components of a dropped one go with it, except those [keep] accepts, which take its place as dependencies
-     * of its dependants. A `dependsOn` reference to it leads to the kept components below instead; any other reference
-     * goes, and a vulnerability or an annotation left with nothing to refer to goes with it.
+     * Changes [root] in place: every component [drop] accepts goes, nested or not, and takes its nested ones along,
+     * except those [keep] accepts, which take its place as dependencies of its dependants; `metadata.component` itself
+     * stays. A `dependsOn` reference to a dropped component leads to the next ones that stay; one from a `provides`
+     * list, a vulnerability, an annotation or a composition goes, as do the last three left empty ([keepComposition]).
      */
     fun dropComponents(root: ObjectNode, drop: (ObjectNode) -> Boolean, keep: (ObjectNode) -> Boolean = { false }) {
         val before = refsBelow(root)
@@ -209,6 +236,27 @@ internal object BomFilter {
             properties.removeIf { it.get("name")?.asText()?.startsWith(prefix) == true }
             if (properties.isEmpty) component.remove("properties")
         }
+    }
+
+    /** Every `bom-ref` in [root], so that a caller can tell, before and after a filter, what the filter removed. */
+    fun refsIn(root: JsonNode): Set<String> = buildSet { collectRefs(root, this) }
+
+    /**
+     * Every non-empty text in [root] equal to one of [refs], by its JSON pointer: once a filter ran, what still names
+     * something removed sits in a place the filter does not rewrite, such as a declaration's claim or a formulation
+     * workflow. An empty text names nothing, like an empty `bom-ref`.
+     */
+    fun referencesTo(root: JsonNode, refs: Set<String>): Map<String, String> = buildMap {
+        fun walk(node: JsonNode, pointer: String) {
+            when {
+                node.isTextual -> node.asText().takeIf { it.isNotEmpty() && it in refs }?.let { put(pointer, it) }
+                node.isObject -> node.properties().forEach { (name, child) ->
+                    walk(child, "$pointer/" + name.replace("~", "~0").replace("/", "~1"))
+                }
+                node.isArray -> node.forEachIndexed { index, child -> walk(child, "$pointer/$index") }
+            }
+        }
+        walk(root, "")
     }
 
     private fun topLevel(root: ObjectNode): ObjectNode? =
@@ -373,6 +421,16 @@ internal object BomFilter {
         }
     }
 
+    /** Removes the entries of [composition]'s [field] naming one of [refs], the list when emptied; true if any went. */
+    private fun removeRefs(composition: ObjectNode, field: String, refs: Set<String>): Boolean {
+        val list = composition.get(field) as? ArrayNode ?: return false
+        val size = list.size()
+        list.removeIf { it.asText() in refs }
+        if (list.size() == size) return false
+        if (list.isEmpty) composition.remove(field)
+        return true
+    }
+
     // a reference from outside the dependency graph leads nowhere once its component is gone
     private fun dropReferences(root: ObjectNode, dropped: Set<String>) {
         val removedVulnerabilities = mutableSetOf<String>()
@@ -385,11 +443,19 @@ internal object BomFilter {
             if (gone) vulnerability.get("bom-ref")?.asText()?.let(removedVulnerabilities::add)
             gone
         }
-        (root.get("compositions") as? ArrayNode)?.forEach { composition ->
-            for (field in listOf("assemblies", "dependencies")) {
-                (composition.get(field) as? ArrayNode)?.removeIf { it.asText() in dropped }
+        (root.get("compositions") as? ArrayNode)?.let { compositions ->
+            compositions.removeIf { composition ->
+                if (composition !is ObjectNode) return@removeIf false
+                val pruned = listOf(
+                    removeRefs(composition, "assemblies", dropped),
+                    removeRefs(composition, "dependencies", dropped),
+                    removeRefs(composition, "vulnerabilities", removedVulnerabilities),
+                ).any { it }
+                // one left naming nothing would state its aggregate about nothing; one the filter did not change stays
+                pruned && !keepComposition(composition)
             }
-            (composition.get("vulnerabilities") as? ArrayNode)?.removeIf { it.asText() in removedVulnerabilities }
+            // pruning can leave two equal
+            dropDuplicates(compositions)
         }
         // an annotation may be about a vulnerability or another annotation as well as about a component
         val removedRefs = (dropped + removedVulnerabilities).toMutableSet()
@@ -408,4 +474,7 @@ internal object BomFilter {
             // once more when an annotation went, for the ones that were about it
         } while (removedRefs.addAll(removedAnnotations))
     }
+
+    // the fields listing what a composition makes a statement about
+    private val compositionLists = listOf("assemblies", "dependencies", "vulnerabilities")
 }

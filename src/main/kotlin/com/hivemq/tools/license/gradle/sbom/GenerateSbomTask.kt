@@ -37,7 +37,7 @@ import java.time.format.DateTimeParseException
  * Writes a reproducible CycloneDX SBOM, with the fields [SbomEnricher] adds, from the JSON BOM in [dependencyLicense];
  * see [SbomNormalizer]. Fails like `checkApprovedLicenses` on a license problem, writing no SBOM; leaves out the
  * internal modules ([OwnModules]) and the provided ones but for the first on each path, which stays identified. Every
- * instance gets the `generateSbom` conventions, so a second one sets only what differs, usually [artifactFileName].
+ * instance gets the `generateSbom` defaults, so a second one sets only what differs, usually [artifactFileName].
  */
 @DisableCachingByDefault(because = "Rewriting one file is cheaper than a cache round trip")
 abstract class GenerateSbomTask : LicenseResolvingTask() {
@@ -79,10 +79,19 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
 
     /**
      * Why the dependency graph is not complete, such as a file dependency or a module that could not be resolved,
-     * both of which CycloneDX leaves out of the BOM; empty means complete.
+     * both of which CycloneDX leaves out of the BOM; empty means complete. Setting it leaves
+     * [declaredIncompleteReasons] alone.
      */
     @get:Input
     abstract val incompleteReasons: ListProperty<String>
+
+    /**
+     * Gaps the build declares because the plugin cannot detect them, such as a frontend the jar bundles from a separate
+     * build; `hivemqLicense.sbomIncompleteReasons` by default. Any of them makes the graph incomplete like
+     * [incompleteReasons] does, without the warning, and a blank one fails the task.
+     */
+    @get:Input
+    abstract val declaredIncompleteReasons: ListProperty<String>
 
     @get:OutputFile
     abstract val outputFile: RegularFileProperty
@@ -92,6 +101,14 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
         val bomFile = dependencyLicense.get().asFile
         val sbomFile = outputFile.get().asFile
         val reasons = incompleteReasons.get()
+        val declaredReasons = declaredIncompleteReasons.get()
+        // a blank reason would turn the graph incomplete without saying why
+        if (declaredReasons.any { it.isBlank() }) {
+            throw GradleException(
+                "Task '$path' got a blank declared incomplete reason (hivemqLicense.sbomIncompleteReasons): " +
+                    "$declaredReasons"
+            )
+        }
         val text = timestamp.get()
         val instant = try {
             Instant.parse(text)
@@ -108,6 +125,7 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
             // before the license resolver, so a file that is not a JSON object gets the reader's message, not the raw
             // one of the resolver; filter, enricher and normalizer then work on this one tree
             val root = BomJson.read(bomFile.readBytes())
+            val refsBefore = BomFilter.refsIn(root)
             // without the graph nobody can tell which provided components the shipped code depends on directly
             val hasProvided = BomFilter.components(root).any { BomFilter.moduleIdOf(it) in provided }
             val hasGraph = root.get("dependencies")?.let { it.isArray && !it.isEmpty } == true
@@ -125,6 +143,14 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
             // identified only: the host's SBOM describes it, here it depends on nothing and ships no file
             BomFilter.detachComponents(root, identifiedRefs)
             BomFilter.removeProperties(root, identifiedRefs, "bsi:component:")
+            // a reference from a place the filter does not rewrite would name what the SBOM left out
+            val dangling = BomFilter.referencesTo(root, refsBefore - BomFilter.refsIn(root))
+            if (dangling.isNotEmpty()) {
+                throw SbomException(
+                    "The BOM refers to something the SBOM leaves out, from a place the plugin does not rewrite: " +
+                        dangling.entries.joinToString { (pointer, ref) -> "$pointer ($ref)" }
+                )
+            }
             // fails on a license problem with the message of checkApprovedLicenses, which is not wrapped below
             val concluded = resolveLicenses().values.associate { dependency ->
                 // by the version the license was resolved for, which another version of the module may not share
@@ -136,7 +162,7 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
                 artifactFileName = artifactFileName.orNull,
                 componentFileNames = componentFileNames.get(),
                 concludedLicenses = concluded,
-                incompleteReasons = reasons,
+                incompleteReasons = reasons + declaredReasons,
                 identifiedComponents = identifiedRefs,
             )
             SbomNormalizer.normalize(SbomEnricher.enrich(root, details), instant, vcsUrl.orNull)
@@ -147,6 +173,7 @@ abstract class GenerateSbomTask : LicenseResolvingTask() {
             throw cannotWrite(bomFile, e)
         }
         sbomFile.writeBytes(normalized)
+        // only the detected gaps: the declared ones are known to the build already
         if (reasons.isNotEmpty()) {
             // the SBOM says so too, but nobody reads it during the build
             logger.warn(

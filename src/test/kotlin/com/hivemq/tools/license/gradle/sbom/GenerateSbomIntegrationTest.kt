@@ -217,6 +217,18 @@ class GenerateSbomIntegrationTest {
     }
 
     @Test
+    fun `declares the dependency graph incomplete with a reason the build declares`() {
+        setup("sbomIncompleteReasons.add(\"bundles a frontend\")\n$fixedTimestamp", externalDependencies = false)
+
+        val result = gradleRunner("generateSbom").build()
+
+        // what the jar bundles outside dependency resolution is invisible to the plugin, so the build says so
+        assertThat(mapper.readTree(sbom())["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
+        // the build knows its own gap, so nothing warns about it
+        assertThat(result.output).doesNotContain("declares its dependency graph incomplete")
+    }
+
+    @Test
     fun `describes the dependencies with their files, licenses and creators`() {
         setup(fixedTimestamp)
 
@@ -316,6 +328,18 @@ class GenerateSbomIntegrationTest {
         // lib's component gets no file: the artifact view keeps module artifacts only, so that no jar has to be built
         val lib = sbom["components"].first { it["name"].asText() == "lib" }
         assertThat(lib.path("properties").map { it["name"].asText() }).doesNotContain("bsi:component:filename")
+    }
+
+    @Test
+    fun `fails on a blank reason the build declares`() {
+        setup("sbomIncompleteReasons.add(\" \")\n$fixedTimestamp", externalDependencies = false)
+
+        val result = gradleRunner("generateSbom").buildAndFail()
+
+        assertThat(result.output).contains(
+            "Task ':generateSbom' got a blank declared incomplete reason (hivemqLicense.sbomIncompleteReasons): [ ]"
+        )
+        assertThat(sbom()).doesNotExist()
     }
 
     @Test
@@ -465,6 +489,22 @@ class GenerateSbomIntegrationTest {
     }
 
     @Test
+    fun `warns about the detected reasons only, not about the ones the build declares`() {
+        setup("sbomIncompleteReasons.add(\"bundles a frontend\")\n$fixedTimestamp", externalDependencies = false)
+        addVendoredJar()
+
+        val result = gradleRunner("generateSbom").build()
+
+        assertThat(mapper.readTree(sbom())["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
+        assertThat(result.output)
+            .contains(
+                "The SBOM of project ':' declares its dependency graph incomplete: runtimeClasspath has file " +
+                    "dependencies: vendored.jar"
+            )
+            .doesNotContain("bundles a frontend")
+    }
+
+    @Test
     fun `writes a document that is valid for the spec version it declares`() {
         setup(fixedTimestamp)
 
@@ -477,10 +517,37 @@ class GenerateSbomIntegrationTest {
         assertThat(errors.map { it.message }).isEmpty()
     }
 
-    // --- Conventions ---
+    // --- Defaults ---
 
     @Test
-    fun `a build script adds to the licence options of a second SBOM task`() {
+    fun `a build script adds to the detected reasons and the file names of generateSbom`() {
+        setup(fixedTimestamp)
+        addVendoredJar()
+        projectDir.resolve("build.gradle.kts").appendText(
+            "\n" + """
+            tasks.named<com.hivemq.tools.license.gradle.sbom.GenerateSbomTask>("generateSbom") {
+                incompleteReasons.add("bundles something else")
+                componentFileNames.put("org.slf4j:slf4j-api:2.0.16", "slf4j.jar")
+            }
+            """.trimIndent()
+        )
+
+        val result = gradleRunner("generateSbom").build()
+
+        // the add and the put extend what the plugin found, instead of discarding it; the put overrides slf4j-api only
+        assertThat(result.output).contains(
+            "declares its dependency graph incomplete: runtimeClasspath has file dependencies: vendored.jar; bundles " +
+                "something else"
+        )
+        val sbom = mapper.readTree(sbom())
+        fun fileNameOf(name: String) = sbom["components"].first { it["name"].asText() == name }["properties"]
+            .first { it["name"].asText() == "bsi:component:filename" }["value"].asText()
+        assertThat(fileNameOf("slf4j-api")).isEqualTo("slf4j.jar")
+        assertThat(fileNameOf("guava")).isEqualTo("guava-33.4.0-jre.jar")
+    }
+
+    @Test
+    fun `a build script adds to the license options of a second SBOM task`() {
         setup(
             """
             overriddenLicenses.set(mapOf("com.google.guava:guava" to "MIT"))
@@ -504,6 +571,25 @@ class GenerateSbomIntegrationTest {
             val concluded = component["licenses"].filter { it["license"]["acknowledgement"].asText() == "concluded" }
             assertThat(concluded.map { it["license"]["id"].asText() }).describedAs(name).containsExactly("MIT")
         }
+    }
+
+    @Test
+    fun `a second SBOM task replaces the declared reasons with set`() {
+        setup("sbomIncompleteReasons.add(\"bundles a frontend\")\n$fixedTimestamp", externalDependencies = false)
+        projectDir.resolve("build.gradle.kts").appendText(
+            "\n" + """
+            tasks.register<com.hivemq.tools.license.gradle.sbom.GenerateSbomTask>("generateOtherSbom") {
+                declaredIncompleteReasons.set(emptyList())
+            }
+            """.trimIndent()
+        )
+
+        gradleRunner("generateSbom", "generateOtherSbom").build()
+
+        // the set runs after the plugin's, so it replaces the project's declared gap for this task only
+        val other = mapper.readTree(projectDir.resolve("build/sbom/generateOtherSbom/sbom-project.cdx.json"))
+        assertThat(other["compositions"][0]["aggregate"].asText()).isEqualTo("complete")
+        assertThat(mapper.readTree(sbom())["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
     }
 
     @Test
@@ -544,12 +630,12 @@ class GenerateSbomIntegrationTest {
         assertThat(projectDir.resolve("build/sbom/generateOtherSbom")).doesNotExist()
         val sbom = mapper.readTree(projectDir.resolve("build/other.cdx.json"))
         assertThat(sbom["metadata"]["manufacturer"]["name"].asText()).isEqualTo("Example GmbH")
-        // what the build script leaves out still comes from the conventions
+        // what the build script leaves out still comes from the defaults
         assertThat(sbom["metadata"]["timestamp"].asText()).isEqualTo("2026-01-02T03:04:05Z")
     }
 
     @Test
-    fun `applies the conventions to a GenerateSbomTask the build registers`() {
+    fun `applies the defaults to a GenerateSbomTask the build registers`() {
         setup(fixedTimestamp)
         projectDir.resolve("build.gradle.kts").appendText(
             "\n" + """
@@ -558,7 +644,7 @@ class GenerateSbomIntegrationTest {
             }
             """.trimIndent()
         )
-        // makes the graph incomplete, which an SBOM task without the conventions would declare complete
+        // makes the graph incomplete, which an SBOM task without the defaults would declare complete
         addVendoredJar()
 
         val result = gradleRunner("generateSbom", "generateInitImageSbom").build()

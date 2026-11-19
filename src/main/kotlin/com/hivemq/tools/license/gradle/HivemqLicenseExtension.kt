@@ -16,6 +16,7 @@
 package com.hivemq.tools.license.gradle
 
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
@@ -68,4 +69,11 @@ interface HivemqLicenseExtension {
      * `java` plugin, is the archive file name of the `jar` task, or of `shadowJar` when the Shadow plugin is applied.
      */
     val sbomArtifactFileName: Property<String>
+
+    /**
+     * Gaps in the SBOM's dependency graph that the plugin cannot detect, such as a frontend that a separate build
+     * produces and the jar bundles; any reason makes every `GenerateSbomTask` that keeps its default
+     * `declaredIncompleteReasons` declare the graph `incomplete`, a blank one fails it. Empty by default.
+     */
+    val sbomIncompleteReasons: ListProperty<String>
 }

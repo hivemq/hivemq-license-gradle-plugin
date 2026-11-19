@@ -28,7 +28,8 @@ import java.net.URISyntaxException
 /**
  * Adds what BSI TR-03183-2 requires and CycloneDX does not write: the SBOM's creator, each component's file, file kind,
  * creator and source URI, the graph's completeness, and our reviewed license next to the declared one. Deterministic;
- * needs CycloneDX [MINIMUM_SPEC_VERSION] or a later 1.x and leaves a value of an unexpected type as it is.
+ * needs CycloneDX [MINIMUM_SPEC_VERSION] or a later 1.x and leaves a value of an unexpected type as it is, but fails
+ * instead when the BOM cannot carry a gap the SBOM has to state.
  */
 internal object SbomEnricher {
 
@@ -67,6 +68,7 @@ internal object SbomEnricher {
     fun enrich(root: ObjectNode, details: SbomDetails): ObjectNode {
         requireSpecVersion(root)
         requireCreator(details.creator)
+        val compositions = planCompositions(root, details)
         enrichMetadata(root, details)
         for (component in BomFilter.components(root)) {
             // with the version, because the BOM can hold a module in two versions, each with its own file and license
@@ -79,7 +81,7 @@ internal object SbomEnricher {
             addSourceDistribution(component)
             acknowledgeLicenses(component, details.concludedLicenses[coordinates].orEmpty())
         }
-        declareCompleteness(root, details.incompleteReasons, details.identifiedComponents)
+        compositions?.let { writeCompositions(root, it) }
         return root
     }
 
@@ -266,29 +268,87 @@ internal object SbomEnricher {
         }
     }
 
-    // BSI TR-03183-2 wants completeness stated truthfully: any reason the build reported makes the graph incomplete,
-    // and an identified component, whose dependencies the host's SBOM describes, is incomplete here in any case
-    private fun declareCompleteness(root: ObjectNode, incompleteReasons: List<String>, identified: Set<String>) {
-        val dependencies = root.get("dependencies") as? ArrayNode ?: return
-        // only text, each once, because the schema wants unique strings; sorted, so the list does not depend on the
-        // order of the entries
-        val refs = dependencies
+    /**
+     * The compositions to write, or null to leave the BOM's own untouched. BSI TR-03183-2 wants completeness stated
+     * truthfully: every gap gets an incomplete composition, or this throws before anything changes.
+     */
+    private fun planCompositions(root: ObjectNode, details: SbomDetails): List<Composition>? {
+        val graph = graphRefs(root)
+        // an identified component, whose dependencies the host's SBOM describes, is incomplete here in any case
+        val identifiedGap = IDENTIFIED_GAP.takeIf { graph.any { it in details.identifiedComponents } }
+        val gaps = details.incompleteReasons + listOfNotNull(identifiedGap)
+        val compositions = root.get("compositions")
+        val writable = compositions == null || compositions is ArrayNode
+        // with no gap there is nothing to hold against a BOM without a graph or with compositions of another type
+        if (gaps.isEmpty()) return if (graph.isEmpty() || !writable) null else listOf(Composition("complete", graph))
+        val why = gaps.joinToString("; ")
+        if (!writable) {
+            throw SbomException(
+                "The BOM's compositions are not a JSON array, so the SBOM cannot state that its dependency graph is " +
+                    "incomplete: $why"
+            )
+        }
+        if (details.incompleteReasons.isEmpty()) {
+            val (identifiedRefs, describedRefs) = graph.partition { it in details.identifiedComponents }
+            return listOfNotNull(
+                Composition("complete", describedRefs).takeIf { describedRefs.isNotEmpty() },
+                Composition("incomplete", identifiedRefs),
+            )
+        }
+        // a reported gap is the artifact's, so it is stated for the top-level component, whether or not the graph has
+        // an entry for it, and for every component in the graph
+        val topLevel = topLevelRef(root) ?: throw SbomException(
+            "The BOM has no bom-ref on metadata.component, so the SBOM cannot state that its dependency graph is " +
+                "incomplete: $why"
+        )
+        return listOf(Composition("incomplete", (graph + topLevel).distinct().sorted()))
+    }
+
+    /** The text refs of the dependency graph, each once as the schema wants, sorted so the entries' order is moot. */
+    private fun graphRefs(root: ObjectNode): List<String> {
+        val dependencies = root.get("dependencies") as? ArrayNode ?: return emptyList()
+        return dependencies
             .mapNotNull { it.get("ref")?.takeIf { ref -> ref.isTextual }?.asText() }
             .distinct()
             .sorted()
-        if (refs.isEmpty()) return
-        val compositions = root.arrayOrNew("compositions") ?: return
-        compositions.removeAll()
-        if (incompleteReasons.isNotEmpty()) return compositions.addComposition("incomplete", refs)
-        val (identifiedRefs, describedRefs) = refs.partition { it in identified }
-        if (describedRefs.isNotEmpty()) compositions.addComposition("complete", describedRefs)
-        if (identifiedRefs.isNotEmpty()) compositions.addComposition("incomplete", identifiedRefs)
     }
 
-    private fun ArrayNode.addComposition(aggregate: String, refs: List<String>) {
-        val list = addObject().put("aggregate", aggregate).putArray("dependencies")
-        refs.forEach(list::add)
+    private fun topLevelRef(root: ObjectNode): String? =
+        BomFilter.nonEmptyRefOf(root.path("metadata").path("component"))
+
+    /**
+     * Writes [compositions], then the BOM's own ones without the dependency refs [compositions] list;
+     * [planCompositions] returns compositions only when the BOM's own ones are absent or an array.
+     */
+    private fun writeCompositions(root: ObjectNode, compositions: List<Composition>) {
+        val covered = compositions.flatMapTo(hashSetOf()) { it.refs }
+        val own = (root.get("compositions") as? ArrayNode)?.filterIsInstance<ObjectNode>().orEmpty()
+        val array = root.putArray("compositions")
+        for (composition in compositions) {
+            val refs = array.addObject().put("aggregate", composition.aggregate).putArray("dependencies")
+            composition.refs.forEach(refs::add)
+        }
+        for (composition in own) {
+            dropCovered(composition, covered)
+            if (BomFilter.keepComposition(composition)) array.add(composition)
+        }
+        // two can be equal once their covered refs are gone
+        BomFilter.dropDuplicates(array)
     }
+
+    /** Drops [covered] from a [composition]'s dependencies, and the list when that empties it. */
+    private fun dropCovered(composition: ObjectNode, covered: Set<String>) {
+        val dependencies = composition.get("dependencies") as? ArrayNode ?: return
+        val rest = dependencies.filterNot { it.isTextual && it.asText() in covered }
+        if (rest.size == dependencies.size()) return
+        if (rest.isEmpty()) composition.remove("dependencies") else dependencies.removeAll().addAll(rest)
+    }
+
+    private class Composition(val aggregate: String, val refs: List<String>)
+
+    private const val IDENTIFIED_GAP =
+        "identified components (the first module on each path that hivemqProvided resolves), whose dependencies the " +
+            "host's SBOM describes"
 
     private const val FILENAME = "bsi:component:filename"
     private const val EXECUTABLE = "bsi:component:executable"

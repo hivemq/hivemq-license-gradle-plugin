@@ -46,6 +46,8 @@ which writes `build/license/bom.json` and no XML file. The `cyclonedxDirectBom` 
   build whose internal POMs carry one, inherited from a parent POM for example, has nothing left to hide them with and
   drops the license there, or lists them. A build that named a third-party group there to hide its modules removes the
   prefix: they are listed and checked like any other library, with `overriddenLicenses` where their metadata needs it.
+- A build whose jar bundles content that Gradle does not resolve, such as an npm frontend, adds a reason to
+  `hivemqLicense.sbomIncompleteReasons`; otherwise its SBOM declares the dependency graph complete.
 
 ## Configuration
 
@@ -64,6 +66,7 @@ The `hivemqLicense` extension provides the following properties:
 | `sbomCreatorName`            | `Property<String>`            | `HiveMQ GmbH`                       | No       | Name of the organisation that creates the SBOM and ships the component |
 | `sbomCreator`                | `Property<String>`            | `security@hivemq.com`               | No       | Email address or http(s) URL of that organisation, or the build fails  |
 | `sbomArtifactFileName`       | `Property<String>`            | `jar` or `shadowJar` file name      | No       | Top-level component's file name; the default needs the `java` plugin   |
+| `sbomIncompleteReasons`      | `ListProperty<String>`        | `[]`                                | No       | Gaps the plugin cannot detect, e.g. a bundled frontend                 |
 
 ### Own modules
 
@@ -198,6 +201,12 @@ hivemqLicense {
 }
 ```
 
+Every `signature` the BOM carries, on the document or on any part of it, is removed: the new serial number and
+timestamp break the document's, and a signature its producer made does not vouch for what the plugin writes. A signed
+signatory of the BOM's declarations without both an organization and an external reference, which the schema requires
+of one without a signature, is removed with its signature; compositions or annotations that differed only in their
+signatures are written once.
+
 The file also carries what [BSI TR-03183-2](https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/TechGuidelines/TR03183/BSI-TR-03183-2_v2_1_0.pdf?__blob=publicationFile)
 requires beyond CycloneDX's defaults:
 
@@ -220,12 +229,21 @@ requires beyond CycloneDX's defaults:
   creator. A project of this build or of an included build has no POM and gets the creator of the SBOM.
 - A `compositions` entry declaring the dependency graph `complete`, or `incomplete` when the configurations the BOM is
   built from resolve a file dependency, such as a jar checked into the repository, or fail to resolve a module:
-  CycloneDX leaves both out of the BOM, and `generateSbom` warns with the reasons. A file dependency counts no matter
-  which project declares it: this one, or one it depends on, in this build or in an included build. `complete` refers to
-  the dependency graph of the shipped artifact, without the modules a `hivemqProvided` configuration resolves. The
-  identified components among them (see below) are listed in a second composition, `incomplete`, because their
+  CycloneDX leaves both out of the BOM, and `generateSbom` warns with the reasons. A build declares what the plugin
+  cannot see, such as a frontend that a separate build produces and the jar bundles, by adding a reason to
+  `sbomIncompleteReasons`: the graph is then `incomplete` as well, without the warning. A file dependency counts no
+  matter which project declares it: this one, or one it depends on, in this build or in an included build. `complete`
+  refers to the dependency graph of the shipped artifact, without the modules a `hivemqProvided` configuration resolves.
+  The identified components among them (see below) are listed in a second composition, `incomplete`, because their
   dependencies are left to the SBOM of the host, not because they have none; when the build reports a gap, the one
-  `incomplete` composition covers everything.
+  `incomplete` composition covers every component in the graph, the top-level component included. In a BOM without a
+  dependency graph, such as one from another tool supplied through `dependencyLicense`, a gap is stated for the
+  top-level component. Next to the plugin's compositions, which are about the dependency graph only, a composition the
+  BOM already has loses the `dependencies` entries the plugin's compositions list and keeps the rest, its assemblies and
+  vulnerabilities included; one that then names nothing is dropped, or kept with the aggregate `not_specified` when it
+  has a `bom-ref`, which something may refer to.
+  `generateSbom` fails when there is a gap to state and the BOM's `compositions` is not an array, or when the build
+  reports a gap and the top-level component has no `bom-ref` to state it for.
 - Licenses: the entries CycloneDX wrote from the POM are tagged `declared`; the license this plugin resolves for the
   reports (overrides included) is added as `concluded`, one entry per license when several apply. When a component's
   declared license is a single SPDX expression and a concluded license is added, the expression is kept whole as the
@@ -234,7 +252,8 @@ requires beyond CycloneDX's defaults:
   the reports leave out.
 
 The file names and the completeness follow the configurations the BOM is built from: `runtimeClasspath` and the
-`additionalConfigurations`, which are the only ones `generateDependencyBom` reads.
+`additionalConfigurations`, which are the only ones `generateDependencyBom` reads; a gap declared in
+`sbomIncompleteReasons` makes the graph incomplete as well.
 
 Known gaps: first-party components (the top-level component and the projects of this build and of included builds) carry
 no license, so a project dependency of a group that is not the build's own fails `generateSbom` like it fails
@@ -267,7 +286,10 @@ references to the components that stay and that it leads to, directly or through
 still reaches every component that stays, such as a module that only another version of a provided module brings in; a
 reference to it, or to a license or another object inside it with a `bom-ref` of its own, from a `provides` list, a
 vulnerability, an annotation or a composition is removed, and a vulnerability or an annotation left with nothing to
-refer to goes with it.
+refer to goes with it; so does a composition, unless it has a `bom-ref`, which keeps it with the aggregate
+`not_specified`. A reference from anywhere else, such as a declaration's claim or a formulation workflow in a BOM
+another tool supplied, is not rewritten: `generateSbom` fails when any value still equals the `bom-ref` of something it
+left out, naming where it sits.
 
 The manufacturer fields, the license acknowledgements and the `source-distribution` reference exist from CycloneDX
 specification 1.6 on, which is what `generateDependencyBom` writes by default; `generateSbom` fails on a BOM that
@@ -301,9 +323,13 @@ attributes, so Gradle would match their consumers against it instead of handing 
 
 A project that ships its jar under a second file name, for example because an image renames it, needs a second SBOM,
 because BSI TR-03183-2 records one file name per component. The plugin configures every `GenerateSbomTask` of the
-project like `generateSbom`: the licence options (`ignoredGroupPrefixes`, `allowedArtifacts`, `overriddenLicenses`) as
-values a task can add to, everything else as a convention that `set(...)` replaces. So a second task sets only what
-differs:
+project like `generateSbom`: the license options (`ignoredGroupPrefixes`, `allowedArtifacts`, `overriddenLicenses`),
+`providedModules`, `componentFileNames`, `incompleteReasons` and `declaredIncompleteReasons` as values that a task's
+`add` or `put` extends and its `set(...)` replaces, everything else as a convention that `set(...)` replaces. A second
+task therefore sets only what differs: for the renamed jar, the file name alone; a task for an artifact without the
+bundled content that `sbomIncompleteReasons` declares also calls `declaredIncompleteReasons.set(emptyList())`. A task's
+`add`, `put` or `set(...)` on a value must run after the plugin's own `set`, as it does in a task registered once the
+plugin is applied, like the one below; one that runs earlier is discarded.
 
 ```kotlin
 import com.hivemq.tools.license.gradle.sbom.GenerateSbomTask
