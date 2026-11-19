@@ -64,6 +64,14 @@ class LicenseResolverMetadataTest {
     }
 
     @Test
+    fun `LICENSE_ORDER has MPL_2_0 after UPL_1_0`() {
+        val order = LicenseResolver.LICENSE_ORDER
+        assertThat(order.indexOf(KnownLicense.MPL_2_0))
+            .isGreaterThan(order.indexOf(KnownLicense.UPL_1_0))
+            .isLessThan(order.indexOf(KnownLicense.LGPL_2_1_OR_LATER))
+    }
+
+    @Test
     fun `BUILT_IN_LICENSES maps javax_activation to CDDL_1_1`() {
         assertThat(LicenseResolver.BUILT_IN_LICENSES["javax.activation:javax.activation-api"])
             .isEqualTo(KnownLicense.CDDL_1_1)
@@ -122,6 +130,7 @@ class LicenseResolverMetadataTest {
         assertThat(LicenseResolver.SPDX_ID_MAP["LGPL-2.1-or-later"]).isEqualTo(KnownLicense.LGPL_2_1_OR_LATER)
         assertThat(LicenseResolver.SPDX_ID_MAP["BlueOak-1.0.0"]).isEqualTo(KnownLicense.BLUE_OAK_1_0_0)
         assertThat(LicenseResolver.SPDX_ID_MAP["CC-BY-4.0"]).isEqualTo(KnownLicense.CC_BY_4_0)
+        assertThat(LicenseResolver.SPDX_ID_MAP["MPL-2.0"]).isEqualTo(KnownLicense.MPL_2_0)
     }
 
     @Test
