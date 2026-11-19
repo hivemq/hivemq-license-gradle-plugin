@@ -75,6 +75,31 @@ class SbomEnricherTest {
     private fun enrich(input: ByteArray = bom(), with: SbomDetails = details): JsonNode =
         SbomEnricher.enrich(BomJson.read(input), with)
 
+    /**
+     * [bom] with compositions of its own: one the SBOM's statement changes, one only its bom-ref keeps, one already not
+     * specified, two that become equal and one it leaves alone.
+     */
+    private fun withOwnCompositions(): ByteArray {
+        val lib = "pkg:maven/org.example/lib@1.0"
+        val elsewhere = "pkg:maven/org.example/elsewhere@1.0"
+        val root = BomJson.read(bom())
+        val compositions = root.putArray("compositions")
+        val changed = compositions.addObject().put("aggregate", "complete")
+        changed.putArray("assemblies").add(lib)
+        changed.putArray("dependencies").add(lib).add(elsewhere)
+        compositions.addObject().put("bom-ref", "composition-1").put("aggregate", "complete")
+            .putArray("dependencies").add(lib)
+        compositions.addObject().put("bom-ref", "composition-2").put("aggregate", "not_specified")
+        for (covered in listOf(lib, root["metadata"]["component"]["bom-ref"].asText())) {
+            val twin = compositions.addObject().put("aggregate", "complete")
+            twin.putArray("assemblies").add(lib)
+            twin.putArray("dependencies").add(covered)
+        }
+        val untouched = compositions.addObject().put("aggregate", "complete")
+        untouched.putArray("assemblies").add(elsewhere)
+        return mapper.writeValueAsBytes(root)
+    }
+
     private fun JsonNode.component(name: String): JsonNode = this["components"].first { it["name"].asText() == name }
 
     private fun JsonNode.property(name: String): String? =
@@ -383,7 +408,214 @@ class SbomEnricherTest {
     }
 
     @Test
-    fun `writes no composition without a dependency graph`() {
+    fun `declares the top-level component incomplete for a gap in a BOM without a dependency graph`() {
+        val result = enrich(NO_GRAPH.toByteArray(), details.copy(incompleteReasons = listOf(FILE_DEPENDENCY)))
+
+        // the BOM's own composition names nothing, so it goes, and the top-level component is the only ref to carry it
+        assertThat(result["compositions"]).hasSize(1)
+        assertThat(result["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
+        assertThat(result["compositions"][0]["dependencies"].map { it.asText() })
+            .containsExactly("pkg:maven/com.hivemq/app@1.0.0")
+    }
+
+    @Test
+    fun `declares the top-level component incomplete for a gap when the graph has no entry for it`() {
+        val input = """
+            {
+              "specVersion": "1.6",
+              "metadata": { "component": { "type": "application", "bom-ref": "app", "name": "app" } },
+              "dependencies": [ { "ref": "lib" } ]
+            }
+        """.trimIndent()
+
+        val result = enrich(input.toByteArray(), details.copy(incompleteReasons = listOf(FILE_DEPENDENCY)))
+
+        // the gap is the artifact's, so it is stated for the artifact even where the graph does not list it
+        assertThat(result["compositions"].map { it["aggregate"].asText() }).containsExactly("incomplete")
+        assertThat(result["compositions"][0]["dependencies"].map { it.asText() }).containsExactly("app", "lib")
+    }
+
+    @Test
+    fun `drops a composition entry of the BOM's own that is not an object`() {
+        val input = """
+            {
+              "specVersion": "1.6",
+              "dependencies": [ { "ref": "a" } ],
+              "compositions": [ 1, { "aggregate": "complete", "assemblies": [ "a" ] } ]
+            }
+        """.trimIndent()
+
+        val result = enrich(input.toByteArray())
+
+        // the schema wants objects there, and only an object has a statement to keep
+        assertThat(result["compositions"]).hasSize(2).allMatch { it.isObject }
+    }
+
+    @Test
+    fun `drops a composition of the BOM's own left naming nothing, keeping one with a bom-ref as not specified`() {
+        val lib = "pkg:maven/org.example/lib@1.0"
+        val root = BomJson.read(bom())
+        val compositions = root.putArray("compositions")
+        compositions.addObject().put("aggregate", "unknown").putArray("dependencies").add(lib)
+        compositions.addObject().put("bom-ref", "composition-1").put("aggregate", "incomplete")
+            .putArray("dependencies").add(lib)
+        // an empty bom-ref refers to nothing
+        compositions.addObject().put("bom-ref", "").put("aggregate", "unknown").putArray("dependencies").add(lib)
+        val vulnerable = compositions.addObject().put("aggregate", "complete")
+        vulnerable.putArray("dependencies").add(lib)
+        vulnerable.putArray("vulnerabilities").add("vulnerability-1")
+
+        val result = SbomEnricher.enrich(root, details)
+
+        // a reference elsewhere in the BOM may point at the second one, which keeps no claim about the refs it lost
+        assertThat(result["compositions"].map { it["aggregate"].asText() })
+            .containsExactly("complete", "not_specified", "complete")
+        assertThat(result["compositions"][1]["bom-ref"].asText()).isEqualTo("composition-1")
+        assertThat(result["compositions"][1].has("dependencies")).isFalse()
+        // the last one still names a vulnerability
+        assertThat(result["compositions"][2].toString())
+            .isEqualTo("""{"aggregate":"complete","vulnerabilities":["vulnerability-1"]}""")
+    }
+
+    @Test
+    fun `keeps a bare composition of the BOM's own with a bom-ref as not specified when the build reports a gap`() {
+        val root = BomJson.read(NO_GRAPH.toByteArray())
+        root.putArray("compositions").addObject().put("bom-ref", "composition-1").put("aggregate", "complete")
+
+        val result = SbomEnricher.enrich(root, details.copy(incompleteReasons = listOf(FILE_DEPENDENCY)))
+
+        // read as a claim about the whole BOM it would contradict the gap, but a reference may point at it
+        assertThat(result["compositions"].map { it["aggregate"].asText() })
+            .containsExactly("incomplete", "not_specified")
+        assertThat(result["compositions"][1]["bom-ref"].asText()).isEqualTo("composition-1")
+    }
+
+    @Test
+    fun `keeps a dependencies value of another type in a composition of the BOM's own`() {
+        val root = BomJson.read(bom())
+        root.putArray("compositions").addObject().put("aggregate", "complete").put("dependencies", "all")
+
+        val result = SbomEnricher.enrich(root, details)
+
+        assertThat(result["compositions"][1]["dependencies"].asText()).isEqualTo("all")
+    }
+
+    @Test
+    fun `keeps a numeric dependency of a composition of the BOM's own, even where a covered ref has its digits`() {
+        val input = """
+            {
+              "specVersion": "1.6",
+              "dependencies": [ { "ref": "7" } ],
+              "compositions": [ { "aggregate": "complete", "dependencies": [ 7 ] } ]
+            }
+        """.trimIndent()
+
+        val result = enrich(input.toByteArray())
+
+        // the SBOM's statement covers refs, which are text
+        assertThat(result["compositions"][1]["dependencies"].single().isNumber).isTrue()
+    }
+
+    @Test
+    fun `keeps the compositions of a BOM without a dependency graph when the build reports no gap`() {
+        val result = enrich(NO_GRAPH.toByteArray())
+
+        // nothing contradicts what the BOM states, and without a graph there is nothing to state instead
+        assertThat(result["compositions"].map { it["aggregate"].asText() }).containsExactly("complete")
+    }
+
+    // with and without a graph, as the gap then covers the graph or only the top-level component
+    @ParameterizedTest
+    @ValueSource(booleans = [true, false])
+    fun `keeps what the compositions of the BOM's own say beyond the refs the SBOM covers`(withGraph: Boolean) {
+        val root = BomJson.read(if (withGraph) bom() else NO_GRAPH.toByteArray())
+        val topLevel = root["metadata"]["component"]["bom-ref"].asText()
+        val elsewhere = "pkg:maven/org.example/elsewhere@1.0"
+        val own = root.putArray("compositions").addObject().put("aggregate", "complete")
+        own.putArray("assemblies").add(topLevel)
+        own.putArray("dependencies").add(topLevel).add(elsewhere).add(7)
+        own.putArray("vulnerabilities").add("vulnerability-1")
+
+        val result = SbomEnricher.enrich(root, details.copy(incompleteReasons = listOf(FILE_DEPENDENCY)))
+
+        // the dependency statement for the top-level component is the SBOM's now, the rest stays as the BOM said it
+        assertThat(result["compositions"].map { it["aggregate"].asText() }).containsExactly("incomplete", "complete")
+        val kept = result["compositions"][1]
+        assertThat(kept["assemblies"].map { it.asText() }).containsExactly(topLevel)
+        assertThat(kept["dependencies"].map { it.asText() }).containsExactly(elsewhere, "7")
+        assertThat(kept["vulnerabilities"].map { it.asText() }).containsExactly("vulnerability-1")
+    }
+
+    @Test
+    fun `rejects a BOM whose compositions are not an array when it has identified components, before changing it`() {
+        val root = BomJson.read(bom())
+        root.put("compositions", "complete")
+        val unchanged = root.deepCopy()
+        val identified = details.copy(identifiedComponents = setOf("pkg:maven/org.example/lib@1.0"))
+
+        // an identified component is a gap of its own, which the SBOM has to state as well
+        assertThatThrownBy { SbomEnricher.enrich(root, identified) }
+            .isInstanceOf(SbomException::class.java)
+            .hasMessage(
+                "The BOM's compositions are not a JSON array, so the SBOM cannot state that its dependency graph " +
+                    "is incomplete: " +
+                    "identified components (the first module on each path that hivemqProvided resolves), whose " +
+                    "dependencies the host's SBOM describes"
+            )
+        assertThat(root).isEqualTo(unchanged)
+    }
+
+    // with and without a graph, so the check holds wherever the gap would be stated
+    @ParameterizedTest
+    @ValueSource(booleans = [true, false])
+    fun `rejects a BOM whose compositions are not an array when the build reports a gap, before changing it`(
+        withGraph: Boolean,
+    ) {
+        val root = BomJson.read(if (withGraph) bom() else NO_GRAPH.toByteArray())
+        root.put("compositions", "complete")
+        val unchanged = root.deepCopy()
+
+        assertThatThrownBy { SbomEnricher.enrich(root, details.copy(incompleteReasons = listOf(FILE_DEPENDENCY))) }
+            .isInstanceOf(SbomException::class.java)
+            .hasMessage(
+                "The BOM's compositions are not a JSON array, so the SBOM cannot state that its dependency graph " +
+                    "is incomplete: " +
+                    FILE_DEPENDENCY
+            )
+        assertThat(root).isEqualTo(unchanged)
+    }
+
+    // no top-level bom-ref as non-empty text; a dependency graph, or none in each form the enricher reads as none
+    @ParameterizedTest
+    @ValueSource(
+        strings = [
+            """{"specVersion":"1.6","metadata":{"component":{"name":"app"}},"dependencies":[{"ref":"lib"}]}""",
+            """{"specVersion":"1.6","metadata":{"component":{"name":"app"}}}""",
+            """{"specVersion":"1.6","metadata":{"component":{"name":"app"}},"dependencies":[]}""",
+            """{"specVersion":"1.6","metadata":{"component":{"name":"app"}},"dependencies":[{"ref":7}]}""",
+            """{"specVersion":"1.6","metadata":{"component":{"name":"app"}},"dependencies":{}}""",
+            """{"specVersion":"1.6","metadata":{"component":{"name":"app","bom-ref":7}}}""",
+            """{"specVersion":"1.6","metadata":{"component":{"name":"app","bom-ref":""}}}""",
+            """{"specVersion":"1.6"}""",
+        ]
+    )
+    fun `rejects a BOM whose top-level component has no bom-ref for a reported gap, before changing it`(
+        input: String,
+    ) {
+        val root = BomJson.read(input.toByteArray())
+        val unchanged = root.deepCopy()
+
+        assertThatThrownBy { SbomEnricher.enrich(root, details.copy(incompleteReasons = listOf(FILE_DEPENDENCY))) }
+            .isInstanceOf(SbomException::class.java)
+            .hasMessage(
+                "The BOM has no bom-ref on metadata.component, so the SBOM cannot state that its dependency graph " +
+                    "is incomplete: $FILE_DEPENDENCY"
+            )
+        assertThat(root).isEqualTo(unchanged)
+    }
+
+    @Test
+    fun `writes no composition without a dependency graph when the build reports no gap`() {
         val input = """{"bomFormat":"CycloneDX","specVersion":"1.6","metadata":{"component":{"name":"app"}}}"""
 
         val result = enrich(input.toByteArray())
@@ -416,6 +648,35 @@ class SbomEnricherTest {
 
         assertThat(result["compositions"][0]["dependencies"].map { it.asText() })
             .containsExactly("pkg:maven/a/a@1", "pkg:maven/b/b@1")
+    }
+
+    @Test
+    fun `writes the compositions in the place the BOM has them`() {
+        val input = """{"specVersion":"1.6","compositions":[{"aggregate":"unknown"}],"dependencies":[{"ref":"a"}]}"""
+
+        val result = enrich(input.toByteArray())
+
+        // rewritten in place, so the field does not move between the BOM and the SBOM
+        assertThat(result.fieldNames().asSequence().toList()).containsSubsequence("compositions", "dependencies")
+        assertThat(result["compositions"].map { it["aggregate"].asText() }).containsExactly("complete")
+    }
+
+    @Test
+    fun `writes two compositions of the BOM's own once when they become equal`() {
+        val root = BomJson.read(bom())
+        val compositions = root.putArray("compositions")
+        for (ref in listOf("pkg:maven/org.example/lib@1.0", "pkg:maven/com.hivemq/app@1.0.0?project_path=%3A")) {
+            val own = compositions.addObject().put("aggregate", "complete")
+            own.putArray("assemblies").add("pkg:maven/org.example/lib@1.0")
+            own.putArray("dependencies").add(ref)
+        }
+
+        val result = SbomEnricher.enrich(root, details)
+
+        // the schema wants each composition once, and both lose their only dependency to the SBOM's own statement
+        assertThat(result["compositions"]).hasSize(2)
+        assertThat(result["compositions"][1].toString())
+            .isEqualTo("""{"aggregate":"complete","assemblies":["pkg:maven/org.example/lib@1.0"]}""")
     }
 
     // --- Files ---
@@ -673,6 +934,16 @@ class SbomEnricherTest {
     }
 
     @Test
+    fun `is idempotent for a gap in a BOM without a dependency graph`() {
+        val incomplete = details.copy(incompleteReasons = listOf(FILE_DEPENDENCY))
+        val once = SbomEnricher.enrich(BomJson.read(NO_GRAPH.toByteArray()), incomplete)
+
+        val twice = SbomEnricher.enrich(once.deepCopy(), incomplete)
+
+        assertThat(twice.toString()).isEqualTo(once.toString())
+    }
+
+    @Test
     fun `is idempotent for an expression license next to a concluded one`() {
         val concluded = details.copy(concludedLicenses = mapOf("org.example:lib:1.0" to listOf("CDDL-1.1")))
         val once = SbomEnricher.enrich(BomJson.read(bom(EXPRESSION_COMPONENT)), concluded)
@@ -686,6 +957,16 @@ class SbomEnricherTest {
     fun `is idempotent for an incomplete dependency graph`() {
         val incomplete = details.copy(incompleteReasons = listOf(FILE_DEPENDENCY))
         val once = SbomEnricher.enrich(BomJson.read(bom()), incomplete)
+
+        val twice = SbomEnricher.enrich(once.deepCopy(), incomplete)
+
+        assertThat(twice.toString()).isEqualTo(once.toString())
+    }
+
+    @Test
+    fun `is idempotent with compositions of the BOM's own`() {
+        val incomplete = details.copy(incompleteReasons = listOf(FILE_DEPENDENCY))
+        val once = SbomEnricher.enrich(BomJson.read(withOwnCompositions()), incomplete)
 
         val twice = SbomEnricher.enrich(once.deepCopy(), incomplete)
 
@@ -713,6 +994,11 @@ class SbomEnricherTest {
             "tagged email creator" to (bom() to details.copy(creator = "first.last+sbom@example.com")),
             "international email creator" to (bom() to details.copy(creator = "info@m\u00fcller-gmbh.de")),
             "incomplete dependency graph" to (bom() to details.copy(incompleteReasons = listOf(FILE_DEPENDENCY))),
+            "gap without a dependency graph" to
+                (NO_GRAPH.toByteArray() to details.copy(incompleteReasons = listOf(FILE_DEPENDENCY))),
+            "compositions of the BOM's own" to (withOwnCompositions() to details),
+            "compositions of the BOM's own with a gap" to
+                (withOwnCompositions() to details.copy(incompleteReasons = listOf(FILE_DEPENDENCY))),
             "identified components" to
                 (bom() to details.copy(identifiedComponents = setOf("pkg:maven/org.example/lib@1.0"))),
             "license that is not an SPDX id" to (bom() to publicDomain),
@@ -739,6 +1025,17 @@ class SbomEnricherTest {
 
         // what the plugin reports for a jar on the classpath that is no module, which CycloneDX leaves out
         const val FILE_DEPENDENCY = "runtimeClasspath has file dependencies: vendored.jar"
+
+        // a BOM without a dependency graph that says it is complete, as a BOM from another tool can
+        val NO_GRAPH = """
+            {
+              "bomFormat": "CycloneDX", "specVersion": "1.6",
+              "metadata": {
+                "component": { "type": "application", "bom-ref": "pkg:maven/com.hivemq/app@1.0.0", "name": "app" }
+              },
+              "compositions": [ { "aggregate": "complete" } ]
+            }
+        """.trimIndent()
 
         val EXPRESSION_COMPONENT = """
             {
@@ -828,6 +1125,10 @@ class SbomEnricherTest {
                 Arguments.of(
                     "/compositions",
                     """{"specVersion":"1.6","dependencies":[{"ref":"a"}],"compositions":1}""",
+                ),
+                Arguments.of(
+                    "/compositions",
+                    """{"specVersion":"1.6","dependencies":[{"ref":"a"}],"compositions":null}""",
                 ),
             )
         }

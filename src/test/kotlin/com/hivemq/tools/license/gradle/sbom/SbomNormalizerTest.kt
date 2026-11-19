@@ -15,7 +15,9 @@
  */
 package com.hivemq.tools.license.gradle.sbom
 
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
@@ -74,6 +76,10 @@ class SbomNormalizerTest {
     private fun referenceUrls(bytes: ByteArray) = references(bytes).map { it["url"].asText() }.distinct()
 
     private fun tree(bytes: ByteArray) = mapper.readTree(bytes)
+
+    /** The field names of [this] node and of every node below it. */
+    private fun JsonNode.fieldNamesDeep(): List<String> =
+        (if (isObject) fieldNames().asSequence().toList() else emptyList()) + flatMap { it.fieldNamesDeep() }
 
     // --- Input ---
 
@@ -551,6 +557,83 @@ class SbomNormalizerTest {
         val result = normalize(vcsUrl = "gitlab.example.com:team/repo.git")
 
         assertThat(referenceUrls(result)).containsExactly("ssh://gitlab.example.com/team/repo.git")
+    }
+
+    // --- Signatures ---
+
+    @Test
+    fun `drops a signed signatory of the declarations that lacks an organization or an external reference`() {
+        val root = BomJson.read(bom())
+        val signatories = root.putObject("declarations").putObject("affirmation").putArray("signatories")
+        fun signatory(name: String, organization: Boolean, reference: Boolean, signed: Boolean) {
+            val entry = signatories.addObject().put("name", name)
+            if (organization) entry.putObject("organization").put("name", "HiveMQ GmbH")
+            if (reference) entry.putObject("externalReference").put("type", "other").put("url", "https://hivemq.com/")
+            if (signed) entry.putObject("signature").put("algorithm", "ES256").put("value", "c2lnbmF0dXJl")
+        }
+        signatory("signed only", organization = false, reference = false, signed = true)
+        signatory("signed and named", organization = true, reference = true, signed = true)
+        signatory("signed, no reference", organization = true, reference = false, signed = true)
+        signatory("signed, no organization", organization = false, reference = true, signed = true)
+        signatory("unsigned, no organization", organization = false, reference = true, signed = false)
+
+        val result = tree(SbomNormalizer.normalize(root, timestamp, null))
+
+        // the schema wants a signatory to be a signature, or an organization with an external reference; one the
+        // input already had without either is not the plugin's to judge
+        val kept = result["declarations"]["affirmation"]["signatories"]
+        assertThat(kept.map { it["name"].asText() }).containsExactly("signed and named", "unsigned, no organization")
+        assertThat(kept[0].has("signature")).isFalse()
+    }
+
+    @Test
+    fun `removes every signature, the document's and those of its parts at any depth`() {
+        val root = BomJson.read(bom())
+        val signature = mapper.createObjectNode().put("algorithm", "ES256").put("value", "c2lnbmF0dXJl")
+        root.set<JsonNode>("signature", signature.deepCopy())
+        (root["metadata"]["component"] as ObjectNode).set<JsonNode>("signature", signature.deepCopy())
+        (root["components"][0] as ObjectNode).putArray("components").addObject().put("type", "library")
+            .put("name", "nested").set<JsonNode>("signature", signature.deepCopy())
+        (root["components"][1] as ObjectNode).putArray("properties").addObject().put("name", "signature")
+            .put("value", "a property")
+        root.putArray("compositions").addObject().put("aggregate", "complete")
+            .set<JsonNode>("signature", signature.deepCopy())
+
+        val result = tree(SbomNormalizer.normalize(root, timestamp, null))
+
+        // a signature its producer made does not vouch for what the plugin writes; a property named so is no signature
+        assertThat(result.fieldNamesDeep()).doesNotContain("signature")
+        assertThat(result["components"][1]["properties"][0]["name"].asText()).isEqualTo("signature")
+    }
+
+    @Test
+    fun `writes compositions and annotations that differed only in their signatures once`() {
+        val root = BomJson.read(bom())
+        val compositions = root.putArray("compositions")
+        val annotations = root.putArray("annotations")
+        repeat(2) { copy ->
+            compositions.addObject().put("aggregate", "complete")
+                .putObject("signature").put("algorithm", "ES256").put("value", "c2lnbmF0dXJl$copy")
+            annotations.addObject().put("text", "reviewed")
+                .putObject("signature").put("algorithm", "ES256").put("value", "c2lnbmF0dXJl$copy")
+        }
+
+        val result = tree(SbomNormalizer.normalize(root, timestamp, null))
+
+        // the schema wants each composition and each annotation once
+        assertThat(result["compositions"]).hasSize(1)
+        assertThat(result["annotations"]).hasSize(1)
+    }
+
+    @Test
+    fun `writes the same bytes with or without signatures`() {
+        val signed = BomJson.read(bom())
+        val signature = mapper.createObjectNode().put("algorithm", "ES256").put("value", "c2lnbmF0dXJl")
+        signed.set<JsonNode>("signature", signature.deepCopy())
+        (signed["metadata"]["component"] as ObjectNode).set<JsonNode>("signature", signature.deepCopy())
+
+        // the serial number is computed once the signatures are gone, so they leave no trace
+        assertThat(SbomNormalizer.normalize(signed, timestamp, null)).isEqualTo(normalize())
     }
 
     // --- Output ---

@@ -20,6 +20,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.hivemq.tools.license.gradle.OwnModules
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.entry
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 
@@ -295,6 +296,26 @@ class BomFilterTest {
     }
 
     @Test
+    fun `drops a composition it empties, keeping one with a bom-ref as not specified`() {
+        val root = bom()
+        val compositions = root.putArray("compositions")
+        compositions.addObject().put("aggregate", "complete").putArray("assemblies").add(PROVIDED_2)
+        compositions.addObject().put("bom-ref", "composition-1").put("aggregate", "complete")
+            .putArray("dependencies").add(PROVIDED_1)
+        compositions.addObject().put("aggregate", "complete").putArray("assemblies").add(PROVIDED_2).add(LIB)
+        compositions.addObject().put("aggregate", "complete")
+
+        BomFilter.dropModules(root, PROVIDED)
+
+        // a composition left naming nothing would claim completeness about nothing; one the filter did not change stays
+        assertThat(root["compositions"].map { it.toString() }).containsExactly(
+            """{"bom-ref":"composition-1","aggregate":"not_specified"}""",
+            """{"aggregate":"complete","assemblies":["$LIB"]}""",
+            """{"aggregate":"complete"}""",
+        )
+    }
+
+    @Test
     fun `drops a matching component nested in another component, and the references to it`() {
         val root = bom()
         // CycloneDX lets a component carry components of its own; the filter sees them like top-level ones
@@ -368,6 +389,38 @@ class BomFilterTest {
     }
 
     @Test
+    fun `finds a reference to a dropped component in a place the filter does not rewrite`() {
+        val root = bom()
+        // the second key has a slash and a tilde, which a JSON pointer escapes
+        root.putObject("declarations").putArray("claims").addObject()
+            .put("target", PROVIDED_1).put("a/b~c", PROVIDED_2)
+        val before = BomFilter.refsIn(root)
+
+        BomFilter.dropModules(root, PROVIDED)
+
+        // the dependency entries are rewritten, the claim is not, so it holds the only references left to dropped ones
+        assertThat(BomFilter.referencesTo(root, before - BomFilter.refsIn(root))).containsExactly(
+            entry("/declarations/claims/0/target", PROVIDED_1),
+            entry("/declarations/claims/0/a~1b~0c", PROVIDED_2),
+        )
+    }
+
+    @Test
+    fun `finds a reference to a vulnerability that went with the dropped component it affected`() {
+        val root = bom()
+        root.putArray("vulnerabilities").addObject().put("bom-ref", "vuln-1").put("id", "CVE-2026-0001")
+            .putArray("affects").addObject().put("ref", PROVIDED_1)
+        root.putObject("declarations").putArray("claims").addObject().put("target", "vuln-1")
+        val before = BomFilter.refsIn(root)
+
+        BomFilter.dropModules(root, PROVIDED)
+
+        // the vulnerability had nothing left to affect, so it went too, and the claim about it is now dangling
+        assertThat(BomFilter.referencesTo(root, before - BomFilter.refsIn(root)))
+            .containsExactly(entry("/declarations/claims/0/target", "vuln-1"))
+    }
+
+    @Test
     fun `keeps a nested component the predicate accepts below one it rejects, which goes with the dropped parent`() {
         // a third-party component nested in a provided one does not ship either; the public SDK below it stays
         val root = bom()
@@ -397,6 +450,20 @@ class BomFilterTest {
         assertThat(root.refs()).containsExactly(APP, LIB)
         // the dependant of the dropped component depends on what moved up out of it
         assertThat(root.dependsOn(LIB)).containsExactly(EXTRA)
+    }
+
+    @Test
+    fun `keeps one of the compositions that pruning makes equal`() {
+        val root = bom()
+        val compositions = root.putArray("compositions")
+        compositions.addObject().put("aggregate", "complete").putArray("assemblies").add(PROVIDED_2).add(LIB)
+        compositions.addObject().put("aggregate", "complete").putArray("assemblies").add(LIB)
+
+        BomFilter.dropModules(root, PROVIDED)
+
+        // the schema wants each composition once
+        assertThat(root["compositions"].map { it.toString() })
+            .containsExactly("""{"aggregate":"complete","assemblies":["$LIB"]}""")
     }
 
     @Test
@@ -611,6 +678,20 @@ class BomFilterTest {
         // never was about anything, stay
         assertThat(root["annotations"].map { it["text"].asText() }).containsExactly("kept", "none")
         assertThat(root["annotations"][0]["subjects"].map { it.asText() }).containsExactly("vuln-2")
+    }
+
+    @Test
+    fun `reports no empty text as a reference, even after dropping a component with an empty bom-ref`() {
+        val root = bom()
+        root.nest(PROVIDED_1, "", "inner")
+        (root["metadata"]["component"] as ObjectNode).put("description", "")
+        val before = BomFilter.refsIn(root)
+
+        BomFilter.dropModules(root, PROVIDED)
+
+        // the nested component's empty bom-ref went with it, and an empty text names nothing
+        assertThat(before - BomFilter.refsIn(root)).contains("")
+        assertThat(BomFilter.referencesTo(root, before - BomFilter.refsIn(root))).isEmpty()
     }
 
     @Test

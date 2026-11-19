@@ -45,7 +45,7 @@ internal object SbomWiring {
     private val shadowPluginIds = listOf("com.gradleup.shadow", "com.github.johnrengelman.shadow")
 
     /**
-     * Sets the conventions, also of every [GenerateSbomTask], and registers `generateSbom` and the variant. The caller
+     * Sets the defaults, also of every [GenerateSbomTask], and registers `generateSbom` and the variant. The caller
      * sets the BOM and the license inputs of those tasks, the same way as those of the other license tasks. The SBOM
      * describes the files and the completeness of [bomConfigurationNames], the configurations the BOM is built from.
      */
@@ -85,16 +85,17 @@ internal object SbomWiring {
         val projectComponentFileNames = resolvedComponentFileNames(project, namesReadByBomTask)
         val projectIncompleteReasons = incompleteGraphReasons(project, namesReadByBomTask)
 
-        // conventions, so a value the build script sets wins in any order; a second SBOM of the project, such as one
-        // for a renamed copy of the jar, then sets only what differs
+        // the scalars as conventions, so a set wins in any order; the collections as values, so a later add or put
+        // extends the plugin's value instead of discarding a convention, and a later set replaces it
         project.tasks.withType(GenerateSbomTask::class.java).configureEach {
             timestamp.convention(timestampText)
             vcsUrl.convention(projectVcsUrl)
             creatorName.convention(extension.sbomCreatorName)
             creator.convention(extension.sbomCreator)
             artifactFileName.convention(extension.sbomArtifactFileName)
-            componentFileNames.convention(projectComponentFileNames)
-            incompleteReasons.convention(projectIncompleteReasons)
+            componentFileNames.set(projectComponentFileNames)
+            incompleteReasons.set(projectIncompleteReasons)
+            declaredIncompleteReasons.set(extension.sbomIncompleteReasons)
             val taskName = name
             outputFile.convention(
                 project.layout.buildDirectory.file(extension.sbomName.map { sbomOutputPath(taskName, it) })

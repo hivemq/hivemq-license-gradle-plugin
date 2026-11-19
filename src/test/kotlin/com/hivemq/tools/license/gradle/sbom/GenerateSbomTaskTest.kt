@@ -113,6 +113,26 @@ class GenerateSbomTaskTest {
     // --- Output ---
 
     @Test
+    fun `declares the top-level component incomplete for a declared gap in a BOM without a dependency graph`() {
+        setup()
+        projectDir.resolve("bom.json").writeText(
+            projectDir.resolve("bom.json").readText()
+                .replace(""""component": { "name": "app" }""", """"component": { "name": "app", "bom-ref": "app" }""")
+                .replace(Regex(""",\s*"dependencies": \[.*]"""), "")
+        )
+        projectDir.resolve("build.gradle.kts").appendText(
+            "\n" + """hivemqLicense { sbomIncompleteReasons.add("bundles a frontend") }"""
+        )
+
+        gradleRunner().build()
+
+        val sbom = ObjectMapper().readTree(projectDir.resolve("build/sbom/app.cdx.json"))
+        assertThat(sbom["compositions"]).hasSize(1)
+        assertThat(sbom["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
+        assertThat(sbom["compositions"][0]["dependencies"].map { it.asText() }).containsExactly("app")
+    }
+
+    @Test
     fun `drops the other version of an identified module that only a provided module leads to`() {
         setup()
         val app = "pkg:maven/org.example/app@1.0"
@@ -249,6 +269,34 @@ class GenerateSbomTaskTest {
     }
 
     @Test
+    fun `fails naming the BOM file when it refers to a left-out component from a place the plugin does not rewrite`() {
+        setup()
+        addOwnComponent(licensed = false)
+        val own = "pkg:maven/com.hivemq/own@1.0?type=jar"
+        projectDir.resolve("bom.json").writeText(
+            projectDir.resolve("bom.json").readText()
+                .replace(""""name": "own",""", """"name": "own", "bom-ref": "$own",""")
+                .replace(
+                    """"dependencies": [""",
+                    """"declarations": { "claims": [ { "target": "$own" } ] }, """ +
+                        """"dependencies": [ { "ref": "$own", "dependsOn": [] },""",
+                )
+        )
+
+        val result = gradleRunner().buildAndFail()
+
+        // the internal module is left out, and a claim about it would still name it; the graph entry went with it
+        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output)
+            .contains("Cannot write an SBOM from '")
+            .contains(
+                "bom.json': The BOM refers to something the SBOM leaves out, from a place the plugin does not " +
+                    "rewrite: /declarations/claims/0/target ($own)"
+            )
+            .doesNotContain("/dependencies/")
+    }
+
+    @Test
     fun `fails naming the BOM file when its dependency graph is empty and modules are provided`() {
         setup()
         val provided = """{ "group": "org.example", "name": "provided", "version": "1.0", """ +
@@ -273,6 +321,25 @@ class GenerateSbomTaskTest {
         assertThat(result.output)
             .contains("Cannot write an SBOM from '")
             .contains("bom.json': The BOM has no dependency graph, needed to identify the modules the host provides")
+    }
+
+    @Test
+    fun `fails naming the BOM file when its top-level component has no bom-ref for a declared gap`() {
+        setup()
+        projectDir.resolve("build.gradle.kts").appendText(
+            "\n" + """hivemqLicense { sbomIncompleteReasons.add("bundles a frontend") }"""
+        )
+
+        val result = gradleRunner().buildAndFail()
+
+        // the top-level component of this BOM has no bom-ref, so nothing in the SBOM could carry the artifact's gap
+        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output)
+            .contains("Cannot write an SBOM from '")
+            .contains(
+                "bom.json': The BOM has no bom-ref on metadata.component, so the SBOM cannot state that its " +
+                    "dependency graph is incomplete: bundles a frontend"
+            )
     }
 
     @Test
@@ -948,6 +1015,26 @@ class GenerateSbomTaskTest {
         val result = gradleRunner().build()
 
         assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.UP_TO_DATE)
+    }
+
+    @Test
+    fun `reruns when a declared incomplete reason changes`() {
+        setup()
+        // the gap is stated for the top-level component, which needs a bom-ref for that
+        projectDir.resolve("bom.json").writeText(
+            projectDir.resolve("bom.json").readText()
+                .replace(""""component": { "name": "app" }""", """"component": { "name": "app", "bom-ref": "app" }""")
+        )
+        gradleRunner().build()
+        projectDir.resolve("build.gradle.kts").appendText(
+            "\n" + """hivemqLicense { sbomIncompleteReasons.add("bundles a frontend") }"""
+        )
+
+        val result = gradleRunner().build()
+
+        assertThat(result.task(":sbomFromFile")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        val sbom = ObjectMapper().readTree(projectDir.resolve("build/sbom/app.cdx.json"))
+        assertThat(sbom["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
     }
 
     @Test

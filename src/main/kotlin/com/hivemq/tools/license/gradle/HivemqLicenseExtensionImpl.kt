@@ -17,6 +17,7 @@ package com.hivemq.tools.license.gradle
 
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.model.ObjectFactory
+import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
@@ -42,4 +43,6 @@ abstract class HivemqLicenseExtensionImpl @Inject constructor(
     override val sbomCreatorName: Property<String> = objectFactory.property(String::class.java)
     override val sbomCreator: Property<String> = objectFactory.property(String::class.java)
     override val sbomArtifactFileName: Property<String> = objectFactory.property(String::class.java)
+    override val sbomIncompleteReasons: ListProperty<String> = objectFactory.listProperty(String::class.java)
+        .convention(emptyList())
 }
