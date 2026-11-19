@@ -107,7 +107,7 @@ class ProvidedDependenciesIntegrationTest {
         group: String = "com.example",
         license: String? = null,
     ) = FixtureRepository.module(
-        projectDir.resolve("repo"), name, version, *dependencies, group = group, license = license,
+        projectDir.resolve("repo"), name, version, *dependencies, group = group, licenses = listOfNotNull(license),
     )
 
     private fun licenses(dir: File = projectDir) =

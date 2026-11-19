@@ -238,13 +238,13 @@ internal object BomFilter {
         }
     }
 
-    /** Every `bom-ref` in [root], so that a caller can tell, before and after a filter, what the filter removed. */
+    /** Every `bom-ref` in [root], so that a caller can tell, before and after a filter or the enricher, what went. */
     fun refsIn(root: JsonNode): Set<String> = buildSet { collectRefs(root, this) }
 
     /**
-     * Every non-empty text in [root] equal to one of [refs], by its JSON pointer: once a filter ran, what still names
-     * something removed sits in a place the filter does not rewrite, such as a declaration's claim or a formulation
-     * workflow. An empty text names nothing, like an empty `bom-ref`.
+     * Every non-empty text in [root] equal to one of [refs], by its JSON pointer: once something removed them, what
+     * still names it sits in a place nothing rewrites, such as a declaration's claim or a formulation workflow. An
+     * empty text names nothing, like an empty `bom-ref`.
      */
     fun referencesTo(root: JsonNode, refs: Set<String>): Map<String, String> = buildMap {
         fun walk(node: JsonNode, pointer: String) {

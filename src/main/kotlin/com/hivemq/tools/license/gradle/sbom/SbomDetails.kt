@@ -31,10 +31,10 @@ internal data class SbomDetails(
      */
     val componentFileNames: Map<String, String>,
     /**
-     * The reviewed licenses, keyed like [componentFileNames], of the one version of each module the license tasks
-     * resolve. Every license of a list applies; one with a space, such as `Public Domain`, is written as a `name`.
+     * Our reviewed license, keyed like [componentFileNames], of the one version of each module the license tasks
+     * resolve: the elected licenses, or one expression in place of the declared licenses, see [ConcludedLicense].
      */
-    val concludedLicenses: Map<String, List<String>>,
+    val concludedLicenses: Map<String, ConcludedLicense>,
     /**
      * Why the dependency graph is not complete, one reason per finding, such as a file dependency or a module that
      * could not be resolved, or a gap the build declares; empty when it is complete.

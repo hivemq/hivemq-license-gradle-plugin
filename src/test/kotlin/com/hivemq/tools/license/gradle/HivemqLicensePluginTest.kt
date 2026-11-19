@@ -154,7 +154,7 @@ class HivemqLicensePluginTest {
             }
             """.trimIndent()
         )
-        FixtureRepository.module(projectDir.resolve("repo"), "lib", "1.0", license = "MIT License")
+        FixtureRepository.module(projectDir.resolve("repo"), "lib", "1.0", licenses = listOf("MIT License"))
 
         gradleRunner("generateDependencyBom").build()
 

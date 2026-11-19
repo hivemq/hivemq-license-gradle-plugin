@@ -25,9 +25,9 @@ import java.util.*
 /**
  * A dependency and the licenses it is used under, every one of which applies. [declaredExpression] is one SPDX
  * expression in canonical form naming every way the dependency's declared licenses allow it to be used, when they name
- * more than one license; null for a single license, for a license not taken from the declared entries (an override, a
- * built-in license, a project module) and when a declared entry has no SPDX form or is malformed or too complex to
- * evaluate.
+ * more than one license; null for a pnpm package, for a single license, for a license not taken from the declared
+ * entries (an override, a built-in license, a project module) and when a declared entry has no SPDX form or is
+ * malformed or too complex to evaluate.
  */
 data class ResolvedDependency(
     val coordinates: Coordinates,
@@ -193,7 +193,7 @@ object LicenseResolver {
                 val expression = choice.expression
                 when {
                     license != null -> convertLicense(license, coordinates).let {
-                        LicenseOption((it as? KnownLicense)?.let(::listOf), it.fullName, declaredLicense(license, it))
+                        LicenseOption((it as? KnownLicense)?.let(::listOf), it.fullName, declaredLicense(license))
                     }
 
                     expression != null -> SpdxExpression(expression).let { parsed ->
@@ -238,16 +238,18 @@ object LicenseResolver {
 
     /**
      * One way a component may be used: the [licenses] that then apply together, or null when one of them is not
-     * approved, and what was [declared] as a syntax tree, null for a name that maps to no known license, an entry
-     * without an id or a name, and an expression that is malformed or too complex to evaluate.
+     * approved, and what was [declared] as a syntax tree, null for a license entry without an id (given only by a name
+     * or URL) and for an expression that is malformed or too complex to evaluate.
      */
     private class LicenseOption(val licenses: List<KnownLicense>?, val name: String, val declared: SpdxExpression.Node?)
 
-    /** An id as written, a name as the id of the known license it maps to; an unrecognised name has no SPDX form. */
-    private fun declaredLicense(entry: DependencyReport.LicenseEntry, converted: License): SpdxExpression.Node? {
-        val id = entry.id ?: (converted as? KnownLicense)?.id ?: return null
-        return SpdxExpression.Node.Leaf(id)
-    }
+    /**
+     * An id as written; a name or URL gets none, as the patterns of [convertLicense] approve a license without
+     * describing it exactly (every LGPL name with 2.1 passes as LGPL-2.1-or-later) and the expression replaces the
+     * declared entries.
+     */
+    private fun declaredLicense(entry: DependencyReport.LicenseEntry): SpdxExpression.Node? =
+        entry.id?.let { SpdxExpression.Node.Leaf(it) }
 
     // the file the licenses were read from and, when known, how this build obtained it; finding out the origin may
     // wait for a build event, so it is only asked for when a message needs it
@@ -302,14 +304,12 @@ object LicenseResolver {
                     problems += "No license found for '$coordinates'"
                     continue
                 }
-                val parsed = SpdxExpression(spdxId)
-                val result = parsed.evaluate()
+                val result = SpdxExpression(spdxId).evaluate()
                 if (result.licenses == null) {
                     problems += "License not on the approved list for '$coordinates': ${result.describe(spdxId)}"
                     continue
                 }
-                val declared = SpdxExpression.expressionOf(listOf(parsed.tree))
-                entries[coordinates.moduleId] = ResolvedDependency(coordinates, result.licenses, declared)
+                entries[coordinates.moduleId] = ResolvedDependency(coordinates, result.licenses)
             }
         }
         failOnProblems(source, problems)

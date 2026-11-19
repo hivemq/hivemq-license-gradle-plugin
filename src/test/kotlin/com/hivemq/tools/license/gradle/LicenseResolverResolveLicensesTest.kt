@@ -2166,14 +2166,6 @@ class LicenseResolverResolveLicensesTest {
     }
 
     @Test
-    fun `declares a name entry by the id of the license it maps to`() {
-        val lib = libWith(idEntry("EPL-2.0"), nameEntry("Bouncy Castle Licence"))
-
-        assertThat(lib.licenses).containsExactly(KnownLicense.BOUNCY_CASTLE)
-        assertThat(lib.declaredExpression).isEqualTo("EPL-2.0 OR MIT")
-    }
-
-    @Test
     fun `declares an expression entry in canonical form`() {
         val lib = libWith(expressionEntry("(CDDL-1.0 OR GPL-2.0-with-classpath-exception)"))
 
@@ -2206,17 +2198,10 @@ class LicenseResolverResolveLicensesTest {
     }
 
     @Test
-    fun `declares no expression for a license that is not an SPDX id`() {
-        val lib = libWith(idEntry("MIT"), nameEntry("Public Domain"))
+    fun `declares no expression for a license given only by name`() {
+        val lib = libWith(idEntry("EPL-2.0"), idEntry("MIT"), nameEntry("GNU Lesser General Public License v2.1 only"))
 
-        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
-        assertThat(lib.declaredExpression).isNull()
-    }
-
-    @Test
-    fun `declares no expression for a name the plugin does not recognise`() {
-        val lib = libWith(idEntry("MIT"), nameEntry("Proprietary"))
-
+        // the name maps to LGPL-2.1-or-later, which grants more than "v2.1 only"; "EPL-2.0 OR MIT" would drop it
         assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
         assertThat(lib.declaredExpression).isNull()
     }
@@ -2301,7 +2286,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `declares no expression when two entries name the same license`() {
-        val lib = libWith(idEntry("MIT"), nameEntry("Bouncy Castle Licence"))
+        val lib = libWith(idEntry("MIT"), idEntry("mit"))
 
         assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
         assertThat(lib.declaredExpression).isNull()
@@ -2603,82 +2588,6 @@ class LicenseResolverResolveLicensesTest {
         assertThat(result["react"]!!.coordinates.version).isEqualTo("18.2.0")
         assertThat(result["react"]!!.licenses.single().id).isEqualTo("MIT")
         assertThat(result["lru-cache"]!!.licenses.single().id).isEqualTo("ISC")
-    }
-
-    @Test
-    fun `pnpm declares a compound expression in canonical form`() {
-        val report = writeBom(
-            """
-            {
-              "bucket": [
-                { "name": "some-pkg", "versions": ["1.0.0"], "license": "(mit OR Apache-2.0)" }
-              ]
-            }
-            """.trimIndent()
-        )
-
-        val result = LicenseResolver.resolveLicenses(report, emptySet(), emptySet())
-
-        assertThat(result["some-pkg"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
-        assertThat(result["some-pkg"]!!.declaredExpression).isEqualTo("MIT OR Apache-2.0")
-    }
-
-    @Test
-    fun `pnpm declares no expression for a license that is not an SPDX id`() {
-        val report = writeBom(
-            """
-            {
-              "bucket": [
-                { "name": "some-pkg", "versions": ["1.0.0"], "license": "MIT OR Public Domain" }
-              ]
-            }
-            """.trimIndent()
-        )
-
-        val result = LicenseResolver.resolveLicenses(report, emptySet(), emptySet())
-
-        assertThat(result["some-pkg"]!!.licenses).containsExactly(KnownLicense.MIT)
-        assertThat(result["some-pkg"]!!.declaredExpression).isNull()
-    }
-
-    @Test
-    fun `pnpm declares no expression for a single license`() {
-        val report = writeBom(
-            """
-            {
-              "MIT": [
-                { "name": "react", "versions": ["18.2.0"], "license": "MIT" }
-              ]
-            }
-            """.trimIndent()
-        )
-
-        val result = LicenseResolver.resolveLicenses(report, emptySet(), emptySet())
-
-        assertThat(result["react"]!!.declaredExpression).isNull()
-    }
-
-    @Test
-    fun `pnpm declares no expression for an overridden package`() {
-        val report = writeBom(
-            """
-            {
-              "bucket": [
-                { "name": "some-pkg", "versions": ["1.0.0"], "license": "EPL-2.0 OR GPL-2.0-only" }
-              ]
-            }
-            """.trimIndent()
-        )
-
-        val result = LicenseResolver.resolveLicenses(
-            report,
-            emptySet(),
-            emptySet(),
-            overriddenLicenses = mapOf("some-pkg" to "MIT"),
-        )
-
-        assertThat(result["some-pkg"]!!.licenses).containsExactly(KnownLicense.MIT)
-        assertThat(result["some-pkg"]!!.declaredExpression).isNull()
     }
 
     @Test
