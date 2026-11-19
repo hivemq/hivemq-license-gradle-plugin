@@ -56,6 +56,45 @@ class LicenseResolverResolveLicensesTest {
         """.trimIndent()
     )
 
+    /** A BOM with one component, `com.example:lib:1.0.0`, whose license list holds [entries], JSON objects. */
+    private fun writeEntriesBom(vararg entries: String) = writeBom(
+        """
+        {
+          "components": [
+            {
+              "group": "com.example",
+              "name": "lib",
+              "version": "1.0.0",
+              "licenses": [
+                ${entries.joinToString(",\n                ")}
+              ]
+            }
+          ]
+        }
+        """.trimIndent()
+    )
+
+    /** `com.example:lib` as resolved from a BOM whose license list holds [entries]. */
+    private fun libWith(vararg entries: String): ResolvedDependency =
+        LicenseResolver.resolveLicenses(writeEntriesBom(*entries), defaultIgnoredPrefixes, defaultAllowedArtifacts)
+            .getValue("com.example:lib")
+
+    private fun idEntry(spdxId: String) = """{ "license": { "id": "$spdxId" } }"""
+
+    private fun nameEntry(name: String) = """{ "license": { "name": "$name" } }"""
+
+    private fun expressionEntry(expression: String) = """{ "expression": "$expression" }"""
+
+    /**
+     * Eleven pairs of distinct approved licenses joined by AND: 2048 ways to be satisfied, none covering another, more
+     * than the parser keeps.
+     */
+    private fun tooManyAlternatives(): String {
+        val ids = LicenseResolver.SPDX_ID_MAP.keys.filter { ' ' !in it }.take(22)
+        check(ids.size == 22) { "needs 22 approved licenses with an SPDX id, found ${ids.size}" }
+        return ids.chunked(2).joinToString(" AND ") { (a, b) -> "($a OR $b)" }
+    }
+
     @Test
     fun `resolves single dependency with SPDX ID`() {
         val bom = writeBom(
@@ -1933,9 +1972,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `rejects an SPDX expression with more distinct alternatives than it evaluates`() {
-        // eleven pairs of distinct approved licenses have 2048 ways to be satisfied, none covering another
-        val ids = LicenseResolver.SPDX_ID_MAP.keys.filter { ' ' !in it }.take(22)
-        val expression = ids.chunked(2).joinToString(" AND ") { (a, b) -> "($a OR $b)" }
+        val expression = tooManyAlternatives()
         val bom = writeExpressionBom(expression)
 
         assertThatThrownBy {
@@ -2032,8 +2069,7 @@ class LicenseResolverResolveLicensesTest {
 
     @Test
     fun `says when an SPDX expression is too complex to evaluate`() {
-        val ids = LicenseResolver.SPDX_ID_MAP.keys.filter { ' ' !in it }.take(22)
-        val expression = ids.chunked(2).joinToString(" AND ") { (a, b) -> "($a OR $b)" }
+        val expression = tooManyAlternatives()
         val bom = writeExpressionBom(expression)
 
         assertThatThrownBy {
@@ -2108,6 +2144,185 @@ class LicenseResolverResolveLicensesTest {
             LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
         }.isInstanceOf(IllegalStateException::class.java)
             .hasMessageContaining("License not on the approved list for 'com.example:copyleft-lib:1.0.0': (GPL-2.0-only OR GPL-3.0-only)")
+    }
+
+    // --- declared expressions ---
+
+    @Test
+    fun `declares a conjunction as an expression`() {
+        val lib = libWith(expressionEntry("MIT AND ISC"))
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.MIT, KnownLicense.ISC)
+        assertThat(lib.declaredExpression).isEqualTo("MIT AND ISC")
+    }
+
+    @Test
+    fun `declares a license entry and an expression entry together`() {
+        val lib = libWith(idEntry("EPL-2.0"), expressionEntry("MIT AND ISC"))
+
+        // MIT and ISC together rank above EPL-2.0 alone, as both come earlier in LICENSE_ORDER
+        assertThat(lib.licenses).containsExactly(KnownLicense.MIT, KnownLicense.ISC)
+        assertThat(lib.declaredExpression).isEqualTo("EPL-2.0 OR (MIT AND ISC)")
+    }
+
+    @Test
+    fun `declares a name entry by the id of the license it maps to`() {
+        val lib = libWith(idEntry("EPL-2.0"), nameEntry("Bouncy Castle Licence"))
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.BOUNCY_CASTLE)
+        assertThat(lib.declaredExpression).isEqualTo("EPL-2.0 OR MIT")
+    }
+
+    @Test
+    fun `declares an expression entry in canonical form`() {
+        val lib = libWith(expressionEntry("(CDDL-1.0 OR GPL-2.0-with-classpath-exception)"))
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.CDDL_1_0)
+        assertThat(lib.declaredExpression).isEqualTo("CDDL-1.0 OR GPL-2.0-only WITH Classpath-exception-2.0")
+    }
+
+    @Test
+    fun `declares no expression for a built-in license`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "javax.servlet",
+                  "name": "javax.servlet-api",
+                  "version": "4.0.1",
+                  "licenses": [ { "expression": "(CDDL-1.0 OR GPL-2.0-with-classpath-exception)" } ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val lib = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+            .getValue("javax.servlet:javax.servlet-api")
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.CDDL_1_1)
+        assertThat(lib.declaredExpression).isNull()
+    }
+
+    @Test
+    fun `declares no expression for a license that is not an SPDX id`() {
+        val lib = libWith(idEntry("MIT"), nameEntry("Public Domain"))
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
+        assertThat(lib.declaredExpression).isNull()
+    }
+
+    @Test
+    fun `declares no expression for a name the plugin does not recognise`() {
+        val lib = libWith(idEntry("MIT"), nameEntry("Proprietary"))
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
+        assertThat(lib.declaredExpression).isNull()
+    }
+
+    @Test
+    fun `declares no expression for a project module without a license`() {
+        val bom = writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.hivemq",
+                  "name": "hivemq-extension-sdk",
+                  "version": "4.57.0-SNAPSHOT",
+                  "purl": "pkg:maven/com.hivemq/hivemq-extension-sdk@4.57.0-SNAPSHOT?project_path=%3Asdk"
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val sdk = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, OwnModules.PUBLIC_HIVEMQ_MODULES)
+            .getValue("com.hivemq:hivemq-extension-sdk")
+
+        assertThat(sdk.licenses).containsExactly(KnownLicense.APACHE_2_0)
+        assertThat(sdk.declaredExpression).isNull()
+    }
+
+    @Test
+    fun `declares no expression for a single license`() {
+        val lib = libWith(idEntry("Apache-2.0"))
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.APACHE_2_0)
+        assertThat(lib.declaredExpression).isNull()
+    }
+
+    @Test
+    fun `declares no expression for an entry with only a URL`() {
+        val lib = libWith(idEntry("MIT"), """{ "license": { "url": "https://www.apache.org/licenses/LICENSE-2.0" } }""")
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
+        assertThat(lib.declaredExpression).isNull()
+    }
+
+    @Test
+    fun `declares no expression for an id with a space`() {
+        // no SPDX id has one, so this is free text in the wrong field
+        val lib = libWith(idEntry("MIT"), idEntry("Apache 2.0"))
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
+        assertThat(lib.declaredExpression).isNull()
+    }
+
+    @Test
+    fun `declares no expression for an override`() {
+        val bom = writeEntriesBom(idEntry("EPL-2.0"), idEntry("GPL-2.0-with-classpath-exception"))
+
+        val lib = LicenseResolver.resolveLicenses(
+            bom, defaultIgnoredPrefixes, defaultAllowedArtifacts,
+            overriddenLicenses = mapOf("com.example:lib" to "MIT"),
+        ).getValue("com.example:lib")
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
+        assertThat(lib.declaredExpression).isNull()
+    }
+
+    @Test
+    fun `declares no expression when a malformed entry sits next to an approved one`() {
+        val lib = libWith(idEntry("MIT"), expressionEntry("MIT OR )"))
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
+        assertThat(lib.declaredExpression).isNull()
+    }
+
+    @Test
+    fun `declares no expression when an entry is too complex to evaluate`() {
+        val lib = libWith(idEntry("MIT"), expressionEntry(tooManyAlternatives()))
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
+        assertThat(lib.declaredExpression).isNull()
+    }
+
+    @Test
+    fun `declares no expression when two entries name the same license`() {
+        val lib = libWith(idEntry("MIT"), nameEntry("Bouncy Castle Licence"))
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
+        assertThat(lib.declaredExpression).isNull()
+    }
+
+    @Test
+    fun `declares the alternatives around an entry that is neither a license nor an expression`() {
+        // such an entry offers nothing to choose, so it is no alternative
+        val lib = libWith(idEntry("EPL-2.0"), "{ }", idEntry("MIT"))
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
+        assertThat(lib.declaredExpression).isEqualTo("EPL-2.0 OR MIT")
+    }
+
+    @Test
+    fun `declares the alternatives of several license entries as one expression`() {
+        // the two license elements of the POM of jakarta.annotation-api, as CycloneDX writes them
+        val lib = libWith(idEntry("EPL-2.0"), idEntry("GPL-2.0-with-classpath-exception"))
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.EPL_2_0)
+        assertThat(lib.declaredExpression).isEqualTo("EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0")
     }
 
     // --- failure reporting ---
@@ -2388,6 +2603,82 @@ class LicenseResolverResolveLicensesTest {
         assertThat(result["react"]!!.coordinates.version).isEqualTo("18.2.0")
         assertThat(result["react"]!!.licenses.single().id).isEqualTo("MIT")
         assertThat(result["lru-cache"]!!.licenses.single().id).isEqualTo("ISC")
+    }
+
+    @Test
+    fun `pnpm declares a compound expression in canonical form`() {
+        val report = writeBom(
+            """
+            {
+              "bucket": [
+                { "name": "some-pkg", "versions": ["1.0.0"], "license": "(mit OR Apache-2.0)" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(report, emptySet(), emptySet())
+
+        assertThat(result["some-pkg"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
+        assertThat(result["some-pkg"]!!.declaredExpression).isEqualTo("MIT OR Apache-2.0")
+    }
+
+    @Test
+    fun `pnpm declares no expression for a license that is not an SPDX id`() {
+        val report = writeBom(
+            """
+            {
+              "bucket": [
+                { "name": "some-pkg", "versions": ["1.0.0"], "license": "MIT OR Public Domain" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(report, emptySet(), emptySet())
+
+        assertThat(result["some-pkg"]!!.licenses).containsExactly(KnownLicense.MIT)
+        assertThat(result["some-pkg"]!!.declaredExpression).isNull()
+    }
+
+    @Test
+    fun `pnpm declares no expression for a single license`() {
+        val report = writeBom(
+            """
+            {
+              "MIT": [
+                { "name": "react", "versions": ["18.2.0"], "license": "MIT" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(report, emptySet(), emptySet())
+
+        assertThat(result["react"]!!.declaredExpression).isNull()
+    }
+
+    @Test
+    fun `pnpm declares no expression for an overridden package`() {
+        val report = writeBom(
+            """
+            {
+              "bucket": [
+                { "name": "some-pkg", "versions": ["1.0.0"], "license": "EPL-2.0 OR GPL-2.0-only" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            report,
+            emptySet(),
+            emptySet(),
+            overriddenLicenses = mapOf("some-pkg" to "MIT"),
+        )
+
+        assertThat(result["some-pkg"]!!.licenses).containsExactly(KnownLicense.MIT)
+        assertThat(result["some-pkg"]!!.declaredExpression).isNull()
     }
 
     @Test
