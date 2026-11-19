@@ -17,6 +17,8 @@ package com.hivemq.tools.license.gradle
 
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 
 class LicenseResolverConvertLicenseTest {
 
@@ -82,6 +84,18 @@ class LicenseResolverConvertLicenseTest {
     fun `converts known SPDX ID LGPL-2_1-or-later`() {
         val entry = DependencyReport.LicenseEntry(id = "LGPL-2.1-or-later")
         assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.LGPL_2_1_OR_LATER)
+    }
+
+    @Test
+    fun `converts known SPDX ID MPL-2_0`() {
+        val entry = DependencyReport.LicenseEntry(id = "MPL-2.0")
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.MPL_2_0)
+    }
+
+    @Test
+    fun `MPL-2_0-no-copyleft-exception SPDX ID returns UnknownLicense`() {
+        val entry = DependencyReport.LicenseEntry(id = "MPL-2.0-no-copyleft-exception")
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isInstanceOf(UnknownLicense::class.java)
     }
 
     @Test
@@ -228,6 +242,131 @@ class LicenseResolverConvertLicenseTest {
     fun `matches MIT-0 by name`() {
         val entry = DependencyReport.LicenseEntry(name = "MIT-0 License")
         assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.MIT_0)
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+        strings = [
+            "MPL 2.0",
+            "MPL v2.0",
+            "MPL-2.0",
+            "Mozilla Public License 2.0",
+            "Mozilla Public License Version 2.0",
+            "Mozilla Public License version 2.0",
+            "Mozilla Public License, Version 2.0",
+            "Mozilla Public License, v. 2.0",
+        ]
+    )
+    fun `matches MPL 2_0 by name`(name: String) {
+        val entry = DependencyReport.LicenseEntry(name = name)
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.MPL_2_0)
+    }
+
+    @Test
+    fun `matches MPL next to the MPL 2_0 URL`() {
+        val entry = DependencyReport.LicenseEntry(name = "MPL", url = "https://www.mozilla.org/MPL/2.0/")
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.MPL_2_0)
+    }
+
+    @Suppress("HttpUrlsUsage")
+    @ParameterizedTest
+    @ValueSource(
+        strings = [
+            "http://mozilla.org/MPL/2.0/",
+            "http://www.mozilla.org/MPL/2.0/index.txt",
+            "https://www.mozilla.org/MPL/2.0/",
+            "https://www.mozilla.org/en-US/MPL/2.0/",
+        ]
+    )
+    fun `matches Mozilla Public License next to the MPL 2_0 URL`(url: String) {
+        val entry = DependencyReport.LicenseEntry(name = "Mozilla Public License", url = url)
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.MPL_2_0)
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+        strings = [
+            "Apache License",
+            "GNU General Public License",
+            "MPL 1.0",
+            "MPL 1.1",
+            "MPL and GPL",
+            "MPL/GPL 2.0",
+            "Mozilla Public License 1.1",
+            "Something",
+        ]
+    )
+    fun `MPL 1_x or another license name next to the MPL 2_0 URL returns UnknownLicense`(name: String) {
+        val entry = DependencyReport.LicenseEntry(name = name, url = "https://www.mozilla.org/en-US/MPL/2.0/")
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isInstanceOf(UnknownLicense::class.java)
+    }
+
+    @Suppress("HttpUrlsUsage")
+    @ParameterizedTest
+    @ValueSource(
+        strings = [
+            "http://www.mozilla.org/MPL/MPL-1.0.html",
+            "http://www.mozilla.org/MPL/MPL-1.1.html",
+            "http://www.opensource.org/licenses/mozilla1.1.php",
+            "https://opensource.org/license/mpl-1-1",
+            "https://opensource.org/licenses/MPL-1.1",
+            "https://spdx.org/licenses/MPL-2.0-no-copyleft-exception.html",
+            "https://www.mozilla.org/en-US/MPL/1.1/",
+        ]
+    )
+    fun `MPL 2_0 next to the URL of an unapproved MPL returns UnknownLicense`(url: String) {
+        val entry = DependencyReport.LicenseEntry(name = "MPL 2.0", url = url)
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isInstanceOf(UnknownLicense::class.java)
+    }
+
+    @Test
+    fun `MPL 2_0 or EPL 1_0 matches EPL_1_0`() {
+        val entry = DependencyReport.LicenseEntry(name = "MPL 2.0 or EPL 1.0")
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isEqualTo(KnownLicense.EPL_1_0)
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+        strings = [
+            "MPL 2.0, Incompatible With Secondary Licenses",
+            "MPL 2.0\nIncompatible With Secondary Licenses",
+            "MPL-2.0-no-copyleft-exception",
+            "Mozilla Public License (no copyleft exception)",
+            "Mozilla Public License 2.0 (no copyleft exception)",
+        ]
+    )
+    fun `MPL 2_0 without copyleft exception returns UnknownLicense`(name: String) {
+        val entry = DependencyReport.LicenseEntry(name = name, url = "https://www.mozilla.org/MPL/2.0/")
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isInstanceOf(UnknownLicense::class.java)
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["MPL", "Mozilla Public License"])
+    fun `MPL without a version and without the MPL 2_0 URL returns UnknownLicense`(name: String) {
+        val withoutUrl = DependencyReport.LicenseEntry(name = name)
+        assertThat(LicenseResolver.convertLicense(withoutUrl, anyCoordinates)).isInstanceOf(UnknownLicense::class.java)
+        val nextToGpl = DependencyReport.LicenseEntry(name = name, url = "https://www.gnu.org/licenses/gpl-3.0.txt")
+        assertThat(LicenseResolver.convertLicense(nextToGpl, anyCoordinates)).isInstanceOf(UnknownLicense::class.java)
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+        strings = [
+            "MPL 2.0 / GPL 2.0",
+            "MPL 2.0 and GPL 3.0",
+            "MPL 2.0 or Universal Permissive License, Version 1.0",
+            "Mozilla Public License / GPL 2.0",
+        ]
+    )
+    fun `MPL combined with another license returns UnknownLicense`(name: String) {
+        val entry = DependencyReport.LicenseEntry(name = name)
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isInstanceOf(UnknownLicense::class.java)
+    }
+
+    @Test
+    fun `SIMPL 2_0 returns UnknownLicense`() {
+        val entry = DependencyReport.LicenseEntry(name = "SIMPL 2.0")
+        assertThat(LicenseResolver.convertLicense(entry, anyCoordinates)).isInstanceOf(UnknownLicense::class.java)
     }
 
     @Test
