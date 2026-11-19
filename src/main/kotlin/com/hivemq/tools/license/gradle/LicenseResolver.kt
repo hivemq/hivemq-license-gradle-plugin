@@ -22,8 +22,18 @@ import com.hivemq.tools.license.gradle.sbom.BomFilter
 import java.io.File
 import java.util.*
 
-/** A dependency and the licenses it is used under, every one of which applies. */
-data class ResolvedDependency(val coordinates: Coordinates, val licenses: List<KnownLicense>) {
+/**
+ * A dependency and the licenses it is used under, every one of which applies. [declaredExpression] is one SPDX
+ * expression in canonical form naming every way the dependency's declared licenses allow it to be used, when they name
+ * more than one license; null for a single license, for a license not taken from the declared entries (an override, a
+ * built-in license, a project module) and when a declared entry has no SPDX form or is malformed or too complex to
+ * evaluate.
+ */
+data class ResolvedDependency(
+    val coordinates: Coordinates,
+    val licenses: List<KnownLicense>,
+    val declaredExpression: String? = null,
+) {
     init {
         require(licenses.isNotEmpty()) { "'$coordinates' needs at least one license" }
     }
@@ -94,8 +104,8 @@ object LicenseResolver {
         }
     }
 
-    // the approved license with this SPDX ID, matched regardless of case, or null
-    private fun knownLicense(spdxId: String): KnownLicense? =
+    /** The approved license with this SPDX ID, matched regardless of case, or null. */
+    internal fun knownLicense(spdxId: String): KnownLicense? =
         SPDX_ID_MAP[spdxId] ?: SPDX_IDS_IGNORING_CASE[spdxId.lowercase()]
 
     /**
@@ -168,11 +178,12 @@ object LicenseResolver {
                 val expression = choice.expression
                 when {
                     license != null -> convertLicense(license, coordinates).let {
-                        LicenseOption((it as? KnownLicense)?.let(::listOf), it.fullName)
+                        LicenseOption((it as? KnownLicense)?.let(::listOf), it.fullName, declaredLicense(license, it))
                     }
 
-                    expression != null -> evaluateExpression(expression).let { result ->
-                        LicenseOption(result.licenses, result.describe(expression))
+                    expression != null -> SpdxExpression(expression).let { parsed ->
+                        val result = parsed.evaluate()
+                        LicenseOption(result.licenses, result.describe(expression), parsed.tree)
                     }
                     else -> null
                 }
@@ -194,7 +205,8 @@ object LicenseResolver {
                     "${describeUnresolvedMetadata(component)}: ${options.joinToString { it.name }}"
                 return
             }
-            entries[coordinates.moduleId] = ResolvedDependency(coordinates, chosenLicenses)
+            val declared = SpdxExpression.expressionOf(options.map { it.declared })
+            entries[coordinates.moduleId] = ResolvedDependency(coordinates, chosenLicenses, declared)
         }
         // nested components are resolved on their own, in document order; the filter above already decided which stay
         fun resolve(components: List<DependencyReport.Component>) {
@@ -209,8 +221,18 @@ object LicenseResolver {
         return entries
     }
 
-    // one way a component may be used: the licenses that then apply together, or null when one of them is not approved
-    private class LicenseOption(val licenses: List<KnownLicense>?, val name: String)
+    /**
+     * One way a component may be used: the [licenses] that then apply together, or null when one of them is not
+     * approved, and what was [declared] as a syntax tree, null for a name that maps to no known license, an entry
+     * without an id or a name, and an expression that is malformed or too complex to evaluate.
+     */
+    private class LicenseOption(val licenses: List<KnownLicense>?, val name: String, val declared: SpdxExpression.Node?)
+
+    /** An id as written, a name as the id of the known license it maps to; an unrecognised name has no SPDX form. */
+    private fun declaredLicense(entry: DependencyReport.LicenseEntry, converted: License): SpdxExpression.Node? {
+        val id = entry.id ?: (converted as? KnownLicense)?.id ?: return null
+        return SpdxExpression.Node.Leaf(id)
+    }
 
     // the file the licenses were read from and, when known, how this build obtained it; finding out the origin may
     // wait for a build event, so it is only asked for when a message needs it
@@ -265,12 +287,14 @@ object LicenseResolver {
                     problems += "No license found for '$coordinates'"
                     continue
                 }
-                val result = evaluateExpression(spdxId)
+                val parsed = SpdxExpression(spdxId)
+                val result = parsed.evaluate()
                 if (result.licenses == null) {
                     problems += "License not on the approved list for '$coordinates': ${result.describe(spdxId)}"
                     continue
                 }
-                entries[coordinates.moduleId] = ResolvedDependency(coordinates, result.licenses)
+                val declared = SpdxExpression.expressionOf(listOf(parsed.tree))
+                entries[coordinates.moduleId] = ResolvedDependency(coordinates, result.licenses, declared)
             }
         }
         failOnProblems(source, problems)
@@ -283,171 +307,12 @@ object LicenseResolver {
             checkNotNull(knownLicense(spdxId)) { "Overridden license '$spdxId' for '$moduleId' was not set aside" }
         } ?: BUILT_IN_LICENSES[moduleId]
 
-    // Evaluates an SPDX license expression such as "(CDDL-1.0 OR GPL-2.0-with-classpath-exception)" to the licenses
-    // that apply when it is satisfied, or to the reason when the expression itself is at fault. "A OR B" is satisfied
-    // by any approved alternative, and the one with the fewest obligations is reported. "A AND B" needs every operand
-    // approved and reports all of them. AND binds tighter than OR, parentheses group, a license with a WITH exception
-    // is not approved as the license, and a malformed expression is never satisfied.
-    private fun evaluateExpression(expression: String): ExpressionResult = SpdxExpression(expression).evaluate()
-
-    // the licenses an expression is satisfied by, or null with the reason when that is a fault of the expression
-    private class ExpressionResult(val licenses: List<KnownLicense>?, val problem: String? = null) {
-        fun describe(expression: String) = if (problem == null) expression else "$expression ($problem)"
-    }
-
-    // Parses the expression into every way it can be satisfied, each one the licenses that then apply together, and
-    // ranks them once the whole expression is read, so an alternative is never chosen before an enclosing AND adds
-    // to it. An unknown license satisfies nothing; a syntax error is tracked apart, so "MIT OR )" is not satisfied
-    // by its MIT. An alternative that adds licenses to another can never rank better, so it is dropped as soon as it
-    // appears. A candidate seen before, and an AND operand every alternative already includes, cost nothing; an
-    // expression that produces more candidates than MAX_CANDIDATES, keeps more alternatives than MAX_OPTIONS, or
-    // nests parentheses deeper than MAX_DEPTH, is not evaluated.
-    private class SpdxExpression(expression: String) {
-        private val tokens = TOKEN.findAll(expression).map { it.value }.toList()
-        private var position = 0
-        private var wellFormed = true
-        private var withinBudget = true
-        private var candidates = 0
-        private var depth = 0
-
-        fun evaluate(): ExpressionResult {
-            val options = disjunction()
-            return when {
-                !withinBudget -> ExpressionResult(null, "SPDX expression too complex to evaluate")
-                !wellFormed || position != tokens.size -> ExpressionResult(null, "malformed SPDX expression")
-                else -> ExpressionResult(
-                    chooseOption(options.map { option -> option.sortedBy { LICENSE_ORDER.indexOf(it) } })
-                )
-            }
-        }
-
-        // disjunction := conjunction ("OR" conjunction)*
-        private fun disjunction(): List<Set<KnownLicense>> {
-            val first = conjunction()
-            // a lone conjunction already holds no option that covers another
-            if (!acceptOperator("OR")) return first
-            // the alternatives were produced, and charged where they were products, by their conjunctions
-            val options = Options()
-            for (alternative in first) {
-                options.add(alternative, charged = false)
-            }
-            do {
-                for (alternative in conjunction()) {
-                    options.add(alternative, charged = false)
-                }
-            } while (acceptOperator("OR"))
-            return options.list
-        }
-
-        // conjunction := term ("AND" term)*
-        private fun conjunction(): List<Set<KnownLicense>> {
-            var options = term()
-            while (acceptOperator("AND")) {
-                val operand = term()
-                // an operand every alternative already includes leaves them as they are
-                if (operand.isNotEmpty() && options.all { left -> operand.all(left::containsAll) }) continue
-                val combined = Options()
-                for (left in options) {
-                    if (!withinBudget) break
-                    for (right in operand) {
-                        combined.add(left + right, charged = true)
-                    }
-                }
-                options = combined.list
-            }
-            return options
-        }
-
-        // The alternatives collected so far. A candidate is kept unless an option it covers exists already, and it
-        // drops the options that cover it. A candidate seen before costs nothing; a charged one, which is every
-        // product of a conjunction, counts against the budget, and the expression is given up once the candidates or
-        // the options kept exceed it.
-        private inner class Options {
-            val list = mutableListOf<Set<KnownLicense>>()
-            private val seen = HashSet<Set<KnownLicense>>()
-
-            fun add(candidate: Set<KnownLicense>, charged: Boolean) {
-                if (!withinBudget || !seen.add(candidate)) return
-                if (charged && ++candidates > MAX_CANDIDATES) {
-                    withinBudget = false
-                    return
-                }
-                if (list.any { candidate.containsAll(it) }) return
-                list.removeAll { it.containsAll(candidate) }
-                list += candidate
-                if (list.size > MAX_OPTIONS) {
-                    withinBudget = false
-                }
-            }
-        }
-
-        // term := "(" disjunction ")" | license-id ["WITH" exception-id]
-        private fun term(): List<Set<KnownLicense>> {
-            val token = tokens.getOrNull(position++) ?: return malformed()
-            if (token == "(") {
-                if (++depth > MAX_DEPTH) {
-                    withinBudget = false
-                    return emptyList()
-                }
-                val inner = disjunction()
-                depth--
-                return if (tokens.getOrNull(position++) == ")") inner else malformed()
-            }
-            if (!isLicense(token)) return malformed()
-            val license = knownLicense(token)
-            if (acceptOperator("WITH")) {
-                val exception = tokens.getOrNull(position++)
-                return if (exception != null && isIdString(exception)) emptyList() else malformed()
-            }
-            return if (license == null) emptyList() else listOf(setOf(license))
-        }
-
-        // a known id, or what the SPDX grammar allows as a simple expression: a license reference, or a license id
-        // with an optional "+"; "Public Domain" is known and not SPDX
-        private fun isLicense(token: String) = when {
-            knownLicense(token) != null -> true
-            REFERENCE_PREFIX.containsMatchIn(token) -> LICENSE_REFERENCE.matches(token)
-            else -> isIdString(token.removeSuffix("+"))
-        }
-
-        private fun isIdString(token: String) =
-            ID_STRING.matches(token) && OPERATORS.none { it.equals(token, ignoreCase = true) }
-
-        private fun malformed(): List<Set<KnownLicense>> {
-            wellFormed = false
-            return emptyList()
-        }
-
-        private fun acceptOperator(operator: String): Boolean {
-            if (!tokens.getOrNull(position).equals(operator, ignoreCase = true)) return false
-            position++
-            return true
-        }
-
-        private companion object {
-            // a known id containing whitespace is matched first, so "Public Domain" stays one token, and only up to
-            // a token boundary, so "Public DomainOR" is not read as "Public Domain OR"
-            val TOKEN = Regex(
-                SPDX_ID_MAP.keys.filter { it.any(Char::isWhitespace) }
-                    .joinToString("") { Regex.escape(it) + """(?=[\s()]|$)|""" } +
-                    """[()]|[^\s()]+""",
-                RegexOption.IGNORE_CASE,
-            )
-            val ID_STRING = Regex("""[A-Za-z0-9.-]+""")
-            val REFERENCE_PREFIX = Regex("""^(LicenseRef|DocumentRef)-""", RegexOption.IGNORE_CASE)
-            val LICENSE_REFERENCE =
-                Regex("""(DocumentRef-[A-Za-z0-9.-]+:)?LicenseRef-[A-Za-z0-9.-]+""", RegexOption.IGNORE_CASE)
-            val OPERATORS = listOf("AND", "OR", "WITH")
-            const val MAX_OPTIONS = 1024
-            const val MAX_CANDIDATES = 16_384
-            const val MAX_DEPTH = 32
-        }
-    }
-
-    // Picks, among the ways a dependency may be used, the one with the fewest obligations: the option whose least
-    // permissive license comes first in LICENSE_ORDER, and of equally ranked options the one with fewer licenses. The
-    // first of equal options wins.
-    private fun chooseOption(options: List<List<KnownLicense>?>): List<KnownLicense>? = options
+    /**
+     * Picks, among the ways a dependency may be used, the one with the fewest obligations: the option whose least
+     * permissive license comes first in [LICENSE_ORDER], and of equally ranked options the one with fewer licenses.
+     * The first of equal options wins.
+     */
+    internal fun chooseOption(options: List<List<KnownLicense>?>): List<KnownLicense>? = options
         .filterNotNull()
         .minWithOrNull(compareBy({ option -> option.maxOf { LICENSE_ORDER.indexOf(it) } }, { it.size }))
 

@@ -27,7 +27,7 @@ internal object FixtureRepository {
 
     /**
      * `<group>:<name>:<version>`, whose POM depends on each `name:version` of [dependencies] in `com.example` and
-     * declares [license] by name when given, as the POM of a published library does.
+     * declares each of [licenses] by name, as the POM of a published library does.
      */
     fun module(
         repoDir: File,
@@ -35,15 +35,17 @@ internal object FixtureRepository {
         version: String,
         vararg dependencies: String,
         group: String = "com.example",
-        license: String? = null,
+        licenses: List<String> = emptyList(),
     ) {
         val dir = repoDir.resolve("${group.replace('.', '/')}/$name/$version").apply { mkdirs() }
-        val declared = dependencies.joinToString("") { dependency ->
+        val dependencyElements = dependencies.joinToString("") { dependency ->
             val (artifactId, dependencyVersion) = dependency.split(':')
             "<dependency><groupId>com.example</groupId><artifactId>$artifactId</artifactId>" +
                 "<version>$dependencyVersion</version></dependency>"
         }
-        val licenses = license?.let { "<licenses><license><name>$it</name></license></licenses>" }.orEmpty()
+        val licenseElements = if (licenses.isEmpty()) "" else licenses.joinToString("", "<licenses>", "</licenses>") {
+            "<license><name>$it</name></license>"
+        }
         dir.resolve("$name-$version.pom").writeText(
             """
             <project xmlns="http://maven.apache.org/POM/4.0.0">
@@ -51,8 +53,8 @@ internal object FixtureRepository {
               <groupId>$group</groupId>
               <artifactId>$name</artifactId>
               <version>$version</version>
-              $licenses
-              <dependencies>$declared</dependencies>
+              $licenseElements
+              <dependencies>$dependencyElements</dependencies>
             </project>
             """.trimIndent()
         )
