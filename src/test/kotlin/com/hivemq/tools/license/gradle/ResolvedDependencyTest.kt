@@ -22,11 +22,23 @@ import org.junit.jupiter.api.Test
 class ResolvedDependencyTest {
 
     @Test
+    fun `has no declared expression by default`() {
+        val dep = ResolvedDependency(Coordinates("g", "n", "v"), listOf(KnownLicense.MIT))
+        assertThat(dep.declaredExpression).isNull()
+    }
+
+    @Test
     fun `stores coordinates and licenses`() {
         val coordinates = Coordinates("com.google.guava", "guava", "32.1.3-jre")
         val dep = ResolvedDependency(coordinates, listOf(KnownLicense.APACHE_2_0))
         assertThat(dep.coordinates).isEqualTo(coordinates)
         assertThat(dep.licenses).containsExactly(KnownLicense.APACHE_2_0)
+    }
+
+    @Test
+    fun `stores the declared expression`() {
+        val dep = ResolvedDependency(Coordinates("g", "n", "v"), listOf(KnownLicense.EPL_2_0), "EPL-2.0 OR MIT")
+        assertThat(dep.declaredExpression).isEqualTo("EPL-2.0 OR MIT")
     }
 
     @Test
