@@ -78,6 +78,11 @@ class LicenseResolverChooseLicenseTest {
     }
 
     @Test
+    fun `chooses EPL over MPL when both present`() {
+        assertThat(resolve(id("MPL-2.0"), id("EPL-1.0"))).containsExactly(KnownLicense.EPL_1_0)
+    }
+
+    @Test
     fun `fails for empty list`() {
         assertThatThrownBy { resolve() }
             .isInstanceOf(IllegalStateException::class.java)
@@ -102,5 +107,6 @@ class LicenseResolverChooseLicenseTest {
         assertThat(resolve(name("Bouncy Castle Licence"), id("MIT"))).containsExactly(KnownLicense.MIT)
         assertThat(resolve(id("W3C-19980720"), id("CC0-1.0"))).containsExactly(KnownLicense.CC0_1_0)
         assertThat(resolve(id("UPL-1.0"), id("CDDL-1.1"))).containsExactly(KnownLicense.CDDL_1_1)
+        assertThat(resolve(id("MPL-2.0"), id("UPL-1.0"))).containsExactly(KnownLicense.UPL_1_0)
     }
 }

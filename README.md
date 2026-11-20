@@ -305,7 +305,12 @@ The following licenses are recognized and approved. When a dependency may be use
 | 23       | Unicode-3.0       | Unicode License v3                                         |
 | 24       | Unicode-DFS-2016  | Unicode License Agreement - Data Files and Software (2016) |
 | 25       | UPL-1.0           | Universal Permissive License v1.0                          |
-| 26       | LGPL-2.1-or-later | GNU Lesser General Public License v2.1 or later            |
+| 26       | MPL-2.0           | Mozilla Public License 2.0                                 |
+| 27       | LGPL-2.1-or-later | GNU Lesser General Public License v2.1 or later            |
+
+MPL-2.0 is approved for unmodified use only, meaning no changes to MPL-2.0 source files: a patched one needs a new
+license review, while a build step that only processes the compiled code does not count as a change. The plugin cannot
+tell whether a file was patched, so it approves every MPL-2.0 component.
 
 ## Built-in License Mappings
 

@@ -60,6 +60,7 @@ object LicenseResolver {
         KnownLicense.UNICODE_3_0,
         KnownLicense.UNICODE_DFS_2016,
         KnownLicense.UPL_1_0,
+        KnownLicense.MPL_2_0,
         KnownLicense.LGPL_2_1_OR_LATER,
     )
 
@@ -418,6 +419,28 @@ object LicenseResolver {
         .filterNotNull()
         .minWithOrNull(compareBy({ option -> option.maxOf { LICENSE_ORDER.indexOf(it) } }, { it.size }))
 
+    // a name that declares MPL 2.0 and nothing else, such as "MPL 2.0" or "Mozilla Public License, Version 2.0"
+    private val MPL_2_0_NAME = Regex("""(MPL|Mozilla Public License)[\s,-]*(v\.?|[Vv]ersion)?\s*2\.0""")
+
+    // a name that says MPL without a version, which only the MPL 2.0 URL completes
+    private val MPL_NAME = Regex("""MPL|Mozilla Public License""")
+
+    // the MPL 2.0 text on mozilla.org
+    private val MPL_2_0_URL = Regex("""https?://(www\.)?mozilla\.org/(en-US/)?MPL/2\.0(/.*)?""")
+
+    // the URL of an unapproved MPL on any host: MPL 1.x, or MPL 2.0 without the copyleft exception
+    private val UNAPPROVED_MPL_URL =
+        Regex("""(MPL|mozilla)[/-]?v?1[.-][01]|copyleft-exception""", RegexOption.IGNORE_CASE)
+
+    /**
+     * Whether a license entry without an SPDX id is MPL-2.0: its name declares MPL 2.0 and nothing else, or says MPL
+     * without a version next to the MPL 2.0 URL. A URL of an unapproved MPL rules it out.
+     */
+    private fun isMpl20(name: String, url: String?): Boolean {
+        if (url != null && UNAPPROVED_MPL_URL.containsMatchIn(url)) return false
+        return name.matches(MPL_2_0_NAME) || (name.matches(MPL_NAME) && url != null && url.matches(MPL_2_0_URL))
+    }
+
     fun convertLicense(license: DependencyReport.LicenseEntry, coordinates: Coordinates): License {
         // CycloneDX provides SPDX IDs directly when available
         val spdxId = license.id
@@ -452,6 +475,7 @@ object LicenseResolver {
             name == "Universal Permissive License, Version 1.0" -> KnownLicense.UPL_1_0
             url == "http://www.w3.org/Consortium/Legal/copyright-software-19980720" -> KnownLicense.W3C_19980720
             name.matches(".*(LGPL|GNU.*Lesser).*2\\.1.*".toRegex()) -> KnownLicense.LGPL_2_1_OR_LATER
+            isMpl20(name, url) -> KnownLicense.MPL_2_0
             // from here license name and url are not enough to determine the exact license, so we checked the specific dependency manually
             (name == "BSD") && (((coordinates.group == "dk.brics.automaton") && (coordinates.name == "automaton")) || ((coordinates.group == "org.picocontainer") && (coordinates.name == "picocontainer")) || ((coordinates.group == "org.ow2.asm") && (coordinates.name == "asm"))) -> KnownLicense.BSD_3_CLAUSE
             else -> UnknownLicense(name, url)
