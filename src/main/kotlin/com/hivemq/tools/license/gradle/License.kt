@@ -54,6 +54,7 @@ enum class KnownLicense(val id: String, override val fullName: String, override 
     ),
     MIT("MIT", "MIT License", "https://spdx.org/licenses/MIT.html"),
     MIT_0("MIT-0", "MIT No Attribution", "https://spdx.org/licenses/MIT-0.html"),
+    MPL_2_0("MPL-2.0", "Mozilla Public License 2.0", "https://spdx.org/licenses/MPL-2.0.html"),
     OFL_1_1("OFL-1.1", "SIL Open Font License 1.1", "https://spdx.org/licenses/OFL-1.1.html"),
     PUBLIC_DOMAIN("Public Domain", "Public Domain", ""),
     UNICODE_3_0("Unicode-3.0", "Unicode License v3", "https://spdx.org/licenses/Unicode-3.0.html"),
