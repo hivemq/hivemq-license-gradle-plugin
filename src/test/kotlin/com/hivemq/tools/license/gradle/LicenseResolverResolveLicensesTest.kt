@@ -57,13 +57,16 @@ class LicenseResolverResolveLicensesTest {
     )
 
     /** A BOM with one component, `com.example:lib:1.0.0`, whose license list holds [entries], JSON objects. */
-    private fun writeEntriesBom(vararg entries: String) = writeBom(
+    private fun writeEntriesBom(vararg entries: String) = writeModuleBom("com.example", "lib", *entries)
+
+    /** A BOM with one component, [group]:[name]:1.0.0, whose license list holds [entries], JSON objects. */
+    private fun writeModuleBom(group: String, name: String, vararg entries: String) = writeBom(
         """
         {
           "components": [
             {
-              "group": "com.example",
-              "name": "lib",
+              "group": "$group",
+              "name": "$name",
               "version": "1.0.0",
               "licenses": [
                 ${entries.joinToString(",\n                ")}
@@ -2308,6 +2311,88 @@ class LicenseResolverResolveLicensesTest {
 
         assertThat(lib.licenses).containsExactly(KnownLicense.EPL_2_0)
         assertThat(lib.declaredExpression).isEqualTo("EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0")
+    }
+
+    // --- built-in expressions ---
+
+    @Test
+    fun `applies an override before the built-in expression of a module`() {
+        val bom = writeModuleBom(
+            "net.logstash.logback", "logstash-logback-encoder", idEntry("Apache-2.0"), idEntry("MIT"),
+        )
+
+        val result = LicenseResolver.resolveLicenses(
+            bom,
+            defaultIgnoredPrefixes,
+            defaultAllowedArtifacts,
+            overriddenLicenses = mapOf("net.logstash.logback:logstash-logback-encoder" to "MIT"),
+        )
+
+        val lib = result.getValue("net.logstash.logback:logstash-logback-encoder")
+        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
+        assertThat(lib.declaredExpression).isNull()
+    }
+
+    @Test
+    fun `fails like any module without a license when one with a built-in expression declares none`() {
+        val bom = writeModuleBom("net.logstash.logback", "logstash-logback-encoder")
+
+        assertThatThrownBy { LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts) }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("No license found for 'net.logstash.logback:logstash-logback-encoder:1.0.0'")
+            .hasMessageNotContaining("built-in expression")
+    }
+
+    @Test
+    fun `fails when the declared licenses of a module with a built-in expression differ from the recorded ones`() {
+        val bom = writeModuleBom("net.logstash.logback", "logstash-logback-encoder", idEntry("Apache-2.0"))
+
+        assertThatThrownBy { LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts) }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining(
+                "Declared licenses of 'net.logstash.logback:logstash-logback-encoder:1.0.0' are 'Apache-2.0', " +
+                    "but the plugin's built-in expression 'Apache-2.0 AND MIT' was written for 'Apache-2.0', 'MIT': " +
+                    "update the plugin, or name the license in overriddenLicenses"
+            )
+    }
+
+    @Test
+    fun `resolves a module with a built-in expression as if its POM declared it`() {
+        val bom = writeModuleBom(
+            "net.logstash.logback", "logstash-logback-encoder", idEntry("Apache-2.0"), idEntry("MIT"),
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        // the POM says in a comment that the MIT entry covers copied code, so both apply and the report lists both
+        val lib = result.getValue("net.logstash.logback:logstash-logback-encoder")
+        assertThat(lib.licenses).containsExactly(KnownLicense.APACHE_2_0, KnownLicense.MIT)
+        assertThat(lib.declaredExpression).isEqualTo("Apache-2.0 AND MIT")
+    }
+
+    @Test
+    fun `resolves a module with a built-in expression over a license given by name`() {
+        val gpl = nameEntry("GNU General Public License, version 2")
+        val bom = writeModuleBom("org.rocksdb", "rocksdbjni", idEntry("Apache-2.0"), gpl)
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        // the name has no SPDX form of its own; the expression names it, and the approved alternative is elected
+        val lib = result.getValue("org.rocksdb:rocksdbjni")
+        assertThat(lib.licenses).containsExactly(KnownLicense.APACHE_2_0)
+        assertThat(lib.declaredExpression).isEqualTo("Apache-2.0 OR GPL-2.0-only")
+    }
+
+    @Test
+    fun `resolves a module with a built-in expression whatever the order and URLs of its entries`() {
+        val gpl = """{ "license": { "name": "GNU General Public License, version 2", "url": "https://gnu.org/gpl" } }"""
+        val apache = """{ "license": { "id": "Apache-2.0", "url": "https://opensource.org/license/apache-2-0" } }"""
+        val bom = writeModuleBom("org.rocksdb", "rocksdbjni", gpl, apache)
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        // neither OR nor AND depends on the order, and a URL CycloneDX writes differs between its versions
+        assertThat(result.getValue("org.rocksdb:rocksdbjni").declaredExpression).isEqualTo("Apache-2.0 OR GPL-2.0-only")
     }
 
     // --- failure reporting ---

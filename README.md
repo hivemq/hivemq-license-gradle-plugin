@@ -247,23 +247,26 @@ requires beyond CycloneDX's defaults:
 - Licenses: the entries CycloneDX wrote from the POM are the declared licenses. A component in a version the reports
   do not list, or an identified component the reports leave out, keeps only those, tagged `declared`; any other gets
   what this plugin concludes, tagged `concluded`, in one of two shapes:
-  - One SPDX expression naming every declared license, approved or not, when no override or built-in mapping names
-    the license and the declared licenses name more than one license (a choice, or several that apply together) and
-    each has an SPDX form, which only an id or expression CycloneDX wrote has; a license given only by a name or URL
-    has none, even one the plugin recognizes, since the plugin's patterns approve a license without describing it
-    exactly. The expression is written in canonical form (see the expression rules under CycloneDX BOM), for example
-    `EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0` for `jakarta.annotation-api`, and is the component's only
-    license entry: the declared entries are dropped, with the license URL or text CycloneDX wrote for them, because a
-    CycloneDX 1.6 license list holds either license objects or one expression, and the expression names every
-    declared license anyway. A `bom-ref` on or inside a dropped entry goes with it, and `generateSbom` fails when any
-    value, an annotation's subject included, still equals it, naming where it sits. The reports keep the alternative
-    this plugin elected; the SBOM names every declared license, so that a reader can make their own choice.
+  - One SPDX expression naming every declared license, approved or not, when no override or built-in license covers the
+    component and the declared licenses name more than one license and each has an SPDX form, which only an id or
+    expression CycloneDX wrote has; a license given only by a name or URL has none, even one the plugin recognizes,
+    since the plugin's patterns approve a license without describing it exactly. A list of license entries is read as a
+    choice, as the Maven model defines it; only an `AND`, in a declared expression or a built-in one (see Built-in
+    expressions), means that several apply together. A module with a built-in expression is read as if its POM declared
+    that expression alone. The concluded expression is written in canonical form (see the expression rules under
+    CycloneDX BOM), for example `EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0` for `jakarta.annotation-api`, and
+    is the component's only license entry: the declared entries are dropped, with the license URL or text CycloneDX
+    wrote for them, because a CycloneDX 1.6 license list holds either license objects or one expression, and the
+    expression names every declared license anyway. A `bom-ref` on or inside a dropped entry goes with it, and
+    `generateSbom` fails when any value, an annotation's subject included, still equals it, naming where it sits. The
+    reports keep the alternative this plugin elected; the SBOM names every declared license, so that a reader can make
+    their own choice.
   - Otherwise the declared entries stay, tagged `declared`, and one license object tagged `concluded` is added per
     license the reports list; a declared expression is then kept whole as the `name` of its entry, its `bom-ref`
     included, because the list cannot mix it with license objects. That is the case for a component with one license,
-    for one whose license an override or a built-in mapping names, and for one with a declared license that has no SPDX
-    form (a license given only by a name or URL, recognized or not) or a declared expression that is malformed or too
-    complex to evaluate.
+    for one that an override or a built-in license covers, and for one with a declared license that has no SPDX form (a
+    license given only by a name or URL, recognized or not) or a declared expression that is malformed or too complex to
+    evaluate.
 
 The file names and the completeness follow the configurations the BOM is built from: `runtimeClasspath` and the
 `additionalConfigurations`, which are the only ones `generateDependencyBom` reads; a gap declared in
@@ -272,12 +275,14 @@ The file names and the completeness follow the configurations the BOM is built f
 Known gaps: first-party components (the top-level component and the projects of this build and of included builds) carry
 no license, so a project dependency of a group that is not the build's own fails `generateSbom` like it fails
 `checkApprovedLicenses` unless an override names it (a project of an own group is internal and left out, a public HiveMQ
-one is listed as Apache-2.0, any other public one needs the override); a component with a declared license that has
-no SPDX form, or a declared expression that cannot be evaluated, gets one concluded object per elected license instead
-of the single SPDX expression BSI TR-03183-2 shows; an override or a built-in mapping names one license, so a
-component it covers gets that license alone as concluded, even when the library offers a choice; files other than
-`.jar` and `.zip` get a file name but no executable, archive or structured property; and a component whose POM
-inherits `<organization>` and `<scm>` from a parent POM gets no creator, as described above.
+one is listed as Apache-2.0, any other public one needs the override); a component with a declared license that has no
+SPDX form, or a declared expression that cannot be evaluated, gets one concluded object per elected license instead of
+the single SPDX expression BSI TR-03183-2 shows; an override or a built-in license gives a single license, so a
+component it covers gets that license alone as concluded, even when the library offers a choice; CycloneDX drops a POM's
+`<comments>`, so the plugin cannot detect comments that give its list of licenses a meaning other than the choice the
+Maven model defines, and such a module needs a built-in expression (see Built-in expressions); files other than `.jar`
+and `.zip` get a file name but no executable, archive or structured property; and a component whose POM inherits
+`<organization>` and `<scm>` from a parent POM gets no creator, as described above.
 
 Deliberate deviations: the serial number is derived from the content, while CycloneDX recommends a new serial number
 for every generated BOM even when the content is unchanged; and the timestamp is `sbomTimestamp`, by default
@@ -504,15 +509,37 @@ These can be overridden using the `overriddenLicenses` configuration. An overrid
 approved table, matched regardless of case, and every override is checked, whether or not its module turns up in the
 BOM.
 
+### Built-in expressions
+
+A list of several `<license>` elements in a POM is a choice: the Maven model says that "the user can select any of them,
+not that they must accept all", and `generateSbom` writes it as one `OR` expression when every entry has an SPDX form.
+These modules need an expression the plugin cannot derive from the BOM: the POM of `logstash-logback-encoder` says in a
+`<comments>` element, which CycloneDX drops, that its MIT entry covers code copied from SLF4J, so both licenses apply;
+`rocksdbjni` and `resteasy-tracing-api` give their GPL license by a name CycloneDX maps to no SPDX id, so neither list
+has an SPDX form. For these, the plugin carries the SPDX expression the list means and resolves the module as if its POM
+declared that expression, for the reports and the SBOM alike:
+
+| Artifact                                        | Declared in the BOM                                                           | Expression                                             |
+|-------------------------------------------------|-------------------------------------------------------------------------------|--------------------------------------------------------|
+| `net.logstash.logback:logstash-logback-encoder` | Apache-2.0, MIT                                                               | `Apache-2.0 AND MIT`                                   |
+| `org.jboss.resteasy:resteasy-tracing-api`       | EPL-2.0, "GNU General Public License, Version 2 with the Classpath Exception" | `EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0` |
+| `org.rocksdb:rocksdbjni`                        | Apache-2.0, "GNU General Public License, version 2"                           | `Apache-2.0 OR GPL-2.0-only`                           |
+
+Each entry records the declared list it was written for; a version that declares another list fails the build, naming
+both lists, so the expression gets a review instead of going stale. An override wins over a built-in expression, as it
+does over a built-in license. The plugin cannot see a POM's `<comments>`, so another module whose comments change the
+meaning of its list needs a new entry in this table, which takes a plugin release.
+
 ## How It Works
 
 1. The plugin registers `generateDependencyBom`, the BOM task of the
    [CycloneDX Gradle Plugin](https://github.com/CycloneDX/cyclonedx-gradle-plugin), without applying that plugin; the
    task writes `build/license/bom.json` from `runtimeClasspath` and the `additionalConfigurations`.
 2. The three tasks, `checkApprovedLicenses`, `updateThirdPartyLicenses` and `generateSbom`, parse the generated BOM and resolve licenses using SPDX IDs, license name patterns, and URL-based matching; the first two also read pnpm JSON.
-   `generateSbom` writes the resolved licenses as the concluded ones; when no override or built-in mapping names the
-   license and the declared licenses name more than one license and each has an SPDX form, it writes a single SPDX
-   expression naming every declared license instead.
+   `generateSbom` writes the resolved licenses as the concluded ones; when no override or built-in license covers the
+   component and the declared licenses name more than one license and each has an SPDX form, it writes a single SPDX
+   expression naming every declared license instead. A module with a built-in expression is resolved as if its POM
+   declared that expression alone.
 3. Own modules, the ones under `ignoredGroupPrefixes`, are listed when `allowedArtifacts` names them and left out
    otherwise; a Maven module that declares a license, or whose metadata is incomplete, fails the build unless listed,
    since internal modules declare none; projects of the build and pnpm packages never fail.

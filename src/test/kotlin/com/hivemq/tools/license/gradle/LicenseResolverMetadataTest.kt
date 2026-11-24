@@ -64,6 +64,50 @@ class LicenseResolverMetadataTest {
     }
 
     @Test
+    fun `BUILT_IN_EXPRESSIONS are canonical expressions with an approved alternative over several entries`() {
+        for ((moduleId, builtIn) in LicenseResolver.BUILT_IN_EXPRESSIONS) {
+            val parsed = SpdxExpression(builtIn.expression)
+            assertThat(parsed.evaluate().licenses).describedAs(moduleId).isNotNull()
+            val canonical = SpdxExpression.expressionOf(listOf(parsed.tree))
+            assertThat(canonical).describedAs(moduleId).isEqualTo(builtIn.expression)
+            assertThat(builtIn.declared).describedAs(moduleId).hasSizeGreaterThan(1)
+        }
+    }
+
+    @Test
+    fun `BUILT_IN_EXPRESSIONS maps logstash-logback-encoder to Apache-2_0 AND MIT`() {
+        assertThat(LicenseResolver.BUILT_IN_EXPRESSIONS["net.logstash.logback:logstash-logback-encoder"])
+            .isEqualTo(LicenseResolver.BuiltInExpression(listOf("Apache-2.0", "MIT"), "Apache-2.0 AND MIT"))
+    }
+
+    @Test
+    fun `BUILT_IN_EXPRESSIONS maps resteasy-tracing-api to EPL-2_0 OR GPL-2_0-only WITH Classpath-exception-2_0`() {
+        assertThat(LicenseResolver.BUILT_IN_EXPRESSIONS["org.jboss.resteasy:resteasy-tracing-api"]).isEqualTo(
+            LicenseResolver.BuiltInExpression(
+                listOf("EPL-2.0", "GNU General Public License, Version 2 with the Classpath Exception"),
+                "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0",
+            )
+        )
+    }
+
+    @Test
+    fun `BUILT_IN_EXPRESSIONS maps rocksdbjni to Apache-2_0 OR GPL-2_0-only`() {
+        assertThat(LicenseResolver.BUILT_IN_EXPRESSIONS["org.rocksdb:rocksdbjni"]).isEqualTo(
+            LicenseResolver.BuiltInExpression(
+                listOf("Apache-2.0", "GNU General Public License, version 2"),
+                "Apache-2.0 OR GPL-2.0-only",
+            )
+        )
+    }
+
+    @Test
+    fun `BUILT_IN_EXPRESSIONS name no module of BUILT_IN_LICENSES`() {
+        // a built-in license is checked first and would win silently
+        assertThat(LicenseResolver.BUILT_IN_EXPRESSIONS.keys)
+            .doesNotContainAnyElementsOf(LicenseResolver.BUILT_IN_LICENSES.keys)
+    }
+
+    @Test
     fun `BUILT_IN_LICENSES maps javax_activation to CDDL_1_1`() {
         assertThat(LicenseResolver.BUILT_IN_LICENSES["javax.activation:javax.activation-api"])
             .isEqualTo(KnownLicense.CDDL_1_1)
