@@ -525,22 +525,30 @@ for lists of several licenses only: a module in it whose version declares a sing
 like any other module.
 
 For most modules the list declares the expression itself, a choice of its licenses; they are listed in
-`BUILT_IN_EXPRESSIONS` in `LicenseResolver.kt` (the Jakarta, JAX-RS, JAXB and HK2 APIs, Eclipse Collections, Jetty,
-JNA, JTS, Logback, java-json-tools, Javassist and Reflections). A module whose versions declare different lists, as
-JNA's LGPL entry became "or later", has one expression per list. Three modules need an expression their list does not
-declare, so their entries record the list as CycloneDX writes it: logstash's licenses apply together, and `rocksdbjni`
-and `resteasy-tracing-api` give their GPL license by a name CycloneDX maps to no SPDX id:
+`BUILT_IN_EXPRESSIONS` in `LicenseResolver.kt` (the Jakarta, JAX-RS, JAXB and HK2 APIs, Eclipse Collections, Jetty, JNA,
+JTS, Logback, java-json-tools, Javassist and Reflections). A module whose versions declare different lists, as JNA's
+LGPL entry became "or later", has one expression per list. Twelve modules need an expression their list does not
+declare, so their entries record the list as CycloneDX writes it. Of the Jersey modules (groups
+`org.glassfish.jersey.*`), five inherit the project's list, which also names what other Jersey jars bundle and the
+examples; the other three declare their own, whose comments give each extra license to bundled code:
 
-| Artifact                                        | Declared in the BOM                                                           | Expression                                             |
-|-------------------------------------------------|-------------------------------------------------------------------------------|--------------------------------------------------------|
-| `net.logstash.logback:logstash-logback-encoder` | Apache-2.0, MIT                                                               | `Apache-2.0 AND MIT`                                   |
-| `org.jboss.resteasy:resteasy-tracing-api`       | EPL-2.0, "GNU General Public License, Version 2 with the Classpath Exception" | `EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0` |
-| `org.rocksdb:rocksdbjni`                        | Apache-2.0, "GNU General Public License, version 2"                           | `Apache-2.0 OR GPL-2.0-only`                           |
+| Artifact                                                                                                        | Expression                                                                               | Why the list does not declare it                                                                            |
+|-----------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------|
+| `net.logstash.logback:logstash-logback-encoder`                                                                 | `Apache-2.0 AND MIT`                                                                     | the POM's comments say both licenses apply                                                                  |
+| `org.jboss.resteasy:resteasy-tracing-api`                                                                       | `EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0`                                   | the GPL license is given by a name CycloneDX maps to no SPDX id                                             |
+| `org.rocksdb:rocksdbjni`                                                                                        | `Apache-2.0 OR GPL-2.0-only`                                                             | the GPL license is given by a name CycloneDX maps to no SPDX id                                             |
+| `com.unboundid:unboundid-ldapsdk`                                                                               | `Apache-2.0 OR GPL-2.0-only OR LGPL-2.1-only OR LicenseRef-scancode-ldap-sdk-free-use`   | three licenses are given by name; the Free Use License has no SPDX id, so ScanCode's LicenseDB key names it |
+| `jersey-client`, `jersey-container-jdk-http`, `jersey-entity-filtering`, `jersey-hk2`, `jersey-media-multipart` | `EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0`                                   | the project's list, though their jars bundle no other code                                                  |
+| `jersey-common`                                                                                                 | `(EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0) AND Apache-2.0 AND CC0-1.0`      | Jersey's choice, a repackaged Guava, and JSR-166 classes in the public domain                               |
+| `jersey-media-json-jackson`                                                                                     | `(EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0) AND Apache-2.0`                  | Jersey's choice and the Jackson JAX-RS providers                                                            |
+| `jersey-server`                                                                                                 | `(EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0) AND Apache-2.0 AND BSD-3-Clause` | Jersey's choice, ASM and classes derived from Dropwizard                                                    |
 
 A module passes while its list is the recorded one, in any order, or declares one of its expressions itself, for example
-with the GPL license of the last two given by an SPDX id; any other list or expression naming several licenses fails the
-build, naming both, so the expression gets a review instead of going stale. An override wins over a built-in expression,
-as it does over a built-in license.
+with the GPL license of `rocksdbjni` or `resteasy-tracing-api` given by an SPDX id; any other list or expression naming
+several licenses fails the build, naming both, so the expression gets a review instead of going stale. An override wins
+over a built-in expression, as it does over a built-in license. An entry is matched by the declared list, not by the
+jar, so a version that bundles other code under the same list keeps the entry's expression; jersey-common's names the
+JSR-166 classes that its 2.x and 3.x jars bundle and 4.x ones no longer do.
 
 ## How It Works
 

@@ -2340,6 +2340,39 @@ class LicenseResolverResolveLicensesTest {
     }
 
     @Test
+    fun `resolves a module whose built-in expression adds the licenses of code its jar bundles`() {
+        val gpl = nameEntry("The GNU General Public License (GPL), Version 2, With Classpath Exception")
+        val bom = writeModuleBom(
+            "org.glassfish.jersey.core", "jersey-common",
+            idEntry("EPL-2.0"), gpl, nameEntry("Apache License, 2.0"), nameEntry("Public Domain"),
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        // Jersey's own choice, and the bundled code under Apache-2.0 and CC0-1.0 that applies whichever is chosen
+        val lib = result.getValue("org.glassfish.jersey.core:jersey-common")
+        assertThat(lib.licenses)
+            .containsExactlyInAnyOrder(KnownLicense.EPL_2_0, KnownLicense.APACHE_2_0, KnownLicense.CC0_1_0)
+        assertThat(lib.declaredExpression)
+            .isEqualTo("(EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0) AND Apache-2.0 AND CC0-1.0")
+    }
+
+    @Test
+    fun `resolves a module whose built-in expression narrows the list it inherits to what its jar holds`() {
+        val project = listOf(
+            "EPL-2.0", "GPL-2.0-with-classpath-exception", "BSD-3-Clause", "BSD-2-Clause", "Apache License, 2.0",
+            "Public Domain", "Modified BSD", "jQuery license", "MIT", "W3C license",
+        ).map { if (' ' in it) nameEntry(it) else idEntry(it) }
+        val bom = writeModuleBom("org.glassfish.jersey.core", "jersey-client", *project.toTypedArray())
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        val lib = result.getValue("org.glassfish.jersey.core:jersey-client")
+        assertThat(lib.licenses).containsExactly(KnownLicense.EPL_2_0)
+        assertThat(lib.declaredExpression).isEqualTo("EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0")
+    }
+
+    @Test
     fun `resolves a module whose declared expression says what its built-in expression says`() {
         // the GPL entry as an SPDX expression, the list joined into one
         val gpl = "EPL-2.0 OR (GPL-2.0-only WITH Classpath-exception-2.0)"
@@ -2401,6 +2434,24 @@ class LicenseResolverResolveLicensesTest {
         val lib = result.getValue("org.rocksdb:rocksdbjni")
         assertThat(lib.licenses).containsExactly(KnownLicense.APACHE_2_0)
         assertThat(lib.declaredExpression).isEqualTo("Apache-2.0 OR GPL-2.0-only")
+    }
+
+    @Test
+    fun `resolves a module with a built-in expression over a license without an SPDX id`() {
+        val bom = writeModuleBom(
+            "com.unboundid", "unboundid-ldapsdk",
+            idEntry("Apache-2.0"),
+            nameEntry("GNU General Public License version 2 (GPLv2)"),
+            nameEntry("GNU Lesser General Public License version 2.1 (LGPLv2.1)"),
+            nameEntry("UnboundID LDAP SDK Free Use License"),
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        val lib = result.getValue("com.unboundid:unboundid-ldapsdk")
+        assertThat(lib.licenses).containsExactly(KnownLicense.APACHE_2_0)
+        assertThat(lib.declaredExpression)
+            .isEqualTo("Apache-2.0 OR GPL-2.0-only OR LGPL-2.1-only OR LicenseRef-scancode-ldap-sdk-free-use")
     }
 
     @Test
