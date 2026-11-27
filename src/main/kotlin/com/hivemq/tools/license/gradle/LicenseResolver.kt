@@ -165,7 +165,51 @@ object LicenseResolver {
             )
             choice("MPL-1.1 OR LGPL-2.1-only OR Apache-2.0", "org.javassist:javassist")
             choice("WTFPL OR Apache-2.0", "org.reflections:reflections")
+            // a choice of four, three given by name; the one with no SPDX id has ScanCode's LicenseDB key
+            replacement(
+                "com.unboundid:unboundid-ldapsdk",
+                "Apache-2.0 OR GPL-2.0-only OR LGPL-2.1-only OR LicenseRef-scancode-ldap-sdk-free-use",
+                "Apache-2.0",
+                "GNU General Public License version 2 (GPLv2)",
+                "GNU Lesser General Public License version 2.1 (LGPLv2.1)",
+                "UnboundID LDAP SDK Free Use License",
+            )
             replacement("net.logstash.logback:logstash-logback-encoder", "Apache-2.0 AND MIT", "Apache-2.0", "MIT")
+            // five Jersey modules inherit the project's list, which also names what other Jersey jars bundle and the
+            // examples; the other three declare their own, whose comments give each extra license to bundled code
+            val jersey = "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0"
+            val jerseyProject = arrayOf(
+                "EPL-2.0", "GPL-2.0-with-classpath-exception", "BSD-3-Clause", "BSD-2-Clause", "Apache License, 2.0",
+                "Public Domain", "Modified BSD", "jQuery license", "MIT", "W3C license",
+            )
+            val jerseyGpl = "The GNU General Public License (GPL), Version 2, With Classpath Exception"
+            for (module in listOf(
+                "org.glassfish.jersey.containers:jersey-container-jdk-http",
+                "org.glassfish.jersey.core:jersey-client",
+                "org.glassfish.jersey.ext:jersey-entity-filtering",
+                "org.glassfish.jersey.inject:jersey-hk2",
+                "org.glassfish.jersey.media:jersey-media-multipart",
+            )) {
+                replacement(module, jersey, *jerseyProject)
+            }
+            // a repackaged Guava, and the public domain (CC0) JSR-166 classes that 2.x and 3.x jars bundle as well
+            replacement(
+                "org.glassfish.jersey.core:jersey-common",
+                "($jersey) AND Apache-2.0 AND CC0-1.0",
+                "EPL-2.0", jerseyGpl, "Apache License, 2.0", "Public Domain",
+            )
+            // ASM, and classes derived from Dropwizard
+            replacement(
+                "org.glassfish.jersey.core:jersey-server",
+                "($jersey) AND Apache-2.0 AND BSD-3-Clause",
+                "EPL-2.0", jerseyGpl, "Apache License, 2.0", "Modified BSD",
+            )
+            // the Jackson JAX-RS providers
+            replacement(
+                "org.glassfish.jersey.media:jersey-media-json-jackson",
+                "($jersey) AND Apache-2.0",
+                "EPL-2.0", jerseyGpl, "Apache License, 2.0",
+            )
             replacement(
                 "org.jboss.resteasy:resteasy-tracing-api",
                 "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0",

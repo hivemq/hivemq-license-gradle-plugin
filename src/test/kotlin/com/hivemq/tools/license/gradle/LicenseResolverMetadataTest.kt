@@ -76,6 +76,14 @@ class LicenseResolverMetadataTest {
     }
 
     @Test
+    fun `BUILT_IN_EXPRESSIONS maps jersey-server to the Jersey choice AND Apache-2_0 AND BSD-3-Clause`() {
+        val builtIns = LicenseResolver.BUILT_IN_EXPRESSIONS["org.glassfish.jersey.core:jersey-server"]
+
+        assertThat(builtIns?.map { it.expression })
+            .containsExactly("(EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0) AND Apache-2.0 AND BSD-3-Clause")
+    }
+
+    @Test
     fun `BUILT_IN_EXPRESSIONS maps jna to both license lists its versions declare`() {
         assertThat(LicenseResolver.BUILT_IN_EXPRESSIONS["net.java.dev.jna:jna"]).containsExactly(
             LicenseResolver.BuiltInExpression("LGPL-2.1-only OR Apache-2.0"),
@@ -107,6 +115,14 @@ class LicenseResolverMetadataTest {
                 listOf("Apache-2.0", "GNU General Public License, version 2"),
             )
         )
+    }
+
+    @Test
+    fun `BUILT_IN_EXPRESSIONS maps unboundid-ldapsdk to its four licenses, the Free Use License as a reference`() {
+        val builtIns = LicenseResolver.BUILT_IN_EXPRESSIONS["com.unboundid:unboundid-ldapsdk"]
+
+        assertThat(builtIns?.map { it.expression })
+            .containsExactly("Apache-2.0 OR GPL-2.0-only OR LGPL-2.1-only OR LicenseRef-scancode-ldap-sdk-free-use")
     }
 
     @Test
