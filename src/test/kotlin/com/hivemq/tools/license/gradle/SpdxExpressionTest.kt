@@ -339,6 +339,14 @@ class SpdxExpressionTest {
     }
 
     @Test
+    fun `is the same expression for a group repeated in another order inside a group of the parent's operator`() {
+        // the repeated OR collapses to one operand of the AND, which then stands in the outer OR
+        val repeated = tree("Apache-2.0 OR ((MPL-1.1 OR LGPL-2.1-only) AND (LGPL-2.1-only OR MPL-1.1))")
+
+        assertThat(SpdxExpression.sameExpression(repeated, tree("MPL-1.1 OR LGPL-2.1-only OR Apache-2.0"))).isTrue()
+    }
+
+    @Test
     fun `is the same expression regardless of the case of ids`() {
         assertThat(SpdxExpression.sameExpression(tree("wtfpl OR mit"), tree("WTFPL OR MIT"))).isTrue()
     }

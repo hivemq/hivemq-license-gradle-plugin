@@ -273,16 +273,35 @@ internal class SpdxExpression(expression: String) {
         }
 
         /** As text, every group's operands sorted and written once and ids in lower case; the base of [Node.key]. */
-        private fun Node.orderFree(): String = when (this) {
-            is Node.Leaf -> render().lowercase()
-            is Node.And -> orderFreeGroup(operands, " AND ")
-            is Node.Or -> orderFreeGroup(operands, " OR ")
+        private fun Node.orderFree(): String = orderFreeNode().text()
+
+        /**
+         * The tree with the operands of every group in order-free form, flattened into a parent of the same operator,
+         * written once and sorted; a group left with one operand stands for it, which its parent may then flatten.
+         */
+        private fun Node.orderFreeNode(): Node = when (this) {
+            is Node.Leaf -> this
+            is Node.And -> orderFreeGroup(operands, { (it as? Node.And)?.operands }, { Node.And(it) })
+            is Node.Or -> orderFreeGroup(operands, { (it as? Node.Or)?.operands }, { Node.Or(it) })
         }
 
-        /** The [operands] of one group, order-free; a group whose operands are all the same stands for that one. */
-        private fun orderFreeGroup(operands: List<Node>, operator: String): String {
-            val distinct = operands.map { it.orderFree() }.distinct().sorted()
-            return distinct.singleOrNull() ?: distinct.joinToString(operator, "(", ")")
+        /** The [operands] of one group in order-free form, those of the [sameOperator] flattened in, as one [group]. */
+        private fun orderFreeGroup(
+            operands: List<Node>,
+            sameOperator: (Node) -> List<Node>?,
+            group: (List<Node>) -> Node,
+        ): Node {
+            val members = operands.map { it.orderFreeNode() }.flatMap { sameOperator(it) ?: listOf(it) }
+                .distinctBy { it.text() }
+                .sortedBy { it.text() }
+            return members.singleOrNull() ?: group(members)
+        }
+
+        /** An order-free tree as text, ids in lower case and every group in parentheses. */
+        private fun Node.text(): String = when (this) {
+            is Node.Leaf -> render().lowercase()
+            is Node.And -> operands.joinToString(" AND ", "(", ")") { it.text() }
+            is Node.Or -> operands.joinToString(" OR ", "(", ")") { it.text() }
         }
 
         /** What the SPDX grammar allows as a simple expression: a license reference, or an id with an optional "+". */
