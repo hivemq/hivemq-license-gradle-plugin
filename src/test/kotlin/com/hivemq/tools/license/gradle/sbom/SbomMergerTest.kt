@@ -39,6 +39,24 @@ class SbomMergerTest {
         expectedParts = emptySet(),
     )
 
+    // the SDK as an extension that builds against a released version identifies it
+    private val releasedSdk = "pkg:maven/com.hivemq/hivemq-extension-sdk@4.1.0?type=jar"
+
+    // the SDK as the broker describes it in a composite build that includes the SDK's build
+    private val compositeSdk = "pkg:maven/com.hivemq/hivemq-extension-sdk@4.58.0-SNAPSHOT?project_path=%3A"
+
+    private val declaredGap = listOf("the extensions run on the broker of the platform image, whose SBOM describes it")
+
+    // the remedy of identifiedGap for a host part, which no part fills
+    private val ofHost =
+        "no part fills the gap of a host part; to accept it, declare it in declaredIdentifiedGapReasons"
+
+    // how identifiedGap ends where host parts are named: the cause, then how to accept the gap
+    private val accept = "to accept the gap, declare it in declaredIdentifiedGapReasons"
+
+    // the product of a deliverable that ships the broker, which hosts the extensions
+    private val hosted = product.copy(hostParts = setOf("broker"))
+
     /**
      * The SBOM of one part in the shape `generateSbom` writes, reduced to what the merger reads. Its top-level
      * component is [name] in [group], a `library` on purpose, so that the conversion to `application` shows; [source]
@@ -139,13 +157,46 @@ class SbomMergerTest {
         }
     """.trimIndent()
 
-    /** The library `lib` with the license [id] as its only `licenses` entry. */
-    private fun libraryLicensedAs(id: String) = """
+    /** The library `lib` with [licenses], texts of entries such as [licenseEntry] writes, as its `licenses`. */
+    private fun libraryWithLicenses(vararg licenses: String) = """
         {
           "type": "library", "bom-ref": "${ref("lib")}", "group": "org.example", "name": "lib", "version": "1.0",
-          "licenses": [ { "license": { "id": "$id" } } ]
+          "licenses": [ ${licenses.joinToString(", ")} ]
         }
     """.trimIndent()
+
+    /** A `licenses` entry for the license object [id], tagged [acknowledgement]. */
+    private fun licenseEntry(id: String, acknowledgement: String = "concluded") =
+        """{ "license": { "id": "$id", "acknowledgement": "$acknowledgement" } }"""
+
+    /** A `licenses` entry for the SPDX [expression], tagged `concluded`. */
+    private fun expressionEntry(expression: String) =
+        """{ "expression": "$expression", "acknowledgement": "concluded" }"""
+
+    /** The library [name] in [group] at [version] whose purl is its [bomRef]. */
+    private fun module(group: String, name: String, version: String, bomRef: String) =
+        library(name, "cc", bomRef = bomRef, group = group, version = version, purl = bomRef)
+
+    /** A library with the bom-ref [bomRef] and, when given, the [purl]. */
+    private fun packaged(bomRef: String, purl: String? = null): String {
+        val purlField = purl?.let { """, "purl": "$it"""" }.orEmpty()
+        return """{ "type": "library", "bom-ref": "$bomRef", "name": "package"$purlField }"""
+    }
+
+    /** The bom-ref of `logback-classic` at [version] and the component, like [slf4j]. */
+    private fun logback(version: String): Pair<String, String> {
+        val bomRef = "pkg:maven/ch.qos.logback/logback-classic@$version?type=jar"
+        return bomRef to module("ch.qos.logback", "logback-classic", version, bomRef)
+    }
+
+    /** The bom-ref of `slf4j-api` at [version] and the component, in the shape [broker] and [partIdentifying] take. */
+    private fun slf4j(version: String): Pair<String, String> {
+        val bomRef = "pkg:maven/org.slf4j/slf4j-api@$version?type=jar"
+        return bomRef to module("org.slf4j", "slf4j-api", version, bomRef)
+    }
+
+    /** The extension SDK at [version] under [bomRef]. */
+    private fun sdk(version: String, bomRef: String) = module("com.hivemq", "hivemq-extension-sdk", version, bomRef)
 
     /** The library `lib` with [properties], pairs of name and value, as its `properties`. */
     private fun libraryWithProperties(vararg properties: Pair<String, String>): String {
@@ -177,6 +228,46 @@ class SbomMergerTest {
     private fun JsonNode.propertyPairs(): List<Pair<String, String>> =
         this["properties"].map { it["name"].asText() to it["value"].asText() }
 
+    /**
+     * The warning that the part [name] identifies [refs] that no host part describes, with the [remedy] for a merge
+     * without host parts unless another is given.
+     */
+    private fun identifiedGap(name: String, vararg refs: String, remedy: String = withoutHosts(name)): String =
+        "the SBOM of '$name' declares its dependency graph incomplete, and no host part describes " +
+            refs.joinToString(", ") { "'$it'" } + " ($remedy)"
+
+    /** The remedy of [identifiedGap] for [ref], whose package the host parts describe in no version or in several. */
+    private fun notByHosts(ref: String) =
+        "the host parts describe the package of '$ref' in no version or in several; $accept"
+
+    /** The remedy of [identifiedGap] when the host part `broker` has no SBOM in the merge. */
+    private fun missingHost() = "the host part 'broker' has no SBOM in this merge; $accept"
+
+    /** The remedy of [identifiedGap] for the identified component `sdk-4.1.0`, which has no purl. */
+    private fun noPackage() = "'sdk-4.1.0' has no package URL to match another version by; $accept"
+
+    /** The remedy of [identifiedGap] for [releasedSdk], whose dependency entry in the identifying part has targets. */
+    private fun ownDependencies() =
+        "'$releasedSdk' has dependencies of its own, which another version cannot take over; $accept"
+
+    /** Why the part [name] keeps the product open: it declares [refs] incomplete without labelling them. */
+    private fun unlabelledGap(name: String, vararg refs: String) =
+        "the SBOM of '$name' declares ${refs.joinToString(", ") { "'$it'" }} incomplete without the " +
+            "${SbomEnricher.PROVIDED_BY_HOST} label, so the merge cannot tell a component its host provides from " +
+            "one it ships (a part built before the plugin wrote that label needs a rebuild; a merged product loses " +
+            "the label where one of its parts ships the component)"
+
+    /** The remedy of [identifiedGap] for the part [name] in a merge without host parts. */
+    private fun withoutHosts(name: String) =
+        "to fill the gap, name the part that hosts '$name' in hostParts; to accept it, declare it in " +
+            "declaredIdentifiedGapReasons"
+
+    /** The compositions of the document, each as its aggregate and the refs its `dependencies` list. */
+    private fun JsonNode.compositions(): List<Pair<String, List<String>>> =
+        this["compositions"].map { it["aggregate"].asText() to it["dependencies"].map { ref -> ref.asText() } }
+
+    private fun JsonNode.componentRefs(): List<String> = this["components"].map { it["bom-ref"].asText() }
+
     /** The document as text, which tells keys written in another order apart where comparing the trees does not. */
     private fun JsonNode.serialized(): String = mapper.writeValueAsString(this)
 
@@ -194,6 +285,48 @@ class SbomMergerTest {
         return SbomPart(source, mapper.writeValueAsBytes(root))
     }
 
+    /** This part with [SbomEnricher.PROVIDED_BY_HOST] on the components [refs], as `generateSbom` labels them. */
+    private fun SbomPart.labelling(vararg refs: String): SbomPart = edited { root ->
+        for (component in root["components"].filter { it["bom-ref"]?.asText() in refs }) {
+            val properties = (component as ObjectNode).withArray("properties")
+            properties.addObject().put("name", SbomEnricher.PROVIDED_BY_HOST).put("value", "true")
+        }
+    }
+
+    /** This part without [SbomEnricher.PROVIDED_BY_HOST] on any component, as a part from another tool comes. */
+    private fun SbomPart.unlabelled(): SbomPart = edited { root ->
+        for (component in root["components"]) {
+            (component["properties"] as? ArrayNode)?.removeIf { it["name"].asText() == SbomEnricher.PROVIDED_BY_HOST }
+        }
+    }
+
+    /** The refs the dependencies of the document name that are neither a component nor its top-level component. */
+    private fun JsonNode.danglingRefs(): List<String> {
+        val known = this["components"].map { it["bom-ref"].asText() } +
+            this["metadata"]["component"]["bom-ref"].asText()
+        return this["dependencies"].flatMap { entry -> listOf(entry["ref"]) + entry["dependsOn"].toList() }
+            .map { it.asText() }
+            .filterNot { it in known }
+    }
+
+    /** Whether the component [ref] of the document carries [SbomEnricher.PROVIDED_BY_HOST]. */
+    private fun JsonNode.labelled(ref: String): Boolean =
+        this["components"].first { it["bom-ref"].asText() == ref }["properties"]
+            ?.any { it["name"].asText() == SbomEnricher.PROVIDED_BY_HOST } == true
+
+    /** This part with the component [ref] naming [tool] as the tool of its evidence. */
+    private fun SbomPart.withEvidence(ref: String, tool: String): SbomPart = edited { root ->
+        val component = root["components"].first { it["bom-ref"].asText() == ref } as ObjectNode
+        val identity = component.putObject("evidence").putArray("identity").addObject().put("field", "purl")
+        identity.putArray("tools").add(tool)
+    }
+
+    /** The warning about the replaced component [ref] the product keeps, which another version replaces for dns. */
+    private fun keptGap(ref: String) =
+        "the product keeps '$ref', in whose place another version comes for 'dns', only because another component " +
+            "refers to it, and states nothing about its dependencies (to accept it, declare it in " +
+            "declaredIdentifiedGapReasons)"
+
     /** This part with the tool `tool` defined in `metadata.tools`, which the merge does not carry. */
     private fun SbomPart.withTool(): SbomPart = edited {
         val tool = (it["metadata"] as ObjectNode).putObject("tools").putArray("components").addObject()
@@ -205,12 +338,15 @@ class SbomMergerTest {
         edited { it.set<JsonNode>("compositions", mapper.readTree(compositions)) }
 
     /**
-     * [name] depending on `lib` and `sdk`, with the compositions the enricher writes when `sdk` is identified as a
-     * component the host provides: complete but for `sdk`.
+     * [name] depending on `lib` and on [identified], bom-refs to components, with the compositions the enricher writes
+     * when it identifies those as components the host provides: complete but for them.
      */
-    private fun partIdentifyingSdk(name: String = "alpha"): SbomPart {
+    private fun partIdentifying(name: String, identified: Map<String, String>): SbomPart {
         val raw = part(
-            name, library("lib", "aa") + ", " + library("sdk", "bb"), listOf(ref("lib"), ref("sdk")), aggregate = null,
+            name,
+            (listOf(library("lib", "aa")) + identified.values).joinToString(", "),
+            listOf(ref("lib")) + identified.keys,
+            aggregate = null,
         )
         val details = SbomDetails(
             creatorName = product.creatorName,
@@ -219,10 +355,22 @@ class SbomMergerTest {
             componentFileNames = emptyMap(),
             concludedLicenses = emptyMap(),
             incompleteReasons = emptyList(),
-            identifiedComponents = setOf(ref("sdk")),
+            identifiedComponents = identified.keys,
         )
         return SbomPart(raw.source, mapper.writeValueAsBytes(SbomEnricher.enrich(BomJson.read(raw.bytes), details)))
     }
+
+    /** [name] identifying `sdk`; see [partIdentifying]. */
+    private fun partIdentifyingSdk(name: String = "alpha"): SbomPart =
+        partIdentifying(name, mapOf(ref("sdk") to library("sdk", "bb")))
+
+    /** The extension [name], which identifies the SDK it builds against, [releasedSdk]. */
+    private fun extension(name: String = "dns"): SbomPart =
+        partIdentifying(name, mapOf(releasedSdk to sdk("4.1.0", releasedSdk)))
+
+    /** The part `broker`, which describes [components], bom-refs to components, and depends on each of them. */
+    private fun broker(components: Map<String, String> = mapOf(compositeSdk to sdk("4.58.0-SNAPSHOT", compositeSdk))) =
+        part("broker", components.values.joinToString(", "), components.keys.toList())
 
     /** `alpha` whose entry targets `lib`, which has no entry of its own, under a composition covering both. */
     private fun partCoveringTargetWithoutEntry(): SbomPart = part("alpha")
@@ -295,6 +443,53 @@ class SbomMergerTest {
 
         // one entry for the algorithm, as the part that sorts first writes it
         assertThat(merged.component("lib")["hashes"].map { it["content"].asText() }).containsExactly("aa".repeat(32))
+    }
+
+    @Test
+    fun `accepts identified components that conclude different licenses when the product leaves them out`() {
+        fun sdkConcluding(id: String) = """
+            {
+              "type": "library", "bom-ref": "$releasedSdk", "group": "com.hivemq", "name": "hivemq-extension-sdk",
+              "version": "4.1.0", "purl": "$releasedSdk", "licenses": [ ${licenseEntry(id)} ]
+            }
+        """.trimIndent()
+
+        // the broker's SDK takes the place of both, so no conclusion of theirs reaches the product
+        val merged = merge(
+            partIdentifying("dns", mapOf(releasedSdk to sdkConcluding("Apache-2.0"))),
+            partIdentifying("kafka", mapOf(releasedSdk to sdkConcluding("MIT"))),
+            broker(),
+            with = hosted,
+        ).root
+
+        assertThat(merged.componentRefs()).contains(compositeSdk).doesNotContain(releasedSdk)
+    }
+
+    @Test
+    fun `accepts identified components with different hashes when the product leaves them out`() {
+        fun sdkHashed(hash: String) =
+            library("hivemq-extension-sdk", hash, bomRef = releasedSdk, group = "com.hivemq", version = "4.1.0")
+
+        // two builds of the SDK under one bom-ref, neither of which the product ships
+        val merged = merge(
+            partIdentifying("dns", mapOf(releasedSdk to sdkHashed("aa"))),
+            partIdentifying("kafka", mapOf(releasedSdk to sdkHashed("bb"))),
+            broker(),
+            with = hosted,
+        ).root
+
+        assertThat(merged.componentRefs()).contains(compositeSdk).doesNotContain(releasedSdk)
+    }
+
+    @Test
+    fun `accepts parts that list the concluded licenses of a library in different orders`() {
+        val merged = merge(
+            part("alpha", components = libraryWithLicenses(licenseEntry("MIT"), licenseEntry("Apache-2.0"))),
+            part("beta", components = libraryWithLicenses(licenseEntry("Apache-2.0"), licenseEntry("MIT"))),
+        ).root
+
+        assertThat(merged.component("lib")["licenses"].map { it["license"]["id"].asText() })
+            .containsExactly("MIT", "Apache-2.0")
     }
 
     @Test
@@ -480,6 +675,43 @@ class SbomMergerTest {
     }
 
     @Test
+    fun `keeps the concluded licenses that licenseConflicts gives as an expression`() {
+        val expression = "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0"
+        val merged = merge(
+            part("alpha", components = libraryWithLicenses(licenseEntry("EPL-2.0"))),
+            part("beta", components = libraryWithLicenses(expressionEntry(expression))),
+            with = product.copy(licenseConflicts = mapOf("org.example:lib" to expression)),
+        ).root
+
+        assertThat(merged.component("lib")["licenses"]).isEqualTo(mapper.readTree("[ ${expressionEntry(expression)} ]"))
+    }
+
+    @Test
+    fun `keeps the concluded licenses that licenseConflicts gives as license ids separated by commas in any order`() {
+        val merged = merge(
+            part("alpha", components = libraryWithLicenses(licenseEntry("MIT"))),
+            part("beta", components = libraryWithLicenses(licenseEntry("Apache-2.0"), licenseEntry("MIT"))),
+            with = product.copy(licenseConflicts = mapOf("org.example:lib" to "MIT, Apache-2.0")),
+        ).root
+
+        assertThat(merged.component("lib")["licenses"].map { it["license"]["id"].asText() })
+            .containsExactly("Apache-2.0", "MIT")
+    }
+
+    @Test
+    fun `keeps the concluded licenses that licenseConflicts gives for a library whose parts conclude differently`() {
+        val beta = libraryWithLicenses(licenseEntry("Apache-2.0", "declared"), licenseEntry("Apache-2.0"))
+        val merged = merge(
+            part("alpha", components = libraryWithLicenses(licenseEntry("MIT"))),
+            part("beta", components = beta),
+            with = product.copy(licenseConflicts = mapOf("org.example:lib" to "Apache-2.0")),
+        ).root
+
+        // the whole list of the part whose conclusion stands, its declared entries included
+        assertThat(merged.component("lib")["licenses"]).isEqualTo(mapper.readTree(beta)["licenses"])
+    }
+
+    @Test
     fun `keeps the entry of the part that sorts first when a shared library differs in a description`() {
         val merged = merge(
             part("beta", components = library("lib", "aa", description = "from beta")),
@@ -505,13 +737,15 @@ class SbomMergerTest {
     }
 
     @Test
-    fun `keeps the licenses of the part that sorts first when another part lists others`() {
+    fun `keeps the licenses of the part that sorts first when the parts declare different ones`() {
         val merged = merge(
-            part("alpha", components = libraryLicensedAs("MIT")),
-            part("beta", components = libraryLicensedAs("Apache-2.0")),
+            part("alpha", components = libraryWithLicenses(licenseEntry("MIT", "declared"))),
+            part("beta", components = libraryWithLicenses(licenseEntry("Apache-2.0", "declared"))),
         ).root
 
-        assertThat(merged.component("lib")["licenses"].map { it["license"]["id"].asText() }).containsExactly("MIT")
+        // only a conclusion is ours to vouch for, so declared entries that differ are no conflict
+        assertThat(merged.component("lib")["licenses"])
+            .isEqualTo(mapper.readTree("[ ${licenseEntry("MIT", "declared")} ]"))
     }
 
     @Test
@@ -563,6 +797,20 @@ class SbomMergerTest {
         assertThat(alpha["type"].asText()).isEqualTo("application")
         assertThat(alpha["bom-ref"].asText()).isEqualTo("pkg:maven/org.example/alpha@1.0?project_path=%3A")
         assertThat(alpha["properties"][0]["value"].asText()).isEqualTo("alpha-1.0.jar")
+    }
+
+    @Test
+    fun `matches a licenseConflicts expression only to an expression and license ids only to license objects`() {
+        val expression = libraryWithLicenses(expressionEntry("Apache-2.0 AND MIT"))
+        val objects = libraryWithLicenses(licenseEntry("Apache-2.0"), licenseEntry("MIT"))
+        fun licensesFor(value: String) = merge(
+            part("alpha", components = expression),
+            part("beta", components = objects),
+            with = product.copy(licenseConflicts = mapOf("org.example:lib" to value)),
+        ).root.component("lib")["licenses"]
+
+        assertThat(licensesFor("Apache-2.0 AND MIT")).isEqualTo(mapper.readTree(expression)["licenses"])
+        assertThat(licensesFor("MIT, Apache-2.0")).isEqualTo(mapper.readTree(objects)["licenses"])
     }
 
     @Test
@@ -628,6 +876,18 @@ class SbomMergerTest {
 
         assertThat(backward.serialized()).isEqualTo(forward.serialized())
         assertThat(forward["components"].map { it["bom-ref"].asText() }).isSorted()
+    }
+
+    @Test
+    fun `takes the licenses of a later part that concludes when the part that sorts first only declares them`() {
+        val beta = libraryWithLicenses(licenseEntry("MIT", "declared"), licenseEntry("MIT"))
+        val merged = merge(
+            part("alpha", components = libraryWithLicenses(licenseEntry("MIT", "declared"))),
+            part("beta", components = beta),
+        ).root
+
+        // the product states the conclusion one part made, whichever part wins the other fields
+        assertThat(merged.component("lib")["licenses"]).isEqualTo(mapper.readTree(beta)["licenses"])
     }
 
     @Test
@@ -738,7 +998,10 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(alpha, beta) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'beta.cdx.json' and 'alpha.cdx.json' define the bom-ref 'license-1' for different nodes")
+            .hasMessage(
+                "'beta.cdx.json' and 'alpha.cdx.json' define the bom-ref 'license-1' for different nodes; give each " +
+                    "node its own"
+            )
     }
 
     @Test
@@ -748,7 +1011,19 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(part("alpha"), beta) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'beta.cdx.json' uses the bom-ref 'product@1.0.0' of the product")
+            .hasMessage(
+                "'beta.cdx.json' uses the bom-ref 'product@1.0.0' of the product; give the product another name or " +
+                    "version"
+            )
+    }
+
+    @Test
+    fun `fails on a component with an empty bom-ref`() {
+        val alpha = part("alpha", components = library("lib", "aa", bomRef = ""), dependsOn = emptyList())
+
+        assertThatThrownBy { merge(alpha) }
+            .isInstanceOf(SbomException::class.java)
+            .hasMessage("'alpha.cdx.json' has a component without a bom-ref; give every component one")
     }
 
     @Test
@@ -761,7 +1036,10 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(alpha) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'alpha.cdx.json' has a component with nested components, which the merge does not flatten")
+            .hasMessage(
+                "'alpha.cdx.json' has a component with nested components, which the merge does not flatten; list " +
+                    "every component at the top level of the part's SBOM"
+            )
     }
 
     @Test
@@ -770,7 +1048,22 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(part("alpha", components = component, dependsOn = emptyList())) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'alpha.cdx.json' has a component without a bom-ref")
+            .hasMessage(
+                "'alpha.cdx.json' has a component without a bom-ref; give every component one"
+            )
+    }
+
+    @Test
+    fun `fails on a declared identified gap that the product does not have`() {
+        val declared = hosted.copy(declaredIdentifiedGapReasons = declaredGap)
+
+        // a declaration that settles nothing would silence the warning about the next such gap
+        assertThatThrownBy { merge(extension(), broker(), with = declared) }
+            .isInstanceOf(SbomException::class.java)
+            .hasMessage(
+                "declaredIdentifiedGapReasons declares a gap of identified components that no host part describes, " +
+                    "but the product has none; remove the declaration"
+            )
     }
 
     @Test
@@ -782,7 +1075,8 @@ class SbomMergerTest {
         assertThatThrownBy { merge(withEntry) }
             .isInstanceOf(SbomException::class.java)
             .hasMessage(
-                "'alpha.cdx.json' has a dependency entry that references 'tool', which the merge does not carry"
+                "'alpha.cdx.json' has a dependency entry that references 'tool', which the merge does not carry; " +
+                    "list 'tool' among the components"
             )
     }
 
@@ -793,7 +1087,21 @@ class SbomMergerTest {
         assertThatThrownBy { merge(withTarget) }
             .isInstanceOf(SbomException::class.java)
             .hasMessage(
-                "'alpha.cdx.json' has a dependency entry that references 'tool', which the merge does not carry"
+                "'alpha.cdx.json' has a dependency entry that references 'tool', which the merge does not carry; " +
+                    "list 'tool' among the components"
+            )
+    }
+
+    @Test
+    fun `fails on a host part that is neither a part of the merge nor expected`() {
+        val hosts = product.copy(expectedParts = setOf("agent"), hostParts = setOf("agent", "broker", "hivemq"))
+
+        // a misspelt or stale name would quietly stop the host from filling any gap
+        assertThatThrownBy { merge(extension(), broker(), with = hosts) }
+            .isInstanceOf(SbomException::class.java)
+            .hasMessage(
+                "hostParts names parts that are neither in the merge nor in expectedParts: 'hivemq'; correct or " +
+                    "remove the names"
             )
     }
 
@@ -803,7 +1111,9 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(part("alpha", components = twice)) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'alpha.cdx.json' lists different SHA-256 digests for '${ref("lib")}'")
+            .hasMessage(
+                "'alpha.cdx.json' lists different SHA-256 digests for '${ref("lib")}'; list one digest per algorithm"
+            )
     }
 
     @Test
@@ -815,7 +1125,10 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(withEvidence) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'alpha.cdx.json' has evidence that references the tool 'tool', which the merge does not carry")
+            .hasMessage(
+                "'alpha.cdx.json' has evidence that references the tool 'tool', which the merge does not carry; list " +
+                    "the tool among the components, or leave the reference out"
+            )
     }
 
     @Test
@@ -827,7 +1140,9 @@ class SbomMergerTest {
             merge(part("alpha", components = library("lib", "aa")), part("beta", components = different))
         }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'beta.cdx.json' lists different SHA-256 digests for '${ref("lib")}'")
+            .hasMessage(
+                "'beta.cdx.json' lists different SHA-256 digests for '${ref("lib")}'; list one digest per algorithm"
+            )
     }
 
     @Test
@@ -839,7 +1154,59 @@ class SbomMergerTest {
             )
         }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'${ref("lib")}' has different hashes in 'alpha.cdx.json' and 'beta.cdx.json'")
+            .hasMessage(
+                "'${ref("lib")}' has different hashes in 'alpha.cdx.json' and 'beta.cdx.json'; the parts ship " +
+                    "different files under one bom-ref, so build them from the same artifact"
+            )
+    }
+
+    @Test
+    fun `fails on a library whose parts conclude an expression and one of its licenses`() {
+        assertThatThrownBy {
+            merge(
+                part("alpha", components = libraryWithLicenses(expressionEntry("Apache-2.0 OR MIT"))),
+                part("beta", components = libraryWithLicenses(licenseEntry("MIT"))),
+            )
+        }
+            .isInstanceOf(SbomException::class.java)
+            .hasMessageStartingWith(
+                "'${ref("lib")}' has different concluded licenses in 'alpha.cdx.json' (the expression Apache-2.0 OR " +
+                    "MIT) and 'beta.cdx.json' (the license MIT); "
+            )
+    }
+
+    @Test
+    fun `fails on a library whose parts conclude an expression and the license objects it names`() {
+        assertThatThrownBy {
+            merge(
+                part("alpha", components = libraryWithLicenses(expressionEntry("Apache-2.0 AND MIT"))),
+                part("beta", components = libraryWithLicenses(licenseEntry("Apache-2.0"), licenseEntry("MIT"))),
+            )
+        }
+            .isInstanceOf(SbomException::class.java)
+            .hasMessageStartingWith(
+                "'${ref("lib")}' has different concluded licenses in 'alpha.cdx.json' (the expression Apache-2.0 " +
+                    "AND MIT) and 'beta.cdx.json' (the licenses Apache-2.0, MIT); "
+            )
+    }
+
+    @Test
+    fun `fails on a library whose parts conclude different licenses`() {
+        assertThatThrownBy {
+            merge(
+                part("alpha", components = libraryWithLicenses(licenseEntry("MIT"))),
+                part("beta", components = libraryWithLicenses(licenseEntry("MIT"))),
+                part("gamma", components = libraryWithLicenses(licenseEntry("Apache-2.0"), licenseEntry("MIT"))),
+            )
+        }
+            .isInstanceOf(SbomException::class.java)
+            .hasMessage(
+                "'${ref("lib")}' has different concluded licenses in 'alpha.cdx.json' (the license MIT) and " +
+                    "'gamma.cdx.json' (the licenses Apache-2.0, MIT); build the parts with the same license " +
+                    "settings, or put the conclusion the product states into licenseConflicts under " +
+                    "'org.example:lib': an expression as its text, license objects as their ids separated by " +
+                    "commas in any order"
+            )
     }
 
     @Test
@@ -848,7 +1215,10 @@ class SbomMergerTest {
             merge(part("alpha", components = library("lib", "aa")), part("beta", components = library("lib", "bb")))
         }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'${ref("lib")}' has different hashes in 'alpha.cdx.json' and 'beta.cdx.json'")
+            .hasMessage(
+                "'${ref("lib")}' has different hashes in 'alpha.cdx.json' and 'beta.cdx.json'; the parts ship " +
+                    "different files under one bom-ref, so build them from the same artifact"
+            )
     }
 
     @Test
@@ -861,7 +1231,10 @@ class SbomMergerTest {
             )
         }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'${ref("lib")}' has different hashes in 'beta.cdx.json' and 'gamma.cdx.json'")
+            .hasMessage(
+                "'${ref("lib")}' has different hashes in 'beta.cdx.json' and 'gamma.cdx.json'; the parts ship " +
+                    "different files under one bom-ref, so build them from the same artifact"
+            )
     }
 
     @Test
@@ -870,7 +1243,46 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(alpha) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'alpha.cdx.json' uses the bom-ref 'product@1.0.0' of the product")
+            .hasMessage(
+                "'alpha.cdx.json' uses the bom-ref 'product@1.0.0' of the product; give the product another name or " +
+                    "version"
+            )
+    }
+
+    @Test
+    fun `fails on a licenseConflicts entry for a module whose parts conclude the same license`() {
+        val conflicts = mapOf("org.example:lib" to "MIT", "org.example:gone" to "MIT")
+
+        assertThatThrownBy {
+            merge(
+                part("alpha", components = libraryWithLicenses(licenseEntry("MIT"))),
+                part("beta", components = libraryWithLicenses(licenseEntry("MIT"))),
+                with = product.copy(licenseConflicts = conflicts),
+            )
+        }
+            .isInstanceOf(SbomException::class.java)
+            .hasMessage(
+                "licenseConflicts names modules whose parts do not conclude different licenses: " +
+                    "'org.example:gone', 'org.example:lib'; remove those entries"
+            )
+    }
+
+    @Test
+    fun `fails on a licenseConflicts entry that no conclusion of the parts matches`() {
+        assertThatThrownBy {
+            merge(
+                part("alpha", components = libraryWithLicenses(licenseEntry("MIT"))),
+                part("beta", components = libraryWithLicenses(licenseEntry("Apache-2.0"))),
+                with = product.copy(licenseConflicts = mapOf("org.example:lib" to "BSD-3-Clause")),
+            )
+        }
+            .isInstanceOf(SbomException::class.java)
+            .hasMessage(
+                "licenseConflicts gives 'BSD-3-Clause' for 'org.example:lib', but the parts conclude the license " +
+                    "MIT in 'alpha.cdx.json', the license Apache-2.0 in 'beta.cdx.json' for '${ref("lib")}'; give " +
+                    "one of those: an expression as its text, license objects as their ids separated by commas in " +
+                    "any order"
+            )
     }
 
     @Test
@@ -887,7 +1299,9 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(alpha) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'alpha.cdx.json' defines the bom-ref 'license-1' twice")
+            .hasMessage(
+                "'alpha.cdx.json' defines the bom-ref 'license-1' twice; give each node its own"
+            )
     }
 
     @Test
@@ -898,7 +1312,10 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(withProvides) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'alpha.cdx.json' has a dependency entry with provides, which the merge does not carry")
+            .hasMessage(
+                "'alpha.cdx.json' has a dependency entry with provides, which the merge does not carry; leave " +
+                    "provides out of the part's SBOM"
+            )
     }
 
     @Test
@@ -911,7 +1328,9 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(withFormulation) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'alpha.cdx.json' has formulation, which the merge does not carry")
+            .hasMessage(
+                "'alpha.cdx.json' has formulation, which the merge does not carry; leave them out of the part's SBOM"
+            )
     }
 
     @Test
@@ -922,7 +1341,9 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(withServices) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'alpha.cdx.json' has services, which the merge does not carry")
+            .hasMessage(
+                "'alpha.cdx.json' has services, which the merge does not carry; leave them out of the part's SBOM"
+            )
     }
 
     @Test
@@ -947,7 +1368,19 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(numeric) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'alpha.cdx.json': The BOM declares no bomFormat")
+            .hasMessage("'alpha.cdx.json': The BOM's bomFormat is not text, but has to be CycloneDX")
+    }
+
+    @Test
+    fun `fails on a part whose top-level component has an empty bom-ref`() {
+        val alpha = part("alpha").edited { (it["metadata"]["component"] as ObjectNode).put("bom-ref", "") }
+
+        assertThatThrownBy { merge(alpha) }
+            .isInstanceOf(SbomException::class.java)
+            .hasMessage(
+                "'alpha.cdx.json' has no top-level component with a bom-ref and a name; give its metadata.component " +
+                    "both, as the merge names a part by that component"
+            )
     }
 
     @Test
@@ -965,7 +1398,10 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(SbomPart("headless.cdx.json", bytes)) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'headless.cdx.json' has no top-level component with a bom-ref and a name")
+            .hasMessage(
+                "'headless.cdx.json' has no top-level component with a bom-ref and a name; give its " +
+                    "metadata.component both, as the merge names a part by that component"
+            )
     }
 
     @Test
@@ -978,7 +1414,10 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(alpha, beta) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'beta.cdx.json' and 'alpha.cdx.json' define the bom-ref '${ref("other")}' for different nodes")
+            .hasMessage(
+                "'beta.cdx.json' and 'alpha.cdx.json' define the bom-ref '${ref("other")}' for different nodes; give " +
+                    "each node its own"
+            )
     }
 
     @Test
@@ -992,7 +1431,10 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(withEvidence) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'alpha.cdx.json' has evidence that references the tool 'tool', which the merge does not carry")
+            .hasMessage(
+                "'alpha.cdx.json' has evidence that references the tool 'tool', which the merge does not carry; list " +
+                    "the tool among the components, or leave the reference out"
+            )
     }
 
     @Test
@@ -1002,7 +1444,10 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(part("alpha"), SbomPart(beta.source, bytes)) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'beta.cdx.json' uses the bom-ref 'product@1.0.0' of the product")
+            .hasMessage(
+                "'beta.cdx.json' uses the bom-ref 'product@1.0.0' of the product; give the product another name or " +
+                    "version"
+            )
     }
 
     @Test
@@ -1015,7 +1460,10 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(withEvidence) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'alpha.cdx.json' has evidence that references the tool 'tool', which the merge does not carry")
+            .hasMessage(
+                "'alpha.cdx.json' has evidence that references the tool 'tool', which the merge does not carry; list " +
+                    "the tool among the components, or leave the reference out"
+            )
     }
 
     @Test
@@ -1027,7 +1475,10 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(SbomPart(alpha.source, bytes)) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'alpha.cdx.json' has a component with nested components, which the merge does not flatten")
+            .hasMessage(
+                "'alpha.cdx.json' has a component with nested components, which the merge does not flatten; list " +
+                    "every component at the top level of the part's SBOM"
+            )
     }
 
     @Test
@@ -1039,7 +1490,10 @@ class SbomMergerTest {
             )
         }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'${ref("lib")}' names different components in 'alpha.cdx.json' and 'beta.cdx.json'")
+            .hasMessage(
+                "'${ref("lib")}' names different components in 'alpha.cdx.json' and 'beta.cdx.json'; give the " +
+                    "components bom-refs of their own, such as their purls"
+            )
     }
 
     @Test
@@ -1052,7 +1506,10 @@ class SbomMergerTest {
             )
         }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'${ref("lib")}' names different components in 'alpha.cdx.json' and 'beta.cdx.json'")
+            .hasMessage(
+                "'${ref("lib")}' names different components in 'alpha.cdx.json' and 'beta.cdx.json'; give the " +
+                    "components bom-refs of their own, such as their purls"
+            )
     }
 
     @Test
@@ -1064,7 +1521,10 @@ class SbomMergerTest {
             )
         }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'${ref("lib")}' names different components in 'alpha.cdx.json' and 'beta.cdx.json'")
+            .hasMessage(
+                "'${ref("lib")}' names different components in 'alpha.cdx.json' and 'beta.cdx.json'; give the " +
+                    "components bom-refs of their own, such as their purls"
+            )
     }
 
     @Test
@@ -1076,7 +1536,10 @@ class SbomMergerTest {
             )
         }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'${ref("lib")}' names different components in 'alpha.cdx.json' and 'beta.cdx.json'")
+            .hasMessage(
+                "'${ref("lib")}' names different components in 'alpha.cdx.json' and 'beta.cdx.json'; give the " +
+                    "components bom-refs of their own, such as their purls"
+            )
     }
 
     @Test
@@ -1090,7 +1553,10 @@ class SbomMergerTest {
             )
         }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'${ref("lib")}' names different components in 'beta.cdx.json' and 'gamma.cdx.json'")
+            .hasMessage(
+                "'${ref("lib")}' names different components in 'beta.cdx.json' and 'gamma.cdx.json'; give the " +
+                    "components bom-refs of their own, such as their purls"
+            )
     }
 
     @Test
@@ -1101,7 +1567,10 @@ class SbomMergerTest {
 
         assertThatThrownBy { merge(alpha, beta) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("'alpha.cdx.json' and 'beta.cdx.json' define the bom-ref 'license-1' for different nodes")
+            .hasMessage(
+                "'alpha.cdx.json' and 'beta.cdx.json' define the bom-ref 'license-1' for different nodes; give each " +
+                    "node its own"
+            )
     }
 
     @Test
@@ -1110,7 +1579,7 @@ class SbomMergerTest {
             .isInstanceOf(SbomException::class.java)
             .hasMessage(
                 "'alpha.cdx.json' and 'copy.cdx.json' describe the same part " +
-                    "'pkg:maven/org.example/alpha@1.0?project_path=%3A'"
+                    "'pkg:maven/org.example/alpha@1.0?project_path=%3A'; pass one SBOM per part"
             )
     }
 
@@ -1120,7 +1589,7 @@ class SbomMergerTest {
             .isInstanceOf(SbomException::class.java)
             .hasMessage(
                 "'alpha.cdx.json' and 'copy.cdx.json' describe the same part " +
-                    "'pkg:maven/org.example/alpha@1.0?project_path=%3A'"
+                    "'pkg:maven/org.example/alpha@1.0?project_path=%3A'; pass one SBOM per part"
             )
     }
 
@@ -1129,8 +1598,8 @@ class SbomMergerTest {
         assertThatThrownBy { merge(part("alpha"), with = product.copy(creator = "HiveMQ Security Team")) }
             .isInstanceOf(SbomException::class.java)
             .hasMessage(
-                "hivemqLicense.sbomCreator must be an email address or an http(s) URL, " +
-                    "but is 'HiveMQ Security Team'"
+                "The creator, hivemqLicense.sbomCreator or the creator of the task, must be an email address or " +
+                    "an http(s) URL, but is 'HiveMQ Security Team'"
             )
     }
 
@@ -1214,6 +1683,43 @@ class SbomMergerTest {
     // --- Completeness ---
 
     @Test
+    fun `declares the product complete but for an identified component a host part lists without an entry`() {
+        val extension = partIdentifyingSdk()
+        // the broker's composition names the SDK, but its graph has no entry for it, so it states nothing about it
+        val broker = part("broker").withCompositions(
+            """[ { "aggregate": "complete", "dependencies": """ +
+                """[ "${primaryRef("broker")}", "${ref("lib")}", "${ref("sdk")}" ] } ]"""
+        )
+
+        val merged = merge(extension, broker, with = hosted)
+
+        assertThat(merged.incompleteReasons).containsExactly(
+            identifiedGap("alpha", ref("sdk"), remedy = notByHosts(ref("sdk"))),
+        )
+        assertThat(merged.root.compositions()).containsExactly(
+            "complete" to listOf(primaryRef("alpha"), primaryRef("broker"), ref("lib"), "product@1.0.0"),
+            "incomplete" to listOf(ref("sdk")),
+        )
+    }
+
+    @Test
+    fun `declares the product complete but for the identified components that no host part describes`() {
+        // an image that ships extensions without the broker they run on, so nothing describes the SDK
+        val merged = merge(extension("dns"), extension("kafka"))
+
+        assertThat(merged.incompleteReasons).containsExactly(
+            "the SBOM of 'dns' declares its dependency graph incomplete, and no host part describes '$releasedSdk' " +
+                "(to fill the gap, name the part that hosts 'dns' in hostParts; to accept it, declare it in " +
+                "declaredIdentifiedGapReasons)",
+            identifiedGap("kafka", releasedSdk),
+        )
+        assertThat(merged.root.compositions()).containsExactly(
+            "complete" to listOf(primaryRef("dns"), primaryRef("kafka"), ref("lib"), "product@1.0.0"),
+            "incomplete" to listOf(releasedSdk),
+        )
+    }
+
+    @Test
     fun `declares the product complete when a complete composition lists a non-text entry among the refs`() {
         val alpha = part("alpha").withCompositions(
             """[ { "aggregate": "complete", "dependencies": [ "${primaryRef("alpha")}", 7, "${ref("lib")}" ] } ]"""
@@ -1227,12 +1733,49 @@ class SbomMergerTest {
     }
 
     @Test
-    fun `declares the product complete when another part describes the components a part declares incomplete`() {
+    fun `declares the product complete when a host part describes another version of a component a part identifies`() {
+        val merged = merge(extension(), broker(), with = hosted)
+
+        assertThat(merged.incompleteReasons).isEmpty()
+        assertThat(merged.root.compositions()).containsExactly(
+            "complete" to listOf(compositeSdk, primaryRef("broker"), primaryRef("dns"), ref("lib"), "product@1.0.0"),
+        )
+    }
+
+    @Test
+    fun `declares the product complete when a host part describes other versions of all identified components`() {
+        // what a host supplies to an extension such as kafka, each as the extension builds against it and as it ships
+        val provided = listOf(
+            listOf("com.hivemq", "hivemq-extension-sdk", "4.1.0", "4.58.0-SNAPSHOT"),
+            listOf("org.slf4j", "slf4j-api", "2.0.9", "2.0.16"),
+            listOf("ch.qos.logback", "logback-classic", "1.4.14", "1.5.6"),
+            listOf("io.opentelemetry", "opentelemetry-api", "1.31.0", "1.40.0"),
+            listOf("jakarta.ws.rs", "jakarta.ws.rs-api", "3.1.0", "4.0.0"),
+            listOf("net.logstash.logback", "logstash-logback-encoder", "7.3", "7.4"),
+        )
+        // each module in the version at that index of its list, by bom-ref
+        fun modules(index: Int) = provided.associate { coordinates ->
+            val (group, name) = coordinates
+            val ref = "pkg:maven/$group/$name@${coordinates[index]}?type=jar"
+            ref to module(group, name, coordinates[index], ref)
+        }
+
+        val merged = merge(partIdentifying("kafka", modules(2)), broker(modules(3)), with = hosted)
+
+        assertThat(merged.incompleteReasons).isEmpty()
+        assertThat(merged.root.compositions().map { it.first }).containsExactly("complete")
+        assertThat(merged.root.dependsOn(primaryRef("kafka")))
+            .containsExactlyInAnyOrderElementsOf(modules(3).keys + ref("lib"))
+        assertThat(merged.root.componentRefs()).doesNotContainAnyElementsOf(modules(2).keys)
+    }
+
+    @Test
+    fun `declares the product complete when a host part describes the components a part declares incomplete`() {
         // an extension built against the SDK the broker provides: identified, so its own SBOM leaves its graph open
         val extension = partIdentifyingSdk()
         val broker = part("broker", library("sdk", "bb"), listOf(ref("sdk")))
 
-        val merged = merge(extension, broker)
+        val merged = merge(extension, broker, with = hosted)
 
         // the broker's SBOM states what the SDK depends on, so the product's graph is complete
         assertThat(merged.incompleteReasons).isEmpty()
@@ -1265,7 +1808,20 @@ class SbomMergerTest {
     }
 
     @Test
-    fun `declares the product complete when the describing part has a composition without an aggregate`() {
+    fun `declares the product complete when it is merged again with a host part that describes what it identifies`() {
+        // an image of extensions, complete but for the SDK, then bundled with a broker that ships another version
+        val image = SbomPart("image.cdx.json", mapper.writeValueAsBytes(merge(extension()).root))
+
+        val bundle = merge(image, broker(), with = hosted.copy(name = "bundle"))
+
+        assertThat(bundle.incompleteReasons).isEmpty()
+        assertThat(bundle.root.compositions().map { it.first }).containsExactly("complete")
+        assertThat(bundle.root.componentRefs()).contains(compositeSdk).doesNotContain(releasedSdk)
+        assertThat(bundle.root.dependsOn(primaryRef("dns"))).containsExactly(compositeSdk, ref("lib"))
+    }
+
+    @Test
+    fun `declares the product complete when the host part has a composition without an aggregate`() {
         val extension = partIdentifyingSdk()
         // an entry without an aggregate says nothing either way, for the broker's own verdict and for what it describes
         val broker = part("broker", library("sdk", "bb"), listOf(ref("sdk"))).withCompositions(
@@ -1277,7 +1833,7 @@ class SbomMergerTest {
             """.trimIndent()
         )
 
-        val merged = merge(extension, broker)
+        val merged = merge(extension, broker, with = hosted)
 
         assertThat(merged.incompleteReasons).isEmpty()
         assertThat(merged.root["compositions"][0]["aggregate"].asText()).isEqualTo("complete")
@@ -1414,7 +1970,7 @@ class SbomMergerTest {
             )
         val broker = part("broker", library("sdk", "bb"), listOf(ref("sdk")))
 
-        val merged = merge(alpha, broker)
+        val merged = merge(alpha, broker, with = hosted)
 
         // only an incomplete entry can be filled by another part; unknown says less than that
         assertThat(merged.incompleteReasons).containsExactly(
@@ -1438,6 +1994,27 @@ class SbomMergerTest {
     }
 
     @Test
+    fun `declares the product incomplete when a part declares a component outside its graph incomplete`() {
+        val ghost = "pkg:maven/org.example/ghost@1.0?type=jar"
+        val alpha = part("alpha").withCompositions(
+            """
+            [
+              { "aggregate": "complete", "dependencies": [ "${primaryRef("alpha")}", "${ref("lib")}" ] },
+              { "aggregate": "incomplete", "dependencies": [ "$ghost" ] }
+            ]
+            """.trimIndent()
+        )
+
+        val merged = merge(alpha)
+
+        // like one over assemblies alone, an incomplete entry over anything but its graph leaves the part open
+        assertThat(merged.incompleteReasons).containsExactly(
+            "the SBOM of 'alpha' declares its dependency graph incomplete",
+        )
+        assertThat(merged.root.compositions().map { it.first }).containsExactly("incomplete")
+    }
+
+    @Test
     fun `declares the product incomplete when a part declares its own top-level component incomplete`() {
         // a reported gap of alpha itself: the entry names alpha, which the broker describing the rest cannot fill
         val primary = primaryRef("alpha")
@@ -1453,7 +2030,7 @@ class SbomMergerTest {
             listOf(ref("lib"), ref("sdk"), primary),
         )
 
-        val merged = merge(alpha, broker)
+        val merged = merge(alpha, broker, with = hosted)
 
         assertThat(merged.incompleteReasons).containsExactly(
             "the SBOM of 'alpha' declares its dependency graph incomplete",
@@ -1485,11 +2062,27 @@ class SbomMergerTest {
 
         val merged = merge(alpha)
 
-        // alpha's own complete entry describes lib, but a part cannot fill its own gap
+        // alpha contradicts itself about lib, so lib is no identified component another part could describe
         assertThat(merged.incompleteReasons).containsExactly(
-            "the SBOM of 'alpha' declares its dependency graph incomplete, and no other part describes '${ref("lib")}'",
+            "the SBOM of 'alpha' declares its dependency graph incomplete",
         )
-        assertThat(merged.root["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
+        assertThat(merged.root.compositions().map { it.first }).containsExactly("incomplete")
+    }
+
+    @Test
+    fun `declares the product incomplete when a part identifies components and covers only part of its graph`() {
+        // lib loses its dependency entry, so the complete composition can no longer speak for it
+        val alpha = partIdentifyingSdk()
+            .edited { root -> (root["dependencies"] as ArrayNode).removeIf { it["ref"].asText() == ref("lib") } }
+
+        val merged = merge(alpha)
+
+        assertThat(merged.incompleteReasons).containsExactly(
+            identifiedGap("alpha", ref("sdk")),
+            "the SBOM of 'alpha' declares only part of its dependency graph complete",
+        )
+        // a gap besides the identified components leaves the whole graph open
+        assertThat(merged.root.compositions().map { it.first }).containsExactly("incomplete")
     }
 
     @Test
@@ -1500,6 +2093,18 @@ class SbomMergerTest {
             "the SBOM of 'alpha' declares its dependency graph incomplete",
         )
         assertThat(merged.root["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
+    }
+
+    @Test
+    fun `declares the product incomplete when an expected host part has no SBOM`() {
+        val merged = merge(extension(), with = hosted.copy(expectedParts = setOf("dns", "broker")))
+
+        // a missing broker warns like any missing part, whether or not it is a host
+        assertThat(merged.incompleteReasons).containsExactly(
+            identifiedGap("dns", releasedSdk, remedy = missingHost()),
+            "no SBOM for part 'broker'",
+        )
+        assertThat(merged.root.compositions().map { it.first }).containsExactly("incomplete")
     }
 
     @Test
@@ -1532,23 +2137,6 @@ class SbomMergerTest {
     }
 
     @Test
-    fun `declares the product incomplete when another part lists an identified component without an entry for it`() {
-        val extension = partIdentifyingSdk()
-        // the broker's composition names the SDK, but its graph has no entry for it, so it states nothing about it
-        val broker = part("broker").withCompositions(
-            """[ { "aggregate": "complete", "dependencies": """ +
-                """[ "${primaryRef("broker")}", "${ref("lib")}", "${ref("sdk")}" ] } ]"""
-        )
-
-        val merged = merge(extension, broker)
-
-        assertThat(merged.incompleteReasons).containsExactly(
-            "the SBOM of 'alpha' declares its dependency graph incomplete, and no other part describes '${ref("sdk")}'",
-        )
-        assertThat(merged.root["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
-    }
-
-    @Test
     fun `declares the product incomplete when no complete composition covers the top-level component of a part`() {
         val alpha = part("alpha").withCompositions(
             """[ { "aggregate": "complete", "dependencies": [ "${ref("lib")}" ] } ]"""
@@ -1563,7 +2151,7 @@ class SbomMergerTest {
     }
 
     @Test
-    fun `declares the product incomplete when the describing part has an unknown composition over the component`() {
+    fun `declares the product incomplete when the host part has an unknown composition over the component`() {
         val extension = partIdentifyingSdk()
         val broker = part("broker", library("sdk", "bb"), listOf(ref("sdk"))).withCompositions(
             """
@@ -1574,24 +2162,12 @@ class SbomMergerTest {
             """.trimIndent()
         )
 
-        val merged = merge(extension, broker)
+        val merged = merge(extension, broker, with = hosted)
 
         // the broker contradicts itself about the SDK, so it describes it for no other part, whatever its own verdict
         assertThat(merged.incompleteReasons).containsExactly(
-            "the SBOM of 'alpha' declares its dependency graph incomplete, and no other part describes '${ref("sdk")}'",
+            identifiedGap("alpha", ref("sdk"), remedy = notByHosts(ref("sdk"))),
             "the SBOM of 'broker' declares its dependency graph incomplete",
-        )
-        assertThat(merged.root["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
-    }
-
-    @Test
-    fun `declares the product incomplete when two parts declare the same component incomplete`() {
-        // two extensions identify the SDK; neither describes it, so they cannot vouch for each other
-        val merged = merge(partIdentifyingSdk("alpha"), partIdentifyingSdk("beta"))
-
-        assertThat(merged.incompleteReasons).containsExactly(
-            "the SBOM of 'alpha' declares its dependency graph incomplete, and no other part describes '${ref("sdk")}'",
-            "the SBOM of 'beta' declares its dependency graph incomplete, and no other part describes '${ref("sdk")}'",
         )
         assertThat(merged.root["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
     }
@@ -1611,10 +2187,499 @@ class SbomMergerTest {
 
         // a part that leaves lib open does not describe it, whatever else it says, so neither fills the other's gap
         assertThat(merged.incompleteReasons).containsExactly(
-            "the SBOM of 'alpha' declares its dependency graph incomplete, and no other part describes '${ref("lib")}'",
-            "the SBOM of 'beta' declares its dependency graph incomplete, and no other part describes '${ref("lib")}'",
+            "the SBOM of 'alpha' declares its dependency graph incomplete",
+            "the SBOM of 'beta' declares its dependency graph incomplete",
         )
-        assertThat(merged.root["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
+        assertThat(merged.root.compositions().map { it.first }).containsExactly("incomplete")
+    }
+
+    @Test
+    fun `drops a chain of replaced components that only refer to each other`() {
+        // slf4j-api names logback-classic, which sorts first, so a single pass would keep it for a component it drops
+        val dns = partIdentifying("dns", mapOf(slf4j("2.0.9"), logback("1.4.14"))).withEvidence(
+            slf4j("2.0.9").first,
+            logback("1.4.14").first,
+        )
+
+        val merged = merge(dns, broker(mapOf(slf4j("2.0.16"), logback("1.5.6"))), with = hosted)
+
+        assertThat(merged.root.componentRefs()).doesNotContain(slf4j("2.0.9").first, logback("1.4.14").first)
+        assertThat(merged.incompleteReasons).isEmpty()
+        assertThat(merged.root.compositions().map { it.first }).containsExactly("complete")
+    }
+
+    @Test
+    fun `drops a cycle of replaced components that refer to each other`() {
+        val dns = partIdentifying("dns", mapOf(slf4j("2.0.9"), logback("1.4.14")))
+            .withEvidence(slf4j("2.0.9").first, logback("1.4.14").first)
+            .withEvidence(logback("1.4.14").first, slf4j("2.0.9").first)
+
+        val merged = merge(dns, broker(mapOf(slf4j("2.0.16"), logback("1.5.6"))), with = hosted)
+
+        assertThat(merged.root.componentRefs()).doesNotContain(slf4j("2.0.9").first, logback("1.4.14").first)
+        assertThat(merged.incompleteReasons).isEmpty()
+        assertThat(merged.root.compositions().map { it.first }).containsExactly("complete")
+    }
+
+    @Test
+    fun `keeps a chain of replaced components when a component that stays refers to its head`() {
+        val dns = partIdentifying("dns", mapOf(slf4j("2.0.9"), logback("1.4.14")))
+            .withEvidence(ref("lib"), slf4j("2.0.9").first)
+            .withEvidence(slf4j("2.0.9").first, logback("1.4.14").first)
+
+        val merged = merge(dns, broker(mapOf(slf4j("2.0.16"), logback("1.5.6"))), with = hosted)
+
+        // lib stays and names slf4j-api, which names logback-classic in turn, so every reference leads somewhere
+        assertThat(merged.root.componentRefs()).contains(slf4j("2.0.9").first, logback("1.4.14").first)
+        assertThat(merged.incompleteReasons)
+            .containsExactly(keptGap(logback("1.4.14").first), keptGap(slf4j("2.0.9").first))
+        assertThat(merged.root.compositions().last())
+            .isEqualTo("incomplete" to listOf(logback("1.4.14").first, slf4j("2.0.9").first))
+    }
+
+    @Test
+    fun `keeps a component a part declares complete and incomplete when a host part describes another version`() {
+        val primary = primaryRef("alpha")
+        // alpha ships lib and contradicts itself about it, so lib is no identified component another version replaces
+        val alpha = part("alpha").withCompositions(
+            """
+            [
+              { "aggregate": "complete", "dependencies": [ "$primary", "${ref("lib")}" ] },
+              { "aggregate": "incomplete", "dependencies": [ "${ref("lib")}" ] }
+            ]
+            """.trimIndent()
+        )
+        val newer = "pkg:maven/org.example/lib@2.0?type=jar"
+
+        val merged = merge(
+            alpha,
+            part("gamma", module("org.example", "lib", "2.0", newer), listOf(newer)),
+            with = product.copy(hostParts = setOf("gamma")),
+        )
+
+        assertThat(merged.root.componentRefs()).contains(ref("lib"), newer)
+        assertThat(merged.root.dependsOn(primary)).containsExactly(ref("lib"))
+        assertThat(merged.incompleteReasons)
+            .containsExactly("the SBOM of 'alpha' declares its dependency graph incomplete")
+        assertThat(merged.root.compositions().map { it.first }).containsExactly("incomplete")
+    }
+
+    @Test
+    fun `keeps a replaced component that the version taking its place depends on in another part`() {
+        val (provided, old) = slf4j("2.0.9")
+        val (shipped, new) = slf4j("2.0.16")
+        // kafka bundles the broker's version together with the one dns identifies, which the first depends on
+        val kafka = part("kafka", "$old, $new", listOf(provided, shipped)).edited { root ->
+            val entry = (root["dependencies"] as ArrayNode).first { it["ref"].asText() == shipped } as ObjectNode
+            entry.putArray("dependsOn").add(provided)
+        }
+
+        val merged = merge(
+            partIdentifying("dns", mapOf(provided to old)),
+            kafka,
+            broker(mapOf(shipped to new)),
+            with = hosted,
+        ).root
+
+        // kafka still names it, so it stays, and no edge of the product leads nowhere
+        assertThat(merged.dependsOn(primaryRef("dns"))).containsExactly(ref("lib"), shipped)
+        assertThat(merged.dependsOn(shipped)).containsExactly(provided)
+        assertThat(merged.componentRefs()).contains(provided)
+        assertThat(merged.danglingRefs()).isEmpty()
+    }
+
+    @Test
+    fun `keeps an identified component another version replaces while the evidence of another component names it`() {
+        val dns = extension().edited { root ->
+            val lib = (root["components"] as ArrayNode).first { it["name"].asText() == "lib" } as ObjectNode
+            val identity = lib.putObject("evidence").putArray("identity").addObject().put("field", "purl")
+            identity.putArray("tools").add(releasedSdk)
+        }
+
+        val result = merge(dns, broker(), with = hosted)
+
+        // a reference the product keeps has to lead somewhere, and what it leads to stays marked open
+        val merged = result.root
+        assertThat(merged.componentRefs()).contains(releasedSdk, compositeSdk)
+        assertThat(merged.dependsOn(primaryRef("dns"))).containsExactly(compositeSdk, ref("lib"))
+        assertThat(merged.compositions().last()).isEqualTo("incomplete" to listOf(releasedSdk))
+        assertThat(result.incompleteReasons).containsExactly(
+            "the product keeps '$releasedSdk', in whose place another version comes for 'dns', only because " +
+                "another component refers to it, and states nothing about its dependencies (to accept it, declare " +
+                "it in declaredIdentifiedGapReasons)",
+        )
+    }
+
+    @Test
+    fun `keeps an identified component that one part replaces while another part still depends on it`() {
+        // kafka reports a gap of its own, which covers the SDK as well, so it identifies nothing
+        val kafka = extension("kafka").withCompositions(
+            """[ { "aggregate": "incomplete", "dependencies": """ +
+                """[ "${primaryRef("kafka")}", "${ref("lib")}", "$releasedSdk" ] } ]"""
+        )
+
+        val merged = merge(extension("dns"), kafka, broker(), with = hosted).root
+
+        assertThat(merged.componentRefs()).contains(releasedSdk, compositeSdk)
+        assertThat(merged.dependsOn(primaryRef("dns"))).containsExactly(compositeSdk, ref("lib"))
+        assertThat(merged.dependsOn(primaryRef("kafka"))).containsExactly(releasedSdk, ref("lib"))
+    }
+
+    @Test
+    fun `keeps the gap of a component a host part identifies when a part it hosts describes it`() {
+        val (shared, component) = slf4j("2.0.16")
+
+        // the broker identifies slf4j-api from its own host, which no part of the merge is
+        val merged = merge(
+            partIdentifying("broker", mapOf(shared to component)),
+            part("dns", component, listOf(shared)),
+            with = hosted,
+        )
+
+        assertThat(merged.incompleteReasons).containsExactly(identifiedGap("broker", shared, remedy = ofHost))
+        assertThat(merged.root.compositions().last()).isEqualTo("incomplete" to listOf(shared))
+    }
+
+    @Test
+    fun `keeps the gap of a component a host part identifies when another host part describes another version`() {
+        val (provided, _) = slf4j("2.0.9")
+        val (bundled, component) = slf4j("2.0.16")
+
+        // what the agent bundles runs in the agent's classloader, which the broker does not see either
+        val merged = merge(
+            partIdentifying("broker", mapOf(slf4j("2.0.9"))),
+            part("agent", component, listOf(bundled)),
+            with = product.copy(hostParts = setOf("agent", "broker")),
+        )
+
+        assertThat(merged.incompleteReasons).containsExactly(identifiedGap("broker", provided, remedy = ofHost))
+        assertThat(merged.root.dependsOn(primaryRef("broker"))).containsExactly(ref("lib"), provided)
+    }
+
+    @Test
+    fun `keeps the gap of an identified component that the identifying part states dependencies of`() {
+        // a part from another tool that gives an identified component a graph of its own
+        val dns = extension().edited { root ->
+            val entry = (root["dependencies"] as ArrayNode).first { it["ref"].asText() == releasedSdk } as ObjectNode
+            entry.putArray("dependsOn").add(ref("lib"))
+        }
+
+        val merged = merge(dns, broker(), with = hosted)
+
+        assertThat(merged.incompleteReasons)
+            .containsExactly(identifiedGap("dns", releasedSdk, remedy = ownDependencies()))
+        assertThat(merged.root.dependsOn(primaryRef("dns"))).containsExactly(releasedSdk, ref("lib"))
+        assertThat(merged.root.dependsOn(releasedSdk)).containsExactly(ref("lib"))
+    }
+
+    @Test
+    fun `keeps the gap of an identified component when a host part describes its name in another group`() {
+        val forked = "pkg:maven/org.example/hivemq-extension-sdk@4.58.0?type=jar"
+
+        val merged = merge(
+            extension(),
+            broker(mapOf(forked to module("org.example", "hivemq-extension-sdk", "4.58.0", forked))),
+            with = hosted,
+        )
+
+        assertThat(merged.incompleteReasons).containsExactly(
+            identifiedGap("dns", releasedSdk, remedy = notByHosts(releasedSdk)),
+        )
+        assertThat(merged.root.dependsOn(primaryRef("dns"))).containsExactly(releasedSdk, ref("lib"))
+    }
+
+    @Test
+    fun `keeps the gap of an identified component when host parts describe several other versions of it`() {
+        val older = "pkg:maven/com.hivemq/hivemq-extension-sdk@4.57.0?type=jar"
+
+        // the merge cannot tell which of the two the extension runs on
+        val merged = merge(
+            extension(),
+            broker(),
+            part("swarm", sdk("4.57.0", older), listOf(older)),
+            with = product.copy(hostParts = setOf("broker", "swarm")),
+        )
+
+        assertThat(merged.incompleteReasons).containsExactly(
+            identifiedGap("dns", releasedSdk, remedy = notByHosts(releasedSdk)),
+        )
+        assertThat(merged.root.componentRefs()).contains(releasedSdk, older, compositeSdk)
+        assertThat(merged.root.dependsOn(primaryRef("dns"))).containsExactly(releasedSdk, ref("lib"))
+        assertThat(merged.root.compositions().last()).isEqualTo("incomplete" to listOf(releasedSdk))
+    }
+
+    @Test
+    fun `keeps the gap of an identified component when only a part that is no host describes another version`() {
+        val (provided, _) = slf4j("2.0.9")
+        // two extensions without a broker: kafka bundles slf4j-api, which dns cannot reach from its own classloader
+        val merged = merge(
+            partIdentifying("dns", mapOf(slf4j("2.0.9"))),
+            part("kafka", slf4j("2.0.16").second, listOf(slf4j("2.0.16").first)),
+        )
+
+        assertThat(merged.incompleteReasons).containsExactly(
+            identifiedGap("dns", provided),
+        )
+        assertThat(merged.root.dependsOn(primaryRef("dns"))).containsExactly(ref("lib"), provided)
+        assertThat(merged.root.componentRefs()).contains(provided, slf4j("2.0.16").first)
+    }
+
+    @Test
+    fun `keeps the gap of an identified component when only a part that is no host describes the same version`() {
+        val (shared, component) = slf4j("2.0.16")
+
+        // the broker hosts dns, but describes no slf4j-api; kafka's copy is its own, even in the same version
+        val merged = merge(
+            partIdentifying("dns", mapOf(shared to component)),
+            part("kafka", component, listOf(shared)),
+            broker(),
+            with = hosted,
+        )
+
+        assertThat(merged.incompleteReasons).containsExactly(
+            identifiedGap("dns", shared, remedy = notByHosts(shared)),
+        )
+        assertThat(merged.root.compositions().last()).isEqualTo("incomplete" to listOf(shared))
+        // kafka ships it, so the product does not say that a host provides it
+        assertThat(merged.root.labelled(shared)).isFalse()
+    }
+
+    @Test
+    fun `keeps the gap of an identified component without a purl`() {
+        val merged = merge(
+            partIdentifying("dns", mapOf("sdk-4.1.0" to packaged("sdk-4.1.0"))),
+            broker(mapOf("sdk-4.2.0" to packaged("sdk-4.2.0"))),
+            with = hosted,
+        )
+
+        // neither ref is a purl, so nothing tells the two apart from unrelated components
+        assertThat(merged.incompleteReasons).containsExactly(
+            identifiedGap("dns", "sdk-4.1.0", remedy = noPackage()),
+        )
+        assertThat(merged.root.dependsOn(primaryRef("dns"))).containsExactly(ref("lib"), "sdk-4.1.0")
+    }
+
+    @Test
+    fun `keeps the label on an identified component that no host part describes`() {
+        val merged = merge(extension()).root
+
+        assertThat(merged.labelled(releasedSdk)).isTrue()
+    }
+
+    @Test
+    fun `keeps the whole graph of a merged part open when a part of it ships what another identifies`() {
+        val (provided, component) = slf4j("2.0.9")
+        // kafka ships the very version dns identifies; without a host, the image leaves that gap open
+        val image = merge(
+            partIdentifying("dns", mapOf(provided to component)),
+            part("kafka", component, listOf(provided)),
+        )
+
+        val bundle = merge(
+            SbomPart("image.cdx.json", mapper.writeValueAsBytes(image.root)),
+            broker(mapOf(slf4j("2.0.16"))),
+            with = hosted.copy(name = "bundle"),
+        )
+
+        // the image lists it without the label, as kafka ships it, so the broker's version takes the place of nothing
+        assertThat(bundle.incompleteReasons).containsExactly(unlabelledGap("product", provided))
+        assertThat(bundle.root.compositions().map { it.first }).containsExactly("incomplete")
+        assertThat(bundle.root.componentRefs()).contains(provided)
+        assertThat(bundle.root.dependsOn(primaryRef("dns"))).contains(provided)
+        assertThat(bundle.root.dependsOn(primaryRef("kafka"))).containsExactly(provided)
+    }
+
+    @Test
+    fun `keeps the whole graph of a merged part open when a part ships with dependencies what another identifies`() {
+        val (provided, component) = slf4j("2.0.9")
+        val y = ref("y")
+        // kafka bundles the very version dns identifies, with a dependency of its own
+        val kafka = part("kafka", component + ", " + library("y", "dd"), listOf(provided, y)).edited { root ->
+            val entry = (root["dependencies"] as ArrayNode).first { it["ref"].asText() == provided } as ObjectNode
+            entry.putArray("dependsOn").add(y)
+        }
+        val image = merge(partIdentifying("dns", mapOf(provided to component)), kafka)
+
+        val bundle = merge(
+            SbomPart("image.cdx.json", mapper.writeValueAsBytes(image.root)),
+            broker(mapOf(slf4j("2.0.16"))),
+            with = hosted.copy(name = "bundle"),
+        )
+
+        // the broker's version takes the place of no component that kafka ships
+        assertThat(bundle.root.componentRefs()).contains(provided, y)
+        assertThat(bundle.root.dependsOn(primaryRef("kafka"))).contains(provided)
+        assertThat(bundle.root.dependsOn(provided)).containsExactly(y)
+        // the image lists it without the label, as kafka ships it, which keeps the image open as a whole
+        assertThat(bundle.incompleteReasons).containsExactly(unlabelledGap("product", provided))
+        assertThat(bundle.root.compositions().map { it.first }).containsExactly("incomplete")
+    }
+
+    @Test
+    fun `keeps the whole graph of a part open when it declares components incomplete without labelling them`() {
+        // the shape generateSbom writes, but from a tool that does not label what the host provides
+        val merged = merge(extension().unlabelled(), broker(), with = hosted)
+
+        assertThat(merged.incompleteReasons).containsExactly(unlabelledGap("dns", releasedSdk))
+        assertThat(merged.root.dependsOn(primaryRef("dns"))).containsExactly(releasedSdk, ref("lib"))
+        assertThat(merged.root.compositions().map { it.first }).containsExactly("incomplete")
+    }
+
+    @Test
+    fun `leaves out an identified component that a host part describes in another version`() {
+        val merged = merge(extension(), broker(), with = hosted).root
+
+        // the image ships the SDK of the broker, not the one the extension was built against
+        assertThat(merged.componentRefs()).contains(compositeSdk).doesNotContain(releasedSdk)
+        assertThat(merged["dependencies"].map { it["ref"].asText() }).doesNotContain(releasedSdk)
+    }
+
+    @Test
+    fun `matches the package of an identified component whatever the spelling of the purls`() {
+        val spellings = mapOf(
+            "unencoded npm scope" to ("pkg:npm/@types/node@18.0.0" to "pkg:npm/@types/node@20.0.0"),
+            "percent-encoded npm scope" to ("pkg:npm/%40types/node@18.0.0" to "pkg:npm/@types/node@20.0.0"),
+            "slashes after the scheme" to ("pkg://maven/com.hivemq/hivemq-extension-sdk@4.1.0" to compositeSdk),
+            "subpath" to ("pkg:maven/com.hivemq/hivemq-extension-sdk@4.1.0#lib/sdk.jar" to compositeSdk),
+            "type in upper case" to ("pkg:MAVEN/com.hivemq/hivemq-extension-sdk@4.1.0" to compositeSdk),
+        )
+
+        for ((spelling, purls) in spellings) {
+            val (identified, described) = purls
+            // the identified component's bom-ref is no purl, so the package comes from its purl field
+            val merged = merge(
+                partIdentifying("dns", mapOf("identified" to packaged("identified", identified))),
+                broker(mapOf(described to packaged(described, described))),
+                with = hosted,
+            )
+
+            assertThat(merged.root.dependsOn(primaryRef("dns"))).describedAs(spelling)
+                .containsExactlyInAnyOrder(described, ref("lib"))
+        }
+    }
+
+    @Test
+    fun `points an identified component at another version without making that version depend on itself`() {
+        val (provided, old) = slf4j("2.0.9")
+        val (shipped, new) = slf4j("2.0.16")
+        // dns lists the version the broker ships next to the one it identifies, and lets the first depend on the other
+        val dns = part("dns", "$old, $new", listOf(provided, shipped))
+            .edited { root ->
+                val entry = (root["dependencies"] as ArrayNode).first { it["ref"].asText() == shipped } as ObjectNode
+                entry.putArray("dependsOn").add(provided)
+            }
+            .withCompositions(
+                """
+                [
+                  { "aggregate": "complete", "dependencies": [ "${primaryRef("dns")}", "$shipped" ] },
+                  { "aggregate": "incomplete", "dependencies": [ "$provided" ] }
+                ]
+                """.trimIndent()
+            )
+            .labelling(provided)
+
+        val merged = merge(dns, broker(mapOf(shipped to new)), with = hosted).root
+
+        assertThat(merged.dependsOn(shipped)).isEmpty()
+        assertThat(merged.dependsOn(primaryRef("dns"))).containsExactly(shipped)
+    }
+
+    @Test
+    fun `points an identified component at the version the host part describes when another part bundles a third`() {
+        val (shipped, component) = slf4j("2.0.16")
+
+        // without the host, the copy kafka bundles would make two candidates for what dns identifies
+        val merged = merge(
+            partIdentifying("dns", mapOf(slf4j("2.0.9"))),
+            part("kafka", slf4j("2.0.13").second, listOf(slf4j("2.0.13").first)),
+            broker(mapOf(shipped to component)),
+            with = hosted,
+        )
+
+        assertThat(merged.incompleteReasons).isEmpty()
+        assertThat(merged.root.dependsOn(primaryRef("dns"))).containsExactly(ref("lib"), shipped)
+        assertThat(merged.root.componentRefs()).contains(slf4j("2.0.13").first).doesNotContain(slf4j("2.0.9").first)
+    }
+
+    @Test
+    fun `points the dependencies on an identified component at the other version the host part describes`() {
+        val merged = merge(extension(), broker(), with = hosted).root
+
+        assertThat(merged.dependsOn(primaryRef("dns"))).containsExactly(compositeSdk, ref("lib"))
+    }
+
+    @Test
+    fun `removes the label from an identified component that a host part describes`() {
+        val broker = part("broker", library("sdk", "bb"), listOf(ref("sdk")))
+
+        val merged = merge(partIdentifyingSdk(), broker, with = hosted).root
+
+        // the product describes the SDK through the broker, so it no longer only identifies it
+        assertThat(merged.labelled(ref("sdk"))).isFalse()
+    }
+
+    @Test
+    fun `removes the label from an identified component that a part which is no host ships`() {
+        val (provided, component) = slf4j("2.0.9")
+
+        val merged = merge(
+            partIdentifying("dns", mapOf(provided to component)),
+            part("kafka", component, listOf(provided)),
+        )
+
+        assertThat(merged.root.labelled(provided)).isFalse()
+        assertThat(merged.root.compositions().last()).isEqualTo("incomplete" to listOf(provided))
+    }
+
+    @Test
+    fun `reports no gap of identified components that the build declares`() {
+        val merged = merge(extension(), with = product.copy(declaredIdentifiedGapReasons = declaredGap))
+
+        assertThat(merged.incompleteReasons).isEmpty()
+        // the document states the gap all the same
+        assertThat(merged.root.compositions()).containsExactly(
+            "complete" to listOf(primaryRef("dns"), ref("lib"), "product@1.0.0"),
+            "incomplete" to listOf(releasedSdk),
+        )
+    }
+
+    @Test
+    fun `reports nothing about a replaced component the product keeps when the build declares the gap`() {
+        val dns = extension().edited { root ->
+            val lib = (root["components"] as ArrayNode).first { it["name"].asText() == "lib" } as ObjectNode
+            lib.putObject("evidence").putArray("identity").addObject().put("field", "purl").putArray("tools")
+                .add(releasedSdk)
+        }
+
+        // the kept component is all that is left of the gap, so the declaration still has something to cover
+        val merged = merge(dns, broker(), with = hosted.copy(declaredIdentifiedGapReasons = declaredGap))
+
+        assertThat(merged.incompleteReasons).isEmpty()
+        assertThat(merged.root.compositions().last()).isEqualTo("incomplete" to listOf(releasedSdk))
+    }
+
+    @Test
+    fun `reports the gap of a part that may hide the declared gap of identified components`() {
+        // dns reports a gap over its whole graph, the SDK included, so the merge cannot tell the declaration is stale
+        val dns = extension().withCompositions(
+            """[ { "aggregate": "incomplete", "dependencies": """ +
+                """[ "${primaryRef("dns")}", "${ref("lib")}", "$releasedSdk" ] } ]"""
+        )
+
+        val merged = merge(dns, with = product.copy(declaredIdentifiedGapReasons = declaredGap))
+
+        assertThat(merged.incompleteReasons)
+            .containsExactly("the SBOM of 'dns' declares its dependency graph incomplete")
+    }
+
+    @Test
+    fun `reports the other gaps when the build declares the gap of identified components`() {
+        val declared = product.copy(expectedParts = setOf("dns", "broker"), declaredIdentifiedGapReasons = declaredGap)
+
+        val merged = merge(extension(), with = declared)
+
+        assertThat(merged.incompleteReasons).containsExactly("no SBOM for part 'broker'")
+        assertThat(merged.root.compositions().map { it.first }).containsExactly("incomplete")
     }
 
     // --- Output ---
@@ -1626,6 +2691,8 @@ class SbomMergerTest {
             "url creator" to merge(part("alpha"), with = product.copy(creator = "https://www.hivemq.com/")),
             "no file" to merge(part("alpha"), with = product.copy(artifactFileName = null)),
             "incomplete" to merge(part("alpha", aggregate = "incomplete")),
+            "identified gap" to merge(extension()),
+            "replaced identified component" to merge(extension(), broker(), with = hosted),
             "no parts" to merge(),
         )
 

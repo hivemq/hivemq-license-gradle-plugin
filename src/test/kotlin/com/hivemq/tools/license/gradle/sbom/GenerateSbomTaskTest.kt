@@ -412,8 +412,8 @@ class GenerateSbomTaskTest {
         assertThat(result.output)
             .contains("Cannot write an SBOM from '")
             .contains(
-                "bom.json': hivemqLicense.sbomCreator must be an email address or an http(s) URL, but is " +
-                    "'HiveMQ Security Team'"
+                "bom.json': The creator, hivemqLicense.sbomCreator or the creator of the task, must be an email " +
+                    "address or an http(s) URL, but is 'HiveMQ Security Team'"
             )
         assertThat(projectDir.resolve("build/sbom/app.cdx.json")).doesNotExist()
     }

@@ -71,9 +71,9 @@ internal object SbomNormalizer {
         val seconds = timestamp.truncatedTo(ChronoUnit.SECONDS)
         if (seconds !in firstTimestamp..lastTimestamp) {
             throw SbomException(
-                "The SBOM timestamp $seconds is not a valid date: set hivemqLicense.sbomTimestamp to a date with a " +
-                    "four-digit year, or fix the SOURCE_DATE_EPOCH environment variable, which holds seconds since " +
-                    "1970-01-01, not milliseconds"
+                "The SBOM timestamp $seconds is not a valid date: set hivemqLicense.sbomTimestamp, or the timestamp " +
+                    "of the task, to a date with a four-digit year, or fix the SOURCE_DATE_EPOCH environment " +
+                    "variable, which holds seconds since 1970-01-01, not milliseconds"
             )
         }
         // BomJson.read rejected a metadata that is not an object, so there is nothing else to replace here

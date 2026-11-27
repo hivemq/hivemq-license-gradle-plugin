@@ -37,41 +37,56 @@ class MergeSbomsTaskTest {
         .withArguments("mergeProduct")
         .withEnvironment(GitTestRepository.isolatedEnv(projectDir))
 
-    /** A part SBOM as `generateSbom` writes it, reduced to what the merger reads. */
-    private fun partSbom(name: String, hash: String = "aa") = """
-        {
-          "bomFormat": "CycloneDX", "specVersion": "1.6", "version": 1,
-          "metadata": {
-            "component": {
-              "type": "application", "bom-ref": "pkg:maven/org.example/$name@1.0?project_path=%3A",
-              "group": "org.example", "name": "$name", "version": "1.0"
-            }
-          },
-          "components": [
+    /**
+     * A part SBOM as `generateSbom` writes it, reduced to what the merger reads, concluding [license] for `lib`. With
+     * [identifiesSdk], the part also depends on `sdk`, which it only identifies, as an extension identifies the SDK of
+     * its host.
+     */
+    private fun partSbom(
+        name: String,
+        hash: String = "aa",
+        license: String = "Apache-2.0",
+        identifiesSdk: Boolean = false,
+    ): String {
+        val primary = "pkg:maven/org.example/$name@1.0?project_path=%3A"
+        val lib = "pkg:maven/org.example/lib@1.0?type=jar"
+        val sdk = "pkg:maven/org.example/sdk@1.0?type=jar"
+        // each piece is empty for a part that does not identify the SDK
+        fun withSdk(text: String) = if (identifiesSdk) text else ""
+        val label = """{ "name": "${SbomEnricher.PROVIDED_BY_HOST}", "value": "true" }"""
+        val sdkComponent = withSdk(
+            """, { "type": "library", "bom-ref": "$sdk", "group": "org.example", "name": "sdk", "version": "1.0", """ +
+                """"properties": [ $label ] }"""
+        )
+        val sdkTarget = withSdk(""", "$sdk"""")
+        val sdkEntry = withSdk(""", { "ref": "$sdk", "dependsOn": [] }""")
+        val sdkGap = withSdk(""", { "aggregate": "incomplete", "dependencies": [ "$sdk" ] }""")
+        return """
             {
-              "type": "library", "bom-ref": "pkg:maven/org.example/lib@1.0?type=jar",
-              "group": "org.example", "name": "lib", "version": "1.0",
-              "hashes": [ { "alg": "SHA-256", "content": "$hash" } ]
-            }
-          ],
-          "dependencies": [
-            {
-              "ref": "pkg:maven/org.example/$name@1.0?project_path=%3A",
-              "dependsOn": [ "pkg:maven/org.example/lib@1.0?type=jar" ]
-            },
-            { "ref": "pkg:maven/org.example/lib@1.0?type=jar", "dependsOn": [] }
-          ],
-          "compositions": [
-            {
-              "aggregate": "complete",
+              "bomFormat": "CycloneDX", "specVersion": "1.6", "version": 1,
+              "metadata": {
+                "component": {
+                  "type": "application", "bom-ref": "$primary",
+                  "group": "org.example", "name": "$name", "version": "1.0"
+                }
+              },
+              "components": [
+                {
+                  "type": "library", "bom-ref": "$lib", "group": "org.example", "name": "lib", "version": "1.0",
+                  "hashes": [ { "alg": "SHA-256", "content": "$hash" } ],
+                  "licenses": [ { "license": { "id": "$license", "acknowledgement": "concluded" } } ]
+                }$sdkComponent
+              ],
               "dependencies": [
-                "pkg:maven/org.example/$name@1.0?project_path=%3A",
-                "pkg:maven/org.example/lib@1.0?type=jar"
+                { "ref": "$primary", "dependsOn": [ "$lib"$sdkTarget ] },
+                { "ref": "$lib", "dependsOn": [] }$sdkEntry
+              ],
+              "compositions": [
+                { "aggregate": "complete", "dependencies": [ "$primary", "$lib" ] }$sdkGap
               ]
             }
-          ]
-        }
-    """.trimIndent()
+        """.trimIndent()
+    }
 
     /**
      * The plugin applied for its conventions and a hand-registered merge of two part files; [extra] goes into the
@@ -106,7 +121,7 @@ class MergeSbomsTaskTest {
         )
     }
 
-    private fun output() = projectDir.resolve("build/sbom/product.cdx.json")
+    private fun output() = projectDir.resolve("build/sbom/mergeProduct/product.cdx.json")
 
     /**
      * The start of a merge failure. Gradle names canonical paths, and the temporary directory may be reached through
@@ -115,6 +130,50 @@ class MergeSbomsTaskTest {
     private fun failurePrefix() = "Cannot merge the SBOMs into '${output().canonicalPath}': "
 
     // --- Output ---
+
+    @Test
+    fun `accepts a product name that is no file name when the output file is set`() {
+        for (name in listOf("a/b", " ")) {
+            setup(
+                """
+                productName.set("$name")
+                outputFile.set(layout.buildDirectory.file("sbom/set.cdx.json"))
+                """.trimIndent()
+            )
+
+            val result = gradleRunner().build()
+
+            assertThat(result.task(":mergeProduct")?.outcome).describedAs(name).isEqualTo(TaskOutcome.SUCCESS)
+            assertThat(projectDir.resolve("build/sbom/set.cdx.json")).describedAs(name).exists()
+        }
+    }
+
+    @Test
+    fun `fails naming hostParts that are neither parts of the merge nor expected`() {
+        setup("""hostParts.set(setOf("alpha", "gamma"))""")
+
+        val result = gradleRunner().buildAndFail()
+
+        assertThat(result.output).contains(
+            failurePrefix() + "hostParts names parts that are neither in the merge nor in expectedParts: 'gamma'; " +
+                "correct or remove the names"
+        )
+        assertThat(output()).doesNotExist()
+    }
+
+    @Test
+    fun `fails naming licenseConflicts when two parts conclude different licenses`() {
+        setup()
+        projectDir.resolve("parts/beta.cdx.json").writeText(partSbom("beta", license = "MIT"))
+
+        val result = gradleRunner().buildAndFail()
+
+        assertThat(result.output)
+            .contains(failurePrefix())
+            .contains("has different concluded licenses in '")
+            .contains("into licenseConflicts under 'org.example:lib'")
+        assertThat(output()).doesNotExist()
+    }
 
     @Test
     fun `fails naming the output file on a timestamp outside the four-digit years`() {
@@ -163,6 +222,30 @@ class MergeSbomsTaskTest {
     }
 
     @Test
+    fun `fails on a blank declared identified gap reason`() {
+        setup("""declaredIdentifiedGapReasons.add(" ")""")
+
+        val result = gradleRunner().buildAndFail()
+
+        assertThat(result.output)
+            .contains("Task ':mergeProduct' got a blank reason in declaredIdentifiedGapReasons: [ ]")
+        assertThat(output()).doesNotExist()
+    }
+
+    @Test
+    fun `fails on a declared identified gap that the product does not have`() {
+        setup("""declaredIdentifiedGapReasons.add("the extensions run on the broker of another image")""")
+
+        val result = gradleRunner().buildAndFail()
+
+        assertThat(result.output).contains(
+            failurePrefix() + "declaredIdentifiedGapReasons declares a gap of identified components that no host " +
+                "part describes, but the product has none; remove the declaration"
+        )
+        assertThat(output()).doesNotExist()
+    }
+
+    @Test
     fun `fails on a timestamp that is not an instant`() {
         setup("""timestamp.set("yesterday")""")
 
@@ -175,19 +258,6 @@ class MergeSbomsTaskTest {
     }
 
     @Test
-    fun `rejects a product name that differs from the sbomName of the project only in case`() {
-        setup("""productName.set("Merge-Project")""")
-
-        val result = gradleRunner().buildAndFail()
-
-        assertThat(result.output).contains(
-            "The productName of task ':mergeProduct' must differ from hivemqLicense.sbomName, " +
-                "which is 'merge-project'"
-        )
-        assertThat(projectDir.resolve("build/sbom/Merge-Project.cdx.json")).doesNotExist()
-    }
-
-    @Test
     fun `rejects a product name that is not a file name`() {
         setup("""productName.set("../x")""")
 
@@ -197,32 +267,44 @@ class MergeSbomsTaskTest {
             "The productName of task ':mergeProduct' must be a non-blank file name without '/' or '\\', " +
                 "but is '../x'"
         )
-        assertThat(projectDir.resolve("build/x.cdx.json")).doesNotExist()
+        assertThat(projectDir.resolve("build/sbom/x.cdx.json")).doesNotExist()
     }
 
     @Test
-    fun `rejects a product name that is the project name, the default sbomName`() {
-        setup("""productName.set("merge-project")""")
+    fun `warns about an expected host part that has no SBOM`() {
+        setup(
+            """
+            hostParts.set(setOf("gamma"))
+            expectedParts.set(setOf("alpha", "beta", "gamma"))
+            """.trimIndent()
+        )
 
-        val result = gradleRunner().buildAndFail()
+        val result = gradleRunner().build()
 
         assertThat(result.output).contains(
-            "The productName of task ':mergeProduct' must differ from hivemqLicense.sbomName, " +
-                "which is 'merge-project'"
+            "The product SBOM 'product' of task ':mergeProduct' declares its dependency graph incomplete: " +
+                "no SBOM for part 'gamma'"
         )
-        assertThat(projectDir.resolve("build/sbom/merge-project.cdx.json")).doesNotExist()
+        assertThat(mapper.readTree(output())["compositions"][0]["aggregate"].asText()).isEqualTo("incomplete")
     }
 
     @Test
-    fun `rejects a product name that is the sbomName of the project`() {
-        setup("""productName.set("same")""", extension = """sbomName.set("same")""")
+    fun `warns about the gaps other than the identified one the build declares`() {
+        setup(
+            """
+            declaredIdentifiedGapReasons.add("the extensions run on the broker of another image")
+            expectedParts.set(setOf("alpha", "beta", "gamma"))
+            """.trimIndent()
+        )
+        projectDir.resolve("parts/alpha.cdx.json").writeText(partSbom("alpha", identifiesSdk = true))
 
-        val result = gradleRunner().buildAndFail()
+        val result = gradleRunner().build()
 
         assertThat(result.output).contains(
-            "The productName of task ':mergeProduct' must differ from hivemqLicense.sbomName, which is 'same'"
+            "The product SBOM 'product' of task ':mergeProduct' declares its dependency graph incomplete: " +
+                "no SBOM for part 'gamma'"
         )
-        assertThat(projectDir.resolve("build/sbom/same.cdx.json")).doesNotExist()
+        assertThat(result.output).doesNotContain("no host part describes")
     }
 
     @Test
@@ -239,7 +321,21 @@ class MergeSbomsTaskTest {
     }
 
     @Test
-    fun `writes the creator of the extension as manufacturer and the origin remote as vcs reference`() {
+    fun `writes no warning about an identified gap the build declares`() {
+        setup("""declaredIdentifiedGapReasons.add("the extensions run on the broker of another image")""")
+        projectDir.resolve("parts/alpha.cdx.json").writeText(partSbom("alpha", identifiesSdk = true))
+
+        val result = gradleRunner().build()
+
+        assertThat(result.output).doesNotContain("declares its dependency graph incomplete")
+        val compositions = mapper.readTree(output())["compositions"]
+        assertThat(compositions.map { it["aggregate"].asText() }).containsExactly("complete", "incomplete")
+        assertThat(compositions[1]["dependencies"].map { it.asText() })
+            .containsExactly("pkg:maven/org.example/sdk@1.0?type=jar")
+    }
+
+    @Test
+    fun `writes the creator of hivemqLicense as manufacturer and the origin remote as vcs reference`() {
         setup(extension = """sbomCreatorName.set("Example Corp"); sbomCreator.set("https://security.example.com/")""")
         GitTestRepository.commitAt(projectDir, "2024-05-06T07:08:09Z", "build.gradle.kts")
         GitTestRepository.setRemote(projectDir, "https://github.com/example/product.git")
@@ -255,7 +351,18 @@ class MergeSbomsTaskTest {
     }
 
     @Test
-    fun `writes the product SBOM with the conventions of the extension`() {
+    fun `writes the license that licenseConflicts gives where two parts conclude different ones`() {
+        setup("""licenseConflicts.put("org.example:lib", "MIT")""")
+        projectDir.resolve("parts/beta.cdx.json").writeText(partSbom("beta", license = "MIT"))
+
+        gradleRunner().build()
+
+        val lib = mapper.readTree(output())["components"].first { it["name"].asText() == "lib" }
+        assertThat(lib["licenses"].map { it["license"]["id"].asText() }).containsExactly("MIT")
+    }
+
+    @Test
+    fun `writes the product SBOM with the conventions of hivemqLicense`() {
         setup()
 
         val result = gradleRunner().build()
@@ -272,17 +379,24 @@ class MergeSbomsTaskTest {
     }
 
     @Test
-    fun `writes to the output file that is set for a product named like the project`() {
-        setup(
+    fun `writes two products of the same name into the directories of their tasks`() {
+        setup()
+        projectDir.resolve("build.gradle.kts").appendText(
             """
-            productName.set("merge-project")
-            outputFile.set(layout.buildDirectory.file("sbom/other.cdx.json"))
+
+            tasks.register<MergeSbomsTask>("mergeImage") {
+                productName.set("product")
+                productVersion.set("1.0.0")
+                sboms.from(fileTree("parts"))
+            }
             """.trimIndent()
         )
 
-        gradleRunner().build()
+        val result = gradleRunner().withArguments("mergeProduct", "mergeImage").build()
 
-        assertThat(projectDir.resolve("build/sbom/other.cdx.json")).exists()
+        assertThat(result.task(":mergeImage")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(output()).exists()
+        assertThat(projectDir.resolve("build/sbom/mergeImage/product.cdx.json")).exists()
     }
 
     // --- Up to date ---

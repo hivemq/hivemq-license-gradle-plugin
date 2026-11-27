@@ -305,19 +305,22 @@ declares.
 The internal own modules are left out first, with their dependency entries, nested in another component or not; each
 leaves the components nested in it in its place, and its dependants depend on them from then on; what was nested in a
 provided one stays provided, wherever it ends up. Then every version of the modules a `hivemqProvided` configuration
-resolves is left out, together with everything nested in them, except the first provided component on each path, the
-one a component that stays depends on directly: it stays identified, with an empty `dependsOn` list (an entry of its own
-if it had none), its targets outside the provided modules handed to its dependants, and without a file description,
-whatever the BOM carried, since the host provides it whole; an identified component nested in another one stays in its
-place, one nested in a left-out component takes that component's place. A reference to a left-out module is replaced by
-references to the components that stay and that it leads to, directly or through other left-out modules, so the graph
-still reaches every component that stays, such as a module that only another version of a provided module brings in; a
-reference to it, or to a license or another object inside it with a `bom-ref` of its own, from a `provides` list, a
-vulnerability, an annotation or a composition is removed, and a vulnerability or an annotation left with nothing to
-refer to goes with it; so does a composition, unless it has a `bom-ref`, which keeps it with the aggregate
-`not_specified`. A reference from anywhere else, such as a declaration's claim or a formulation workflow in a BOM
-another tool supplied, is not rewritten: `generateSbom` fails when any value still equals the `bom-ref` of something it
-left out, naming where it sits.
+resolves is left out, together with everything nested in them, except the first provided component on each path, the one
+a component that stays depends on directly: it stays identified, with an empty `dependsOn` list (an entry of its own if
+it had none), its targets outside the provided modules handed to its dependants, and without a file description,
+whatever the BOM carried, since the host provides it whole, and with the property `hivemq:sbom:provided-by-host` set to
+`true`, which marks it as a component the host provides and the host's SBOM describes. A product merge (see
+Product-level SBOMs) recognises identified components by this property alone. Its name is in a namespace of the plugin's
+own: CycloneDX registers property names under `cdx:` only, so it is not part of the CycloneDX property taxonomy. An
+identified component nested in another one stays in its place, one nested in a left-out component takes that component's
+place. A reference to a left-out module is replaced by references to the components that stay and that it leads to,
+directly or through other left-out modules, so the graph still reaches every component that stays, such as a module that
+only another version of a provided module brings in; a reference to it, or to a license or another object inside it with
+a `bom-ref` of its own, from a `provides` list, a vulnerability, an annotation or a composition is removed, and a
+vulnerability or an annotation left with nothing to refer to goes with it; so does a composition, unless it has a
+`bom-ref`, which keeps it with the aggregate `not_specified`. A reference from anywhere else, such as a declaration's
+claim or a formulation workflow in a BOM another tool supplied, is not rewritten: `generateSbom` fails when any value
+still equals the `bom-ref` of something it left out, naming where it sits.
 
 The manufacturer fields, the license acknowledgements and the `source-distribution` reference exist from CycloneDX
 specification 1.6 on, which is what `generateDependencyBom` writes by default; `generateSbom` fails on a BOM that
@@ -417,6 +420,7 @@ val mergePlatformZipSbom by tasks.registering(MergeSbomsTask::class) {
         zipTree(dnsZip.elements.map { it.single().asFile }).matching { include("**/sbom/*.cdx.json") },
     )
     expectedParts.set(listOf("hivemq-enterprise", "hivemq-kafka-extension", "hivemq-dns-cluster-discovery"))
+    hostParts.set(listOf("hivemq-enterprise"))
 }
 ```
 
@@ -426,15 +430,18 @@ produces needs `dependsOn(thatTask)` on the merge task, or `sboms.builtBy(thatTa
 `zipTree(...).matching { ... }` does not carry the task dependency the plain `zipTree(...)` would; a zip resolved from a
 repository needs nothing.
 
-The plugin applies the `sbomTimestamp`, `sbomCreatorName` and `sbomCreator` conventions, the project's `origin`
-remote and the output `build/sbom/<productName>.cdx.json` to every instance, so the registration sets the files, the
-product name and its version; `artifactFileName` and `expectedParts` are optional. The conventions come from the
-plugin, so the project that registers the task must apply it (`id("com.hivemq.tools.license")`); that also registers
-the plugin's other tasks in that project, which stay unused there.
+The plugin applies the `sbomTimestamp`, `sbomCreatorName` and `sbomCreator` conventions, the project's `origin` remote
+and the output `build/sbom/<task name>/<productName>.cdx.json` to every instance, so the registration sets the files,
+the product name and its version; `artifactFileName`, `expectedParts`, `hostParts`, `licenseConflicts` and
+`declaredIdentifiedGapReasons` are optional, although a deliverable that ships a host with what it hosts needs
+`hostParts` (see below). The conventions come from the plugin, so the project that registers the task must apply it
+(`id("com.hivemq.tools.license")`); that also registers the plugin's other tasks in that project, which stay unused
+there.
 
-A `productName` equal to the project's `sbomName` fails the task, because `generateSbom` writes the same file. The names
-are compared without regard to case, since a file system that ignores case, such as the default one of macOS, would
-make one file of them. Setting `outputFile` on the task, or another `sbomName`, gets past that rule.
+The directory named after the task, the rule a second `GenerateSbomTask` follows as well, keeps two merges of the same
+product from writing one file, such as those of a ZIP and of an image that both ship `hivemq-platform.cdx.json`, and
+keeps every merge away from the file of `generateSbom`. A `productName` that is blank or contains `/` or `\` fails the
+task unless `outputFile` is set.
 
 Scanners read the `components` list as the inventory and do not reliably read components nested under another one, so
 the merge is flat: every component keeps its `bom-ref`, the top-level component of each part becomes an `application`
@@ -447,15 +454,20 @@ highest one among the parts.
 
 The task fails when `sboms` holds no file, on a file that is not a JSON object with `"bomFormat": "CycloneDX"`, a
 `specVersion` of 1.6 or a later 1.x and a top-level component that has a `bom-ref` and a name, on any other component
-without a `bom-ref`, on a component with nested components, which the merge does not flatten, on a file with a non-empty
-`services` or `formulation` list or a dependency entry with a non-empty `provides` list, which the merge does not carry,
-on a `dependencies` entry, a `dependsOn` target or an `evidence` tool (of a component or of a pedigree component below
-it) that names anything but the top-level component or an entry of `components`, such as a tool in `metadata.tools`,
-because the merge keeps no other element of a file, on two parts whose top-level components have the same `bom-ref`, on
-a `bom-ref` defined below a component that another node of the product defines too, such as a license `bom-ref` two
-parts use below different components, on a file that gives a component, its top-level component or a node below one the
-`bom-ref` of the product, on two entries for one `bom-ref` that name different components, and on one hash algorithm
-with different digests, within one entry or between two entries for the same `bom-ref`.
+without a `bom-ref` (an empty one counts as none, since it refers to nothing and the schema rejects it), on a component
+with nested components, which the merge does not flatten, on a file with a non-empty `services` or `formulation` list or
+a dependency entry with a non-empty `provides` list, which the merge does not carry, on a `dependencies` entry, a
+`dependsOn` target or an `evidence` tool (of a component or of a pedigree component below it) that names anything but
+the top-level component or an entry of `components`, such as a tool in `metadata.tools`, because the merge keeps no
+other element of a file, on two parts whose top-level components have the same `bom-ref`, on a `bom-ref` defined below a
+component that another node of the product defines too, such as a license `bom-ref` two parts use below different
+components, on a file that gives a component, its top-level component or a node below one the `bom-ref` of the product,
+on two entries for one `bom-ref` that name different components, on one hash algorithm with different digests, within
+one entry or between two entries for the same `bom-ref`, and on two entries for one `bom-ref` that conclude different
+licenses, unless `licenseConflicts` settles it (see below). Every message names the part and says how to fix it.
+Different digests and different conclusions between entries are settled once the merge has left out the identified
+components another version takes the place of (see below), so a disagreement about a component the product does not list
+fails nothing.
 
 Entries for the same `bom-ref` must name the same component, because a `bom-ref` is only unique within its own document
 and two parts can reuse one: a `purl`, `group`, `name` or `version` that both carry must be equal. They are united field
@@ -465,40 +477,138 @@ the value of a part's top-level component, and otherwise of the part that sorts 
 and the united entry carries it only when it is `optional` or `excluded`, because no `scope` means `required`. Two lists
 are united by their entries instead: the `properties` by name, where the properties of the winning entry stay and those
 of the others are appended when their name is new, and the `hashes` by algorithm, where every digest of an algorithm,
-within one entry and between entries, must agree, compared without regard to case. Every other list, `licenses`
-included, comes from the winning entry alone.
+within one entry and between entries, must agree, compared without regard to case. Every other list comes from the
+winning entry alone, except `licenses`: the product takes the whole list of the first entry that concludes a license,
+one whose license object or expression carries `acknowledgement` `concluded`, so that it states the conclusion even
+where the winning entry only declares licenses; without such an entry the list of the winning entry stays. Declared
+entries that differ are no conflict, since the parts merely repeat what each library's metadata says.
 
-The `compositions` entry of the product is `complete` only when every part counts as complete and every name in
-`expectedParts` contributed a file; otherwise it is `incomplete` and the task warns with the reasons. A part counts as
-complete when every `compositions` entry of its SBOM that has an `aggregate` says `complete`, or says `incomplete` and
-lists in its `dependencies` only components that another part describes, none of them the part's own top-level
-component, and those entries list, together in their `dependencies`, the top-level component, every entry of the part's
-`dependencies` and every target of their `dependsOn` lists; a `complete` entry counts only for components that have an
-entry in the part's `dependencies`, since the part states nothing about the others. A part whose entries list only some
-of those is only partly complete, and one with no entry that lists `dependencies`, such as one that lists `assemblies`
-alone, says nothing about its dependency graph; neither makes the product complete, so the product never claims more
-than its parts do. Another part describes a component when a `complete` entry of its SBOM lists the component's
-`bom-ref` in its `dependencies`, the SBOM's `dependencies` have an entry for it and no entry of that SBOM with another
-`aggregate` lists it there; the refs must be identical, version and qualifiers included, so an extension must have been
-built against what the broker ships. `generateSbom` writes such an `incomplete` entry over the provided modules an
-extension only identifies (see Own modules), so a platform that bundles the broker with the extension is complete while
-the extension alone is not. An `incomplete` entry that names the part's own top-level component, which `generateSbom`
-writes for a reported or declared gap (a file dependency, an unresolved module, an `sbomIncompleteReasons` entry), keeps
-the product incomplete, because no other part can fill a gap of the part itself; so does an `incomplete` entry without
-`dependencies` and an entry whose `aggregate` is neither `complete` nor `incomplete`. For any other `incomplete` entry,
-the task's warning names the components no other part describes. A name in `expectedParts` is the name of a part's
-top-level component, which for a project built with this plugin is by default the project name; `sbomName` only names
-the file. A complete product has an entry for every component in its graph, and its composition lists them all, so it
-passes the same rule when it is merged again as a part of a larger deliverable.
+Entries for the same `bom-ref` whose concluded entries differ, compared as sets so that their order does not matter,
+fail the task like different digests do, naming the component, both parts and both conclusions: such parts were built
+with different plugin releases or license settings, and the product would otherwise state one part's conclusion for
+both. The remedy is to build the parts with the same settings. A prebuilt part that cannot be rebuilt without a release
+gets an entry in `licenseConflicts` instead, the module id `group:name` to the conclusion the product states, for every
+version of the module that has such a conflict, in one of two forms: the text of the expression a part concludes, or the
+ids of the license objects a part concludes (the name for one without an id), separated by commas in any order, so a
+license name that holds a comma cannot be given. The failure message tells the two apart, as in "the expression
+Apache-2.0 AND MIT" and "the licenses Apache-2.0, MIT"; an expression value matches only a part that concludes that
+expression, and a list of ids only a part that concludes exactly those license objects:
+
+```kotlin
+licenseConflicts.put("org.example:lib", "Apache-2.0, MIT")
+licenseConflicts.put("org.example:other", "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0")
+```
+
+The product then keeps the whole `licenses` list of the part whose conclusion matches. The task fails when no part's
+conclusion matches the entry, and on an entry for a module whose parts conclude no different licenses in this merge,
+so that an entry does not outlive the conflict it settles.
+
+The `compositions` entry of the product is `complete` over its whole graph when every part counts as complete and every
+name in `expectedParts` contributed a file. A part counts as complete when every `compositions` entry of its SBOM that
+has an `aggregate` says `complete`, or says `incomplete` over components the part identifies, each of which a host part
+describes (see below), and those entries list, together in their `dependencies`, the top-level component, every entry of
+the part's `dependencies` and every target of their `dependsOn` lists; a `complete` entry counts only for components
+that have an entry in the part's `dependencies`, since the part states nothing about the others. A part whose entries
+list only some of those is only partly complete, and one with no entry that lists `dependencies`, such as one that lists
+`assemblies` alone, says nothing about its dependency graph; neither makes the product complete, so the product never
+claims more than its parts do.
+
+An `incomplete` entry is a gap of identified components when its `dependencies` list at least one ref and every ref it
+lists is a component of the part that carries `hivemq:sbom:provided-by-host` with the value `true`, the property
+`generateSbom` writes on the provided modules an extension only identifies (see Own modules), is in the part's
+dependency graph, is not the part's own top-level component and is listed by no `complete` entry of the same SBOM; and
+every other entry of that SBOM that is not `complete` has to be such a gap too. Any other `incomplete` entry, like one
+over `assemblies` alone, says the part is incomplete in a way no host can fill, and the merge then changes nothing in
+the part. A part from another tool, which writes no such property, is therefore never filled by a host part or given
+another version: its `incomplete` entries leave its whole graph open. When such an entry is a gap of identified
+components but for the property, the warning names the components without it, and says that a part built before the
+plugin wrote the property needs a rebuild, and that a merged product loses the property where one of its parts ships the
+component. A part describes a component when a `complete` entry of its SBOM lists the component's `bom-ref` in its
+`dependencies`, the SBOM's `dependencies` have an entry for it and no entry of that SBOM with another `aggregate` lists
+it there.
+
+Only a host part fills the gap of another: a part that `hostParts` names, by the name of its top-level component as in
+`expectedParts`, such as the broker `hivemq-enterprise`, which supplies the SDK and the other modules an extension
+identifies. What an extension bundles runs in the extension's own classloader, so another extension's copy of a module
+fills nothing, not even in the same version, and for the same reason no part fills the gap of a host part, another host
+included: what a host identifies comes from outside the deliverable, and stays a gap. A platform ZIP or an image that
+ships the broker with extensions therefore sets `hostParts` to the broker, and is complete while an extension alone is
+not. A deliverable without its host, such as the init image of the operator, which ships extensions that run on the
+broker of the platform image, sets no `hostParts`: its identified components stay a gap, which it declares with
+`declaredIdentifiedGapReasons` (see below). In the product, `hivemq:sbom:provided-by-host` stays on a component while
+every part that lists it labels it: a part that ships the component, and a host part that describes it, list it without
+the property, and the product then drops it, so that it does not claim a host provides what a part ships. Every name in
+`hostParts` must be the name of a part of the merge or one that `expectedParts` lists: a host part without an SBOM that
+`expectedParts` lists keeps the product incomplete with a warning, like any missing part, while any other name, misspelt
+or stale, fails the task, so that the setting cannot outlive the part it names.
+
+An extension can only be built against a released extension SDK, so it usually identifies an older SDK, and older
+versions of the other modules its host supplies, than the broker it ships with describes. When no host part describes
+the exact `bom-ref` a part identifies, but exactly one `bom-ref` a host part describes has the same package, that is the
+same purl type, namespace and name whatever the version, qualifiers and subpath, the identified component gives way to
+it: the part's dependencies on the identified component point at the described one, the part's own dependency entry for
+the identified component goes, and the gap counts as filled. That needs the part to state no dependencies of the
+identified component, as `generateSbom` writes it; a labelled component with dependencies of its own in the part, as a
+part from another tool may state them, keeps its gap, since the other version would take over neither its dependencies
+nor its file. A library that a part of an already merged product ships never gets that far: the merged product lists it
+without the property, so its `incomplete` entry keeps that part open as a whole. The identified component itself is left
+out of the product unless a remaining dependency entry names it, as its `ref` or as a target, or another component
+refers to it, by an evidence tool for example; one kept only for such a reference is outside the graph, and the product
+lists it in its `incomplete` composition and warns about it, unless `declaredIdentifiedGapReasons` declares the gap,
+which such a component then counts towards. The package comes from the component's `purl`, or from its `bom-ref` without
+one, with the type compared in lower case and the namespace and name percent-decoded, so the SDK as an extension
+identifies it, `pkg:maven/com.hivemq/hivemq-extension-sdk@4.1.0?type=jar`, gives way to the SDK as a broker built in one
+composite with the SDK describes it, `pkg:maven/com.hivemq/hivemq-extension-sdk@<broker version>?project_path=%3A`.
+Several matches, such as two host parts that describe the SDK in different versions, leave the gap open, because the
+merge cannot tell which one the part runs on.
+
+Where identified components stay undescribed and the parts have no other gap, such as in an image that ships extensions
+without the broker they run on, the product states what `generateSbom` states for a single extension: `complete` over
+everything else in its graph, and `incomplete` over those identified components only. Every other gap makes the
+product's one `compositions` entry `incomplete` over the whole graph: an `incomplete` entry that names the part's own
+top-level component, which `generateSbom` writes for a reported or declared gap (a file dependency, an unresolved
+module, an `sbomIncompleteReasons` entry), because no other part can fill a gap of the part itself; an `incomplete`
+entry over a component a `complete` entry of the same SBOM lists, which contradicts itself and may well be about a
+component the part ships; an `incomplete` entry without `dependencies` and an entry whose `aggregate` is neither
+`complete` nor `incomplete`; a part that is only partly complete or says nothing about its graph; and a name in
+`expectedParts` without a file. The task warns with the reasons, naming the identified components no host part describes
+and why: without `hostParts`, it suggests naming the host there, which fills the gap; for a host part, it says that no
+part fills that gap; with host parts named, it names a host part whose SBOM the merge lacks, an identified component
+without a package URL to match another version by, one the part states dependencies of, or else that the host parts
+describe its package in no version or in several. Declaring the gap in `declaredIdentifiedGapReasons` accepts it in
+every case.
+
+A registration that knows why identified components stay undescribed adds the reason to `declaredIdentifiedGapReasons`:
+
+```kotlin
+declaredIdentifiedGapReasons.add("the extensions run on the broker of the platform image, whose SBOM describes it")
+```
+
+That gap is still written as `incomplete`, but no longer warned about; any other gap still is. The declaration covers
+every identified component that no host part describes, whichever extension identifies it, and its text only documents
+the build script: the task neither writes it into the SBOM, whose compositions have no place for it, nor logs it. A
+blank reason fails the task, and so does a reason when the product has no such gap and no other gap that could hide one,
+such as a part's gap over its whole graph or a missing part, because a declaration without its gap would silence the
+warning about the next one.
+
+A name in `expectedParts` is the name of a part's top-level component, which for a project built with this plugin is by
+default the project name; `sbomName` only names the file. A complete product has an entry for every component in its
+graph, and its composition lists them all, so it passes the same rule when it is merged again as a part of a larger
+deliverable; so does a product that is complete but for undescribed identified components, whose gap the larger merge
+fills when a part it names in `hostParts` describes those components.
 
 The file name of a `.zip` deliverable gets the archive flags BSI TR-03183-2 asks for; an image has no file name, so
 leave `artifactFileName` unset there.
 
 Known gaps: the top-level component of the product carries no license and no hash; the same library listed under
-different `bom-ref`s by different tools appears twice, because components are matched by `bom-ref` alone; a directory or
-an unreadable file in `sboms` fails the task, so pass the files, for example those of a `fileTree`; and a patent
-assertion (CycloneDX 1.7) on a component is copied as it is, although the patents it references live in `definitions`
-and an asserter it names by `bom-ref` can live in the metadata, neither of which the merge carries.
+different `bom-ref`s by different tools appears twice, because components are matched by `bom-ref` alone, except an
+identified component that gives way to another version as described above; a part from another tool never has its
+identified components filled, since only `generateSbom` writes the property the merge recognises them by; a merged
+product named in `hostParts` of a larger merge counts as describing everything it lists, the libraries its extensions
+bundle included, because the product SBOM does not record which part described what; a directory or an unreadable file
+in `sboms` fails the task, so pass the files, for example those of a `fileTree`; and a patent assertion (CycloneDX 1.7)
+on a component is copied as it is, although the patents it references live in `definitions` and an asserter it names by
+`bom-ref` can live in the metadata, neither of which the merge carries.
 
 ### Custom License Tasks
 

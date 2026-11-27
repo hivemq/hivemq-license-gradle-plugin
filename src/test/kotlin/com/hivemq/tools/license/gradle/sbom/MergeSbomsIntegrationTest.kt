@@ -66,36 +66,53 @@ class MergeSbomsIntegrationTest {
 
     /**
      * The build script of the part [name], a Java project that applies the plugin as [licensePlugin]. The extension
-     * has a library of its own next to the one every part has.
+     * has a library of its own next to the one every part has, which it takes from its host in the version
+     * [providedSlf4j] when that is set, as an extension built against an older host does.
      */
-    private fun partBuildScript(name: String, licensePlugin: String) = """
-        import java.time.Instant
+    private fun partBuildScript(name: String, licensePlugin: String, providedSlf4j: String? = null): String {
+        val provided = providedSlf4j != null && name == "extension"
+        val slf4j = if (provided) {
+            """hivemqProvided("org.slf4j:slf4j-api:$providedSlf4j")"""
+        } else {
+            """implementation("org.slf4j:slf4j-api:2.0.16")"""
+        }
+        // the configuration as the HiveMQ extension plugin creates it: resolvable, and extended by implementation
+        val providedConfiguration = """
+            val hivemqProvided by configurations.creating {
+                isCanBeResolved = true
+                isCanBeConsumed = false
+            }
+            configurations.named("implementation") { extendsFrom(hivemqProvided) }
+        """.trimIndent()
+        return """
+            import java.time.Instant
 
-        plugins {
-            java
-            $licensePlugin
-        }
-        group = "org.example"
-        version = "1.0"
-        hivemqLicense {
-            thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
-            $fixedTimestamp
-        }
-        repositories {
-            mavenCentral()
-        }
-        dependencies {
-            implementation("org.slf4j:slf4j-api:2.0.16")
-            ${if (name == "extension") """implementation("com.google.guava:guava:33.4.0-jre")""" else ""}
-        }
-    """.trimIndent()
+            plugins {
+                java
+                $licensePlugin
+            }
+            group = "org.example"
+            version = "1.0"
+            hivemqLicense {
+                thirdPartyLicenseDirectory.set(layout.buildDirectory.dir("tmp/third-party-licenses"))
+                $fixedTimestamp
+            }
+            repositories {
+                mavenCentral()
+            }
+        """.trimIndent() + "\n" + (if (provided) providedConfiguration + "\n" else "") + """
+            dependencies {
+                $slf4j
+                ${if (name == "extension") """implementation("com.google.guava:guava:33.4.0-jre")""" else ""}
+            }
+        """.trimIndent()
+    }
 
     /**
      * Two subprojects with the plugin, a zip with a third part's SBOM, and the root merging the three; the root applies
-     * the plugin for its conventions. [extra] goes into the merge task.
+     * the plugin for its conventions. [extra] goes into the merge task; [providedSlf4j], see [partBuildScript].
      */
-    private fun setup(extra: String = "") {
-        // not named like the product: the merge would write the file that generateSbom of the root writes
+    private fun setup(extra: String = "", providedSlf4j: String? = null) {
         projectDir.resolve("settings.gradle.kts").writeText(
             """
             rootProject.name = "deliverables"
@@ -105,7 +122,7 @@ class MergeSbomsIntegrationTest {
         for (name in listOf("broker", "extension")) {
             projectDir.resolve(name).mkdirs()
             projectDir.resolve("$name/build.gradle.kts").writeText(
-                partBuildScript(name, """id("com.hivemq.tools.license")""")
+                partBuildScript(name, """id("com.hivemq.tools.license")""", providedSlf4j)
             )
         }
         projectDir.resolve("tool/sbom").mkdirs()
@@ -227,13 +244,13 @@ class MergeSbomsIntegrationTest {
         )
     }
 
-    /** A runner without the injected plugin classpath, so that every build of the composite loads the plugin itself. */
-    private fun repositoryRunner(vararg args: String) = GradleRunner.create()
+    /** Runs the merge without the injected plugin classpath, so that every build of the composite loads the plugin. */
+    private fun repositoryRunner() = GradleRunner.create()
         .withProjectDir(projectDir)
-        .withArguments(*args)
+        .withArguments("mergePlatformSbom")
         .withEnvironment(GitTestRepository.isolatedEnv(projectDir))
 
-    private fun output() = projectDir.resolve("build/sbom/platform.cdx.json")
+    private fun output() = projectDir.resolve("build/sbom/mergePlatformSbom/platform.cdx.json")
 
     // --- Merge ---
 
@@ -268,7 +285,7 @@ class MergeSbomsIntegrationTest {
     fun `merges the variants of the parts of included builds`() {
         setupComposite()
 
-        val result = repositoryRunner("mergePlatformSbom").build()
+        val result = repositoryRunner().build()
 
         assertThat(result.task(":broker:generateSbom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         assertThat(result.task(":extension:generateSbom")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
@@ -284,6 +301,27 @@ class MergeSbomsIntegrationTest {
             "pkg:maven/org.example/extension@1.0?project_path=%3A",
         )
         assertThat(sbom["compositions"][0]["aggregate"].asText()).isEqualTo("complete")
+        assertThat(result.output).doesNotContain("declares its dependency graph incomplete")
+    }
+
+    @Test
+    fun `replaces the version of a provided module an extension identifies with the one the host part ships`() {
+        setup("""hostParts.set(setOf("broker"))""", providedSlf4j = "2.0.9")
+        // a third version, which would make a second candidate if a part that hosts nothing could fill the gap
+        projectDir.resolve("tool/sbom/tool.cdx.json").writeText(toolSbom.replace("2.0.16", "2.0.13"))
+
+        val result = gradleRunner("mergePlatformSbom").build()
+
+        val sbom = mapper.readTree(output())
+        val extension = sbom["dependencies"]
+            .first { it["ref"].asText() == "pkg:maven/org.example/extension@1.0?project_path=%3Aextension" }
+        assertThat(extension["dependsOn"].map { it.asText() })
+            .contains("pkg:maven/org.slf4j/slf4j-api@2.0.16?type=jar")
+            .doesNotContain("pkg:maven/org.slf4j/slf4j-api@2.0.9?type=jar")
+        assertThat(sbom["components"].map { it["bom-ref"].asText() })
+            .contains("pkg:maven/org.slf4j/slf4j-api@2.0.13?type=jar")
+            .doesNotContain("pkg:maven/org.slf4j/slf4j-api@2.0.9?type=jar")
+        assertThat(sbom["compositions"].map { it["aggregate"].asText() }).containsExactly("complete")
         assertThat(result.output).doesNotContain("declares its dependency graph incomplete")
     }
 

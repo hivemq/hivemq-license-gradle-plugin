@@ -326,7 +326,10 @@ class SbomEnricherTest {
 
         assertThatThrownBy { SbomEnricher.enrich(root, details.copy(creator = creator)) }
             .isInstanceOf(SbomException::class.java)
-            .hasMessage("hivemqLicense.sbomCreator must be an email address or an http(s) URL, but is '$creator'")
+            .hasMessage(
+                "The creator, hivemqLicense.sbomCreator or the creator of the task, must be an email address or " +
+                    "an http(s) URL, but is '$creator'"
+            )
         assertThat(root).isEqualTo(unchanged)
     }
 
@@ -381,6 +384,41 @@ class SbomEnricherTest {
     }
 
     // --- Dependencies ---
+
+    @Test
+    fun `declares a dependency target without an entry incomplete when the build reports a gap`() {
+        val input = """
+            {
+              "specVersion": "1.6",
+              "metadata": { "component": { "type": "application", "bom-ref": "app", "name": "app" } },
+              "dependencies": [ { "ref": "app", "dependsOn": [ "lib" ] } ]
+            }
+        """.trimIndent()
+
+        val result = enrich(input.toByteArray(), details.copy(incompleteReasons = listOf(FILE_DEPENDENCY)))
+
+        // lib has no entry, but the gap is the artifact's, so it covers every component the graph names
+        assertThat(result["compositions"].map { it["aggregate"].asText() }).containsExactly("incomplete")
+        assertThat(result["compositions"][0]["dependencies"].map { it.asText() }).containsExactly("app", "lib")
+    }
+
+    @Test
+    fun `declares an identified component that is only a dependency target incomplete`() {
+        val input = """
+            {
+              "specVersion": "1.6",
+              "metadata": { "component": { "type": "application", "bom-ref": "app", "name": "app" } },
+              "dependencies": [ { "ref": "app", "dependsOn": [ "lib", "sdk" ] }, { "ref": "lib", "dependsOn": [] } ]
+            }
+        """.trimIndent()
+
+        val result = enrich(input.toByteArray(), details.copy(identifiedComponents = setOf("sdk")))
+
+        // sdk has no entry of its own, yet the artifact depends on it, so the host's SBOM still has to describe it
+        assertThat(result["compositions"].map { it["aggregate"].asText() }).containsExactly("complete", "incomplete")
+        assertThat(result["compositions"][0]["dependencies"].map { it.asText() }).containsExactly("app", "lib")
+        assertThat(result["compositions"][1]["dependencies"].map { it.asText() }).containsExactly("sdk")
+    }
 
     @Test
     fun `declares everything incomplete when the build reports a gap, identified components included`() {
@@ -567,6 +605,17 @@ class SbomEnricherTest {
         assertThat(kept["assemblies"].map { it.asText() }).containsExactly(topLevel)
         assertThat(kept["dependencies"].map { it.asText() }).containsExactly(elsewhere, "7")
         assertThat(kept["vulnerabilities"].map { it.asText() }).containsExactly("vulnerability-1")
+    }
+
+    @Test
+    fun `labels the identified components as provided by their host`() {
+        val lib = "pkg:maven/org.example/lib@1.0"
+
+        val result = enrich(with = details.copy(identifiedComponents = setOf(lib)))
+
+        // a product merge recognises the components the host provides by this label alone
+        assertThat(result.component("lib").property(SbomEnricher.PROVIDED_BY_HOST)).isEqualTo("true")
+        assertThat(result["metadata"]["component"].property(SbomEnricher.PROVIDED_BY_HOST)).isNull()
     }
 
     @Test

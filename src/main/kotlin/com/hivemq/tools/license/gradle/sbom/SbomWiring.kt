@@ -99,10 +99,9 @@ internal object SbomWiring {
             creatorName.convention(extension.sbomCreatorName)
             creator.convention(extension.sbomCreator)
             val taskPath = path
+            val taskName = name
             outputFile.convention(
-                project.layout.buildDirectory.file(
-                    productName.zip(extension.sbomName) { name, sbomName -> mergeOutputPath(taskPath, name, sbomName) }
-                )
+                project.layout.buildDirectory.file(productName.map { mergeOutputPath(taskPath, taskName, it) })
             )
         }
 
@@ -241,20 +240,19 @@ internal object SbomWiring {
     // calling them captures no instance the cache would have to store as well.
 
     /**
-     * The path below the build directory of the SBOM that the merge task [taskPath] writes for [productName]. Fails on
-     * a name that is not a file name, and on the project's [sbomName] in any letter case.
+     * The path below the build directory of the SBOM that the merge task [taskPath], named [taskName], writes for
+     * [productName]: in a directory of the task's name, like another SBOM task, so that neither a second merge of the
+     * same product nor `generateSbom` writes the same file. Fails on a name that is not a file name.
      */
-    private fun mergeOutputPath(taskPath: String, productName: String, sbomName: String): String {
-        val what = "The productName of task '$taskPath'"
-        checkFileName(productName, what)
-        // a file system that ignores case, such as the default one of macOS, would make one file of the two names
-        if (productName.equals(sbomName, ignoreCase = true)) {
-            throw GradleException("$what must differ from hivemqLicense.sbomName, which is '$sbomName'")
-        }
-        return "sbom/$productName.cdx.json"
+    private fun mergeOutputPath(taskPath: String, taskName: String, productName: String): String {
+        checkFileName(productName, "The productName of task '$taskPath'")
+        return "sbom/$taskName/$productName.cdx.json"
     }
 
-    // a separator in the name would write the SBOM elsewhere, and a blank name would give a file without a name
+    /**
+     * Returns [name], or fails, naming it [what], when it is blank or contains a path separator: a separator would
+     * write the SBOM elsewhere, and a blank name would give a file without a name.
+     */
     private fun checkFileName(name: String, what: String): String {
         if (name.isBlank() || '/' in name || '\\' in name) {
             throw GradleException(

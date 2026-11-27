@@ -63,6 +63,22 @@ internal object SbomEnricher {
     private val minimumSpecVersion = requireNotNull(majorMinor(MINIMUM_SPEC_VERSION))
 
     /**
+     * The property written, with the value `true`, on every component the SBOM only identifies: one the host provides
+     * at runtime, whose file and dependencies the host's SBOM describes. A product merge recognises identified
+     * components by it alone. The name is in a namespace of the plugin's own, as CycloneDX registers only names under
+     * `cdx:`.
+     */
+    const val PROVIDED_BY_HOST = "hivemq:sbom:provided-by-host"
+
+    /** Whether [property] is the [PROVIDED_BY_HOST] label with the value `true`, the one form that counts. */
+    internal fun isHostLabel(property: JsonNode): Boolean =
+        property.get("name")?.asText() == PROVIDED_BY_HOST && property.get("value")?.asText() == "true"
+
+    /** Whether [component] carries the [PROVIDED_BY_HOST] label, see [isHostLabel]. */
+    internal fun carriesHostLabel(component: JsonNode): Boolean =
+        (component.get("properties") as? ArrayNode)?.any(::isHostLabel) == true
+
+    /**
      * Adds the fields to [root], as [BomJson.read] returns it, and returns it. Everything is checked first, so [root]
      * is unchanged when this throws.
      */
@@ -77,6 +93,8 @@ internal object SbomEnricher {
             // an identified component ships no file with this artifact, whatever the build resolved for its coordinates
             if (!isIdentified(component, details)) {
                 details.componentFileNames[coordinates]?.let { describeFile(component, it) }
+            } else {
+                component.arrayOrNew("properties")?.putProperty(PROVIDED_BY_HOST, "true")
             }
             addCreator(component, details)
             addSourceDistribution(component)
@@ -122,7 +140,10 @@ internal object SbomEnricher {
      */
     internal fun requireCreator(creator: String) {
         if (emailAddressOf(creator) != null || isWebUrl(creator)) return
-        throw SbomException("hivemqLicense.sbomCreator must be an email address or an http(s) URL, but is '$creator'")
+        throw SbomException(
+            "The creator, hivemqLicense.sbomCreator or the creator of the task, must be an email address or an " +
+                "http(s) URL, but is '$creator'"
+        )
     }
 
     // the address in an email or mailto creator, else null; the check and the manufacturer share this one rule, so
@@ -335,14 +356,7 @@ internal object SbomEnricher {
                     "incomplete: $why"
             )
         }
-        if (details.incompleteReasons.isEmpty()) {
-            val (identifiedRefs, otherRefs) = graph.partition { it in details.identifiedComponents }
-            val described = otherRefs.filter { it in stated }
-            return listOfNotNull(
-                Composition("complete", described).takeIf { described.isNotEmpty() },
-                Composition("incomplete", identifiedRefs),
-            )
-        }
+        if (details.incompleteReasons.isEmpty()) return splitCompositions(graph, stated, details.identifiedComponents)
         // a reported gap is the artifact's, so it is stated for the top-level component, whether or not the graph has
         // an entry for it, and for every component in the graph
         val topLevel = topLevelRef(root) ?: throw SbomException(
@@ -350,6 +364,19 @@ internal object SbomEnricher {
                 "incomplete: $why"
         )
         return listOf(Composition("incomplete", (graph + topLevel).distinct().sorted()))
+    }
+
+    /**
+     * `incomplete` over the refs of [graph] in [open], and `complete` over the others that [stated] has an entry for;
+     * either is left out when it would list nothing.
+     */
+    private fun splitCompositions(graph: List<String>, stated: Set<String>, open: Set<String>): List<Composition> {
+        val (gap, others) = graph.partition { it in open }
+        val described = others.filter { it in stated }
+        return listOfNotNull(
+            Composition("complete", described).takeIf { described.isNotEmpty() },
+            Composition("incomplete", gap).takeIf { gap.isNotEmpty() },
+        )
     }
 
     /** The text `ref`s of the dependency entries: the components whose dependencies the graph states. */
@@ -409,15 +436,25 @@ internal object SbomEnricher {
     }
 
     /**
-     * Writes one composition over every `ref` of the `dependencies` of [root] and every `dependsOn` target,
-     * `incomplete` when [incompleteReasons] is not empty; the BOM's own compositions stay as [writeCompositions] keeps
-     * them. Does nothing without a dependency ref, or when `compositions` is not an array.
+     * Writes the compositions over every `ref` of the `dependencies` of [root] and every `dependsOn` target, and over
+     * [undescribed], in the graph or not: one `incomplete` over all of them when [incompleteReasons] is not empty, else
+     * `incomplete` over [undescribed] and `complete` over the others that have an entry, as [enrich] states identified
+     * components. The BOM's own compositions stay as [writeCompositions] keeps them. Does nothing without a dependency
+     * ref, or when `compositions` is not an array.
      */
-    internal fun declareCompleteness(root: ObjectNode, incompleteReasons: List<String>) {
-        val refs = graphRefs(root)
-        if (refs.isEmpty() || !canWriteCompositions(root)) return
-        val aggregate = if (incompleteReasons.isEmpty()) "complete" else "incomplete"
-        writeCompositions(root, listOf(Composition(aggregate, refs)))
+    internal fun declareCompleteness(
+        root: ObjectNode,
+        incompleteReasons: List<String>,
+        undescribed: Set<String> = emptySet(),
+    ) {
+        val graph = graphRefs(root)
+        if (graph.isEmpty() || !canWriteCompositions(root)) return
+        val refs = (graph + undescribed).distinct().sorted()
+        if (incompleteReasons.isNotEmpty()) {
+            writeCompositions(root, listOf(Composition("incomplete", refs)))
+            return
+        }
+        writeCompositions(root, splitCompositions(refs, entryRefs(root), undescribed))
     }
 
     private class Composition(val aggregate: String, val refs: List<String>)
