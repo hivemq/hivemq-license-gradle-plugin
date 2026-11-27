@@ -82,6 +82,12 @@ internal class SpdxExpression(expression: String) {
             is Or -> canonicalGroup(operands, { (it as? Or)?.operands }, { Or(it) })
         }
 
+        /**
+         * The canonical form as text, every group's operands sorted and ids in lower case, as SPDX matches them, so
+         * that expressions differing only in order and case get the same key; null without a canonical form.
+         */
+        fun key(): String? = canonical()?.orderFree()
+
         /** As text; AND binds tighter than OR, so only an OR under AND and an AND under OR are parenthesised. */
         fun render(): String = when (this) {
             is Leaf -> if (exception == null) id else "$id WITH $exception"
@@ -254,6 +260,29 @@ internal class SpdxExpression(expression: String) {
             val nodes = alternatives.map { it ?: return null }
             val canonical = Node.Or(nodes).canonical() ?: return null
             return if (canonical is Node.Leaf) null else canonical.render()
+        }
+
+        /**
+         * Whether [first] and [second] combine the same licenses in the same way: equal in canonical form, whatever the
+         * order of the operands of a group. False when either is null or has no canonical form; forms that group the
+         * same licenses differently, such as a distributed AND, are not recognised as equivalent.
+         */
+        fun sameExpression(first: Node?, second: Node?): Boolean {
+            val one = first?.key() ?: return false
+            return one == second?.key()
+        }
+
+        /** As text, every group's operands sorted and written once and ids in lower case; the base of [Node.key]. */
+        private fun Node.orderFree(): String = when (this) {
+            is Node.Leaf -> render().lowercase()
+            is Node.And -> orderFreeGroup(operands, " AND ")
+            is Node.Or -> orderFreeGroup(operands, " OR ")
+        }
+
+        /** The [operands] of one group, order-free; a group whose operands are all the same stands for that one. */
+        private fun orderFreeGroup(operands: List<Node>, operator: String): String {
+            val distinct = operands.map { it.orderFree() }.distinct().sorted()
+            return distinct.singleOrNull() ?: distinct.joinToString(operator, "(", ")")
         }
 
         /** What the SPDX grammar allows as a simple expression: a license reference, or an id with an optional "+". */

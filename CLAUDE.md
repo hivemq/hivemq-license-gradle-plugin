@@ -13,7 +13,7 @@ Gradle plugin that generates and validates third-party license reports from Cycl
 ## Key Files
 
 - `src/main/kotlin/com/hivemq/tools/license/gradle/License.kt` — `KnownLicense` enum (alphabetically ordered) and `UnknownLicense` data class
-- `src/main/kotlin/com/hivemq/tools/license/gradle/LicenseResolver.kt`, `LICENSE_ORDER` (priority-ordered), `BUILT_IN_LICENSES`, `BUILT_IN_EXPRESSIONS`, `SPDX_ID_MAP`, license resolution logic
+- `src/main/kotlin/com/hivemq/tools/license/gradle/LicenseResolver.kt`, `LICENSE_ORDER` (priority-ordered), `BUILT_IN_LICENSES`, `BUILT_IN_EXPRESSIONS` (the reviewed multi-license modules), `SPDX_ID_MAP`, license resolution logic
 - `src/main/kotlin/com/hivemq/tools/license/gradle/SpdxExpression.kt`, the SPDX expression parser: the ways an expression can be satisfied (for approval) and its syntax tree, with the canonical form the SBOM writes and the replacements of deprecated SPDX ids
 - `src/main/kotlin/com/hivemq/tools/license/gradle/OwnModules.kt`, classifies the modules of the build's own groups (public: listed, internal: left out, neither: the build fails) and holds the HiveMQ defaults of both lists
 - `src/main/kotlin/com/hivemq/tools/license/gradle/HivemqLicenseExtension.kt` — Plugin extension configuration
@@ -36,6 +36,7 @@ Gradle plugin that generates and validates third-party license reports from Cycl
 
 - `KnownLicense` enum entries are sorted alphabetically
 - `LICENSE_ORDER` defines priority (not alphabetical) — higher priority = earlier in list
+- A module whose BOM lists several licenses fails without a `BUILT_IN_EXPRESSIONS` entry: check its POM's `<comments>`, then add it to the `choice(...)` group of its expression (modules sorted), or, when the list does not declare the expression itself (licenses that apply together, a license given by name only), through `replacement(...)` with the list as CycloneDX writes it; a module whose versions declare different lists gets one expression per list
 - Tests are organized by section with comment headers (e.g., `// --- Section ---`) and sorted alphabetically within sections
 - Test classes touched when adding a license: `LicenseTest`, `LicenseResolverMetadataTest`, `LicenseResolverConvertLicenseTest`, `LicenseResolverChooseLicenseTest`; the resolver, the expression parser, the build service and the plugin wiring have their own (`LicenseResolverResolveLicensesTest`, `SpdxExpressionTest`, `BomTaskOutcomeServiceTest`, `HivemqLicensePluginIntegrationTest`), and `BomUpToDateIntegrationTest` covers when the BOM task runs again; the SBOM has `SbomNormalizerTest`, `ConcludedLicenseTest`, `SbomEnricherTest`, `GenerateSbomTaskTest`, `GenerateSbomIntegrationTest`, `SbomTimestampSourceTest` and `SbomVcsUrlSourceTest`
 

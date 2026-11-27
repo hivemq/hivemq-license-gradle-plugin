@@ -135,18 +135,18 @@ hivemqLicense {
 ### checkApprovedLicenses
 
 Reads the CycloneDX BOM and validates that every dependency has a license from the approved list.
-The task fails if any dependency has an unapproved or unknown license. One failure names the BOM file that was read,
-says when known whether this build produced it, restored it from the build cache or found it unchanged from an earlier
-build, and lists every offending dependency, so a BOM with several problems is fixed in one round. When the BOM
-records that a dependency's Maven metadata is incomplete (`cdx:maven:package:metadata-unresolved`; for a BOM supplied
-by hand through `dependencyLicense`, one written by CycloneDX Gradle plugin 3.5.0 or later), the entry says so and
-names the reason, to tell a POM that could not be read or completed apart from a POM that declares no license.
+The task fails if any dependency has an unapproved or unknown license, or lists several licenses the plugin has not
+reviewed (see Built-in expressions). One failure names the BOM file that was read, says when known whether this build
+produced it, restored it from the build cache or found it unchanged from an earlier build, and lists every offending
+dependency, so a BOM with several problems is fixed in one round. When the BOM records that a dependency's Maven
+metadata is incomplete (`cdx:maven:package:metadata-unresolved`; for a BOM supplied by hand through `dependencyLicense`,
+one written by CycloneDX Gradle plugin 3.5.0 or later), the entry says so and names the reason, to tell a POM that could
+not be read or completed apart from a POM that declares no license.
 
 ### updateThirdPartyLicenses
 
 Reads the CycloneDX BOM and generates two report files in the configured `thirdPartyLicenseDirectory`.
-It validates licenses the same way as `checkApprovedLicenses` and fails with the same message when any dependency has
-an unapproved or unknown license.
+It validates licenses the same way as `checkApprovedLicenses` and fails on the same problems with the same message.
 - `licenses`: plaintext report (or `<prefix>licenses` if `outputFileNamePrefix` is set)
 - `licenses.html`: HTML report (or `<prefix>licenses.html` if `outputFileNamePrefix` is set)
 
@@ -159,8 +159,8 @@ The `outputFileNamePrefix` property can be set to prefix the output file names, 
 Writes `build/sbom/<sbomName>.cdx.json`, a CycloneDX JSON SBOM derived from the `generateDependencyBom` output.
 Nothing ships it by itself: add it to a distribution or image where the product is assembled, for example
 `from(tasks.named("generateSbom")) { into("sbom") }` in a `Zip` task. It validates licenses the same way as
-`checkApprovedLicenses` and fails with the same message when any dependency has an unapproved or unknown license, so
-a build that ships the SBOM needs no separate license check.
+`checkApprovedLicenses` and fails on the same problems with the same message, so a build that ships the SBOM needs no
+separate license check.
 
 The CycloneDX Gradle plugin writes a file that differs on every run (current time, random serial number, the CI run
 URL, a `vcs` reference taken from the `GIT_URL` variable or from the directory Gradle was started in), which changes
@@ -248,12 +248,11 @@ requires beyond CycloneDX's defaults:
   do not list, or an identified component the reports leave out, keeps only those, tagged `declared`; any other gets
   what this plugin concludes, tagged `concluded`, in one of two shapes:
   - One SPDX expression naming every declared license, approved or not, when no override or built-in license covers the
-    component and the declared licenses name more than one license and each has an SPDX form, which only an id or
-    expression CycloneDX wrote has; a license given only by a name or URL has none, even one the plugin recognizes,
-    since the plugin's patterns approve a license without describing it exactly. A list of license entries is read as a
-    choice, as the Maven model defines it; only an `AND`, in a declared expression or a built-in one (see Built-in
-    expressions), means that several apply together. A module with a built-in expression is read as if its POM declared
-    that expression alone. The concluded expression is written in canonical form (see the expression rules under
+    component and its declared licenses name more than one license: a declared expression that does, each license with
+    an SPDX id, or a list of several licenses, which the plugin accepts only for a module with a built-in expression and
+    reads as if its POM declared that expression alone (see Built-in expressions). A list of license entries is read as
+    a choice, as the Maven model defines it; only an `AND`, in a declared expression or a built-in one, means that
+    several apply together. The concluded expression is written in canonical form (see the expression rules under
     CycloneDX BOM), for example `EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0` for `jakarta.annotation-api`, and
     is the component's only license entry: the declared entries are dropped, with the license URL or text CycloneDX
     wrote for them, because a CycloneDX 1.6 license list holds either license objects or one expression, and the
@@ -264,9 +263,9 @@ requires beyond CycloneDX's defaults:
   - Otherwise the declared entries stay, tagged `declared`, and one license object tagged `concluded` is added per
     license the reports list; a declared expression is then kept whole as the `name` of its entry, its `bom-ref`
     included, because the list cannot mix it with license objects. That is the case for a component with one license,
-    for one that an override or a built-in license covers, and for one with a declared license that has no SPDX form (a
-    license given only by a name or URL, recognized or not) or a declared expression that is malformed or too complex to
-    evaluate.
+    also one that names it several times, for example once by id and once by a name the plugin maps to the same
+    license, for one that an override or a built-in license covers, and for a declared expression that names a license
+    without an SPDX id, such as `Public Domain OR MIT`.
 
 The file names and the completeness follow the configurations the BOM is built from: `runtimeClasspath` and the
 `additionalConfigurations`, which are the only ones `generateDependencyBom` reads; a gap declared in
@@ -275,13 +274,14 @@ The file names and the completeness follow the configurations the BOM is built f
 Known gaps: first-party components (the top-level component and the projects of this build and of included builds) carry
 no license, so a project dependency of a group that is not the build's own fails `generateSbom` like it fails
 `checkApprovedLicenses` unless an override names it (a project of an own group is internal and left out, a public HiveMQ
-one is listed as Apache-2.0, any other public one needs the override); a component with a declared license that has no
-SPDX form, or a declared expression that cannot be evaluated, gets one concluded object per elected license instead of
-the single SPDX expression BSI TR-03183-2 shows; an override or a built-in license gives a single license, so a
-component it covers gets that license alone as concluded, even when the library offers a choice; CycloneDX drops a POM's
-`<comments>`, so the plugin cannot detect comments that give its list of licenses a meaning other than the choice the
-Maven model defines, and such a module needs a built-in expression (see Built-in expressions); files other than `.jar`
-and `.zip` get a file name but no executable, archive or structured property; and a component whose POM inherits
+one is listed as Apache-2.0, any other public one needs the override); an override or a built-in license gives a single
+license, so a component it covers gets that license alone as concluded, even when the library offers a choice; a
+declared expression that names a license without an SPDX id, such as `Public Domain OR MIT`, gets one concluded object
+per elected license instead of the single SPDX expression BSI TR-03183-2 shows; a module whose BOM lists several
+licenses needs a built-in expression, which takes a plugin release, or an override until then, because CycloneDX drops
+the POM's `<comments>` that may give the list a meaning other than a choice, while a POM list that CycloneDX writes as
+one expression passes as a declared expression, unreviewed (see Built-in expressions); files other than `.jar` and
+`.zip` get a file name but no executable, archive or structured property; and a component whose POM inherits
 `<organization>` and `<scm>` from a parent POM gets no creator, as described above.
 
 Deliberate deviations: the serial number is derived from the content, while CycloneDX recommends a new serial number
@@ -423,7 +423,8 @@ Expressions follow these rules:
   exception are not approved, so a dependency under `Apache-2.0 WITH LLVM-exception` needs an entry in
   `overriddenLicenses`.
 - A malformed expression, or one with more alternatives or deeper nesting than the plugin evaluates, satisfies
-  nothing, and the message says so when no other entry of the component is approved.
+  nothing, and the message says so when no entry of the component is approved; next to an approved entry it counts as
+  a license of its own, so the list needs a built-in expression (see Built-in expressions).
 - Declared entries the SBOM keeps stay as written, but its concluded expression is in canonical form:
   - A deprecated id, from a declared license entry or expression, takes the replacement the SPDX license list names
     for it: `GPL-2.0` becomes `GPL-2.0-only` and `GPL-2.0+` becomes `GPL-2.0-or-later`, likewise for the other GPL,
@@ -512,12 +513,23 @@ BOM.
 ### Built-in expressions
 
 A list of several `<license>` elements in a POM is a choice: the Maven model says that "the user can select any of them,
-not that they must accept all", and `generateSbom` writes it as one `OR` expression when every entry has an SPDX form.
-These modules need an expression the plugin cannot derive from the BOM: the POM of `logstash-logback-encoder` says in a
-`<comments>` element, which CycloneDX drops, that its MIT entry covers code copied from SLF4J, so both licenses apply;
-`rocksdbjni` and `resteasy-tracing-api` give their GPL license by a name CycloneDX maps to no SPDX id, so neither list
-has an SPDX form. For these, the plugin carries the SPDX expression the list means and resolves the module as if its POM
-declared that expression, for the reports and the SBOM alike:
+not that they must accept all". A POM can say otherwise only in a `<comments>` element, which CycloneDX drops: the POM
+of `logstash-logback-encoder` says there that its MIT entry covers code copied from SLF4J, so both licenses apply. The
+plugin therefore accepts a module whose BOM lists several licenses only with a built-in expression, the SPDX expression
+the list means as reviewed against the module's POM, and resolves the module as if its POM declared that expression, for
+the reports and the SBOM alike. Any other module that lists several licenses fails the three tasks, naming its list,
+until a plugin release adds it; an override can stand in until then. A list that names one license several times, for
+example once by id and once by a name the plugin maps to the same license, names one license, and a single declared
+expression of a module outside the table needs no built-in expression, as it states its meaning itself. The table speaks
+for lists of several licenses only: a module in it whose version declares a single license resolves as that license,
+like any other module.
+
+For most modules the list declares the expression itself, a choice of its licenses; they are listed in
+`BUILT_IN_EXPRESSIONS` in `LicenseResolver.kt` (the Jakarta, JAX-RS, JAXB and HK2 APIs, Eclipse Collections, Jetty,
+JNA, JTS, Logback, java-json-tools, Javassist and Reflections). A module whose versions declare different lists, as
+JNA's LGPL entry became "or later", has one expression per list. Three modules need an expression their list does not
+declare, so their entries record the list as CycloneDX writes it: logstash's licenses apply together, and `rocksdbjni`
+and `resteasy-tracing-api` give their GPL license by a name CycloneDX maps to no SPDX id:
 
 | Artifact                                        | Declared in the BOM                                                           | Expression                                             |
 |-------------------------------------------------|-------------------------------------------------------------------------------|--------------------------------------------------------|
@@ -525,10 +537,10 @@ declared that expression, for the reports and the SBOM alike:
 | `org.jboss.resteasy:resteasy-tracing-api`       | EPL-2.0, "GNU General Public License, Version 2 with the Classpath Exception" | `EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0` |
 | `org.rocksdb:rocksdbjni`                        | Apache-2.0, "GNU General Public License, version 2"                           | `Apache-2.0 OR GPL-2.0-only`                           |
 
-Each entry records the declared list it was written for; a version that declares another list fails the build, naming
-both lists, so the expression gets a review instead of going stale. An override wins over a built-in expression, as it
-does over a built-in license. The plugin cannot see a POM's `<comments>`, so another module whose comments change the
-meaning of its list needs a new entry in this table, which takes a plugin release.
+A module passes while its list is the recorded one, in any order, or declares one of its expressions itself, for example
+with the GPL license of the last two given by an SPDX id; any other list or expression naming several licenses fails the
+build, naming both, so the expression gets a review instead of going stale. An override wins over a built-in expression,
+as it does over a built-in license.
 
 ## How It Works
 
@@ -537,9 +549,10 @@ meaning of its list needs a new entry in this table, which takes a plugin releas
    task writes `build/license/bom.json` from `runtimeClasspath` and the `additionalConfigurations`.
 2. The three tasks, `checkApprovedLicenses`, `updateThirdPartyLicenses` and `generateSbom`, parse the generated BOM and resolve licenses using SPDX IDs, license name patterns, and URL-based matching; the first two also read pnpm JSON.
    `generateSbom` writes the resolved licenses as the concluded ones; when no override or built-in license covers the
-   component and the declared licenses name more than one license and each has an SPDX form, it writes a single SPDX
-   expression naming every declared license instead. A module with a built-in expression is resolved as if its POM
-   declared that expression alone.
+   component and its declared licenses name more than one license, each with an SPDX form, it writes a single SPDX
+   expression naming every one instead. A module whose BOM lists several licenses fails all three unless the plugin
+   has a built-in expression for it or an override names its license; with a built-in expression it is resolved as if
+   its POM declared that expression alone.
 3. Own modules, the ones under `ignoredGroupPrefixes`, are listed when `allowedArtifacts` names them and left out
    otherwise; a Maven module that declares a license, or whose metadata is incomplete, fails the build unless listed,
    since internal modules declare none; projects of the build and pnpm packages never fail.

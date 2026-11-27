@@ -203,6 +203,37 @@ class CheckApprovedLicensesTaskTest {
     }
 
     @Test
+    fun `fails with a dependency that lists several licenses without a built-in expression`() {
+        setup()
+        writeBom(
+            """
+            {
+              "components": [
+                {
+                  "group": "com.example",
+                  "name": "dual-lib",
+                  "version": "1.0.0",
+                  "licenses": [
+                    { "license": { "id": "EPL-2.0" } },
+                    { "license": { "id": "Apache-2.0" } }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        writeBuildFile()
+
+        val result = gradleRunner().buildAndFail()
+
+        assertThat(result.task(":checkApprovedLicenses")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output).contains(
+            "Declared licenses of 'com.example:dual-lib:1.0.0' are 'EPL-2.0', 'Apache-2.0', a list the plugin reads " +
+                "as a choice but has no built-in expression for"
+        )
+    }
+
+    @Test
     fun `fails with no licenses`() {
         setup()
         writeBom(
@@ -408,9 +439,9 @@ class CheckApprovedLicensesTaskTest {
             {
               "components": [
                 {
-                  "group": "javax.annotation",
-                  "name": "javax.annotation-api",
-                  "version": "1.3.2",
+                  "group": "org.eclipse.jetty",
+                  "name": "jetty-util",
+                  "version": "12.1.15",
                   "licenses": [
                     { "license": { "id": "EPL-2.0" } },
                     { "license": { "id": "Apache-2.0" } }

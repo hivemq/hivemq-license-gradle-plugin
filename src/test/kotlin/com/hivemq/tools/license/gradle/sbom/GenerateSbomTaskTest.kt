@@ -110,10 +110,10 @@ class GenerateSbomTaskTest {
         )
     }
 
-    /** Adds `org.example:dual`, which offers the two licenses of jakarta.annotation-api as alternatives. */
+    /** Adds jakarta.annotation-api, which offers two licenses as alternatives, a choice the plugin has reviewed. */
     private fun addDualLicensedComponent() {
-        val dual = """{ "group": "org.example", "name": "dual", "version": "1.0", """ +
-            """"purl": "pkg:maven/org.example/dual@1.0?type=jar", "licenses": [ """ +
+        val dual = """{ "group": "jakarta.annotation", "name": "jakarta.annotation-api", "version": "1.0", """ +
+            """"purl": "pkg:maven/jakarta.annotation/jakarta.annotation-api@1.0?type=jar", "licenses": [ """ +
             """{ "license": { "id": "EPL-2.0" } }, { "license": { "id": "GPL-2.0-with-classpath-exception" } } ] },"""
         projectDir.resolve("bom.json").writeText(
             projectDir.resolve("bom.json").readText().replace(""""components": [""", """"components": [ $dual""")
@@ -804,13 +804,14 @@ class GenerateSbomTaskTest {
         setup()
         addDualLicensedComponent()
         val buildScript = projectDir.resolve("build.gradle.kts")
-        val overrides = """mapOf("org.example:lib" to "MIT", "org.example:dual" to "EPL-2.0")"""
+        val overrides =
+            """mapOf("org.example:lib" to "MIT", "jakarta.annotation:jakarta.annotation-api" to "EPL-2.0")"""
         buildScript.writeText(buildScript.readText().replace("""mapOf("org.example:lib" to "MIT")""", overrides))
 
         gradleRunner().build()
 
         val sbom = ObjectMapper().readTree(projectDir.resolve("build/sbom/app.cdx.json"))
-        val dual = sbom["components"].first { it["name"].asText() == "dual" }
+        val dual = sbom["components"].first { it["name"].asText() == "jakarta.annotation-api" }
         val expected = """[ { "license": { "id": "EPL-2.0", "acknowledgement": "declared" } }, """ +
             """{ "license": { "id": "GPL-2.0-with-classpath-exception", "acknowledgement": "declared" } }, """ +
             """{ "license": { "id": "EPL-2.0", "acknowledgement": "concluded" } } ]"""
@@ -1040,10 +1041,28 @@ class GenerateSbomTaskTest {
         gradleRunner().build()
 
         val sbom = ObjectMapper().readTree(projectDir.resolve("build/sbom/app.cdx.json"))
-        val dual = sbom["components"].first { it["name"].asText() == "dual" }
+        val dual = sbom["components"].first { it["name"].asText() == "jakarta.annotation-api" }
         val expected = """[ { "expression": "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0", """ +
             """"acknowledgement": "concluded" } ]"""
         assertThat(dual["licenses"]).isEqualTo(ObjectMapper().readTree(expected))
+    }
+
+    @Test
+    fun `writes the built-in expression of a module whose licenses apply together as its concluded expression`() {
+        setup()
+        val logstash = """{ "group": "net.logstash.logback", "name": "logstash-logback-encoder", """ +
+            """"version": "9.0", "purl": "pkg:maven/net.logstash.logback/logstash-logback-encoder@9.0?type=jar", """ +
+            """"licenses": [ { "license": { "id": "Apache-2.0" } }, { "license": { "id": "MIT" } } ] },"""
+        projectDir.resolve("bom.json").writeText(
+            projectDir.resolve("bom.json").readText().replace(""""components": [""", """"components": [ $logstash""")
+        )
+
+        gradleRunner().build()
+
+        val sbom = ObjectMapper().readTree(projectDir.resolve("build/sbom/app.cdx.json"))
+        val component = sbom["components"].first { it["name"].asText() == "logstash-logback-encoder" }
+        val expected = """[ { "expression": "Apache-2.0 AND MIT", "acknowledgement": "concluded" } ]"""
+        assertThat(component["licenses"]).isEqualTo(ObjectMapper().readTree(expected))
     }
 
     @Test

@@ -304,4 +304,49 @@ class SpdxExpressionTest {
     fun `writes a single conjunction without parentheses`() {
         assertThat(SpdxExpression.expressionOf(listOf(tree("MIT AND ISC")))).isEqualTo("MIT AND ISC")
     }
+
+    // --- Same expression ---
+
+    @Test
+    fun `is not the same expression for a license that is not an SPDX id`() {
+        assertThat(SpdxExpression.sameExpression(Leaf("Public Domain"), Leaf("Public Domain"))).isFalse()
+    }
+
+    @Test
+    fun `is not the same expression for another operator`() {
+        assertThat(SpdxExpression.sameExpression(tree("Apache-2.0 AND MIT"), tree("Apache-2.0 OR MIT"))).isFalse()
+    }
+
+    @Test
+    fun `is not the same expression for null`() {
+        assertThat(SpdxExpression.sameExpression(null, tree("MIT"))).isFalse()
+        assertThat(SpdxExpression.sameExpression(tree("MIT"), null)).isFalse()
+    }
+
+    @Test
+    fun `is the same expression for a deprecated id and its current form`() {
+        val deprecated = tree("EPL-2.0 OR GPL-2.0-with-classpath-exception")
+        val current = tree("EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0")
+
+        assertThat(SpdxExpression.sameExpression(deprecated, current)).isTrue()
+    }
+
+    @Test
+    fun `is the same expression for a group repeated in another order`() {
+        val repeated = tree("(MIT AND ISC) OR (ISC AND MIT)")
+
+        assertThat(SpdxExpression.sameExpression(repeated, tree("MIT AND ISC"))).isTrue()
+    }
+
+    @Test
+    fun `is the same expression regardless of the case of ids`() {
+        assertThat(SpdxExpression.sameExpression(tree("wtfpl OR mit"), tree("WTFPL OR MIT"))).isTrue()
+    }
+
+    @Test
+    fun `is the same expression whatever the order of the operands of a group`() {
+        val first = tree("Apache-2.0 OR (MIT AND ISC)")
+
+        assertThat(SpdxExpression.sameExpression(first, tree("(ISC AND MIT) OR Apache-2.0"))).isTrue()
+    }
 }
