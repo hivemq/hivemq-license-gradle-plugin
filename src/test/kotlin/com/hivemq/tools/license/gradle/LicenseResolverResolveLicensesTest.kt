@@ -2527,6 +2527,14 @@ class LicenseResolverResolveLicensesTest {
     }
 
     @Test
+    fun `counts an expression entry that names a license without an SPDX id as a license of its own`() {
+        // the expression elects MIT, but it is not MIT alone
+        assertThatThrownBy { libWith(idEntry("MIT"), expressionEntry("Public Domain OR MIT")) }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("are 'MIT', 'Public Domain OR MIT', a list the plugin reads as a choice")
+    }
+
+    @Test
     fun `counts an id and a name the plugin's patterns map to it as one license`() {
         // the patterns read "v2.1 only" as or-later, so the name adds no license of its own
         val lib = libWith(idEntry("LGPL-2.1-or-later"), nameEntry("GNU Lesser General Public License v2.1 only"))

@@ -423,11 +423,12 @@ object LicenseResolver {
     }
 
     /**
-     * What tells two entries of a list apart: what was declared, as its order-free canonical key, else the approved
-     * licenses, else the name, so that one license given by id and by a name the plugin maps to it counts once.
+     * What tells two entries of a list apart: what was declared, as its order-free canonical key or, without a
+     * canonical form, as written; else the approved licenses, else the name, so that one license given by id and by a
+     * name the plugin maps to it counts once.
      */
     private fun licenseKey(option: LicenseOption): String =
-        option.declared?.key()
+        option.declared?.let { it.key() ?: it.render().lowercase() }
             ?: option.licenses?.joinToString(" AND ") { it.id.lowercase() }
             ?: option.name.lowercase()
 
