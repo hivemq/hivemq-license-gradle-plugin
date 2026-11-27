@@ -639,9 +639,9 @@ class UpdateThirdPartyLicensesTaskTest {
                   ]
                 },
                 {
-                  "group": "com.example",
-                  "name": "dual-license-lib",
-                  "version": "1.0.0",
+                  "group": "org.eclipse.jetty",
+                  "name": "jetty-util",
+                  "version": "12.1.15",
                   "licenses": [
                     { "license": { "id": "EPL-2.0" } },
                     { "license": { "id": "Apache-2.0" } }
@@ -659,10 +659,10 @@ class UpdateThirdPartyLicensesTaskTest {
         assertThat(plaintext)
             .contains("com.google.guava:guava")
             .contains("org.slf4j:slf4j-api")
-            .contains("com.example:dual-license-lib")
-        // dual-license should prefer Apache-2.0
+            .contains("org.eclipse.jetty:jetty-util")
+        // a reviewed choice of two licenses lists the preferred one, Apache-2.0
         val lines = plaintext.lines()
-        val dualLicenseLine = lines.find { it.contains("com.example:dual-license-lib") }!!
+        val dualLicenseLine = lines.find { it.contains("org.eclipse.jetty:jetty-util") }!!
         assertThat(dualLicenseLine).contains("Apache-2.0")
     }
 

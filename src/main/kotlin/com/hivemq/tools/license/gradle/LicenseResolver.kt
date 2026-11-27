@@ -26,8 +26,8 @@ import java.util.*
  * A dependency and the licenses it is used under, every one of which applies. [declaredExpression] is one SPDX
  * expression in canonical form naming every way the dependency's declared licenses allow it to be used, when they name
  * more than one license; null for a pnpm package, for a single license, for a license not taken from the declared
- * entries (an override, a built-in license, a project module) and when a declared entry has no SPDX form or is
- * malformed or too complex to evaluate; a built-in expression counts as declared.
+ * entries (an override, a built-in license, a project module) and for a declared expression that names a license
+ * without an SPDX form; a built-in expression counts as declared.
  */
 data class ResolvedDependency(
     val coordinates: Coordinates,
@@ -97,30 +97,98 @@ object LicenseResolver {
         "org.w3c.css:sac" to KnownLicense.W3C_19980720,
     )
 
-    /**
-     * What a POM's license list means where the plugin cannot read it from the BOM: the license entries as CycloneDX
-     * writes them, and the SPDX expression they mean. The Maven model defines a list as a choice, but logstash's POM
-     * says in a comment, which CycloneDX drops, that both of its licenses apply. A GPL license given only by name has
-     * no SPDX form. The module is resolved as if its POM declared the expression, and a list with other entries fails
-     * the build, so the expression is reviewed instead of going stale.
-     */
-    val BUILT_IN_EXPRESSIONS = mapOf(
-        "net.logstash.logback:logstash-logback-encoder" to BuiltInExpression(
-            listOf("Apache-2.0", "MIT"),
-            "Apache-2.0 AND MIT",
-        ),
-        "org.jboss.resteasy:resteasy-tracing-api" to BuiltInExpression(
-            listOf("EPL-2.0", "GNU General Public License, Version 2 with the Classpath Exception"),
-            "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0",
-        ),
-        "org.rocksdb:rocksdbjni" to BuiltInExpression(
-            listOf("Apache-2.0", "GNU General Public License, version 2"),
-            "Apache-2.0 OR GPL-2.0-only",
-        ),
-    )
+    // the reviewed meaning of each multi-license POM list, one per list a module's versions declare; a module whose
+    // BOM lists several licenses fails without an entry here (README, Built-in expressions)
+    internal val BUILT_IN_EXPRESSIONS: Map<String, List<BuiltInExpression>> =
+        buildMap<String, MutableList<BuiltInExpression>> {
+            fun add(module: String, builtIn: BuiltInExpression) = getOrPut(module) { mutableListOf() }.let { list ->
+                check(builtIn !in list) { "'$module' lists $builtIn twice" }
+                val recorded = builtIn.declared.normalized()
+                check(recorded.isEmpty() || list.none { it.declared.normalized() == recorded }) {
+                    "'$module' records the list ${builtIn.declared} twice"
+                }
+                list += builtIn
+            }
 
-    /** The [declared] license entries of a module, each as CycloneDX writes it, and the [expression] they mean. */
-    data class BuiltInExpression(val declared: List<String>, val expression: String)
+            fun choice(expression: String, vararg modules: String) =
+                modules.forEach { add(it, BuiltInExpression(expression)) }
+
+            fun replacement(module: String, expression: String, vararg declared: String) =
+                add(module, BuiltInExpression(expression, declared.toList()))
+
+            choice("CDDL-1.1 OR GPL-2.0-only WITH Classpath-exception-2.0", "javax.xml.bind:jaxb-api")
+            choice(
+                "EPL-1.0 OR BSD-3-Clause",
+                "org.eclipse.collections:eclipse-collections",
+                "org.eclipse.collections:eclipse-collections-api",
+                "org.eclipse.collections:eclipse-collections-forkjoin",
+            )
+            choice(
+                "EPL-2.0 OR Apache-2.0",
+                "org.eclipse.jetty.ee11:jetty-ee11-servlet",
+                "org.eclipse.jetty:jetty-bom",
+                "org.eclipse.jetty:jetty-http",
+                "org.eclipse.jetty:jetty-io",
+                "org.eclipse.jetty:jetty-security",
+                "org.eclipse.jetty:jetty-server",
+                "org.eclipse.jetty:jetty-session",
+                "org.eclipse.jetty:jetty-util",
+            )
+            choice("EPL-2.0 OR BSD-3-Clause", "org.locationtech.jts:jts-core")
+            choice(
+                "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0",
+                "jakarta.annotation:jakarta.annotation-api",
+                "jakarta.servlet:jakarta.servlet-api",
+                "jakarta.ws.rs:jakarta.ws.rs-api",
+                "javax.ws.rs:javax.ws.rs-api",
+                "org.glassfish.hk2.external:aopalliance-repackaged",
+                "org.glassfish.hk2:hk2-api",
+                "org.glassfish.hk2:hk2-locator",
+                "org.glassfish.hk2:hk2-utils",
+                "org.glassfish.hk2:osgi-resource-locator",
+            )
+            choice("EPL-2.0 OR LGPL-2.1-only", "ch.qos.logback:logback-classic", "ch.qos.logback:logback-core")
+            choice("LGPL-2.1-only OR Apache-2.0", "net.java.dev.jna:jna", "net.java.dev.jna:jna-platform")
+            choice(
+                "LGPL-2.1-or-later OR Apache-2.0",
+                "net.java.dev.jna:jna",
+                "net.java.dev.jna:jna-jpms",
+                "net.java.dev.jna:jna-platform",
+                "net.java.dev.jna:jna-platform-jpms",
+            )
+            choice(
+                "LGPL-3.0-or-later OR Apache-2.0",
+                "com.github.java-json-tools:btf",
+                "com.github.java-json-tools:jackson-coreutils",
+                "com.github.java-json-tools:json-patch",
+                "com.github.java-json-tools:msg-simple",
+            )
+            choice("MPL-1.1 OR LGPL-2.1-only OR Apache-2.0", "org.javassist:javassist")
+            choice("WTFPL OR Apache-2.0", "org.reflections:reflections")
+            replacement("net.logstash.logback:logstash-logback-encoder", "Apache-2.0 AND MIT", "Apache-2.0", "MIT")
+            replacement(
+                "org.jboss.resteasy:resteasy-tracing-api",
+                "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0",
+                "EPL-2.0",
+                "GNU General Public License, Version 2 with the Classpath Exception",
+            )
+            replacement(
+                "org.rocksdb:rocksdbjni",
+                "Apache-2.0 OR GPL-2.0-only",
+                "Apache-2.0",
+                "GNU General Public License, version 2",
+            )
+        }
+
+    /**
+     * The SPDX [expression] a module's license list means, and the [declared] entries, each as CycloneDX writes it, of
+     * a list that does not declare the expression itself; empty for a list that does.
+     */
+    internal data class BuiltInExpression(val expression: String, val declared: List<String> = emptyList())
+
+    // what to do about a list of several licenses the plugin has not reviewed in this form
+    private const val LIST_REMEDY = "check the POM's <comments>, then add the list to the plugin's built-in " +
+        "expressions, or name the license in overriddenLicenses until a release has it"
 
     // maps SPDX license IDs from CycloneDX to known licenses (first match in LICENSE_ORDER wins)
     val SPDX_ID_MAP = buildMap {
@@ -212,32 +280,25 @@ object LicenseResolver {
                 entries[coordinates.moduleId] = ResolvedDependency(coordinates, listOf(resolvedLicense))
                 return
             }
-            val choices = component.licenses ?: emptyList()
-            // a built-in expression stands in for the whole list, as long as the list is the one it was written for;
-            // with no entries there is nothing to stand in for, and the module fails like any other without a license
-            val builtIn = BUILT_IN_EXPRESSIONS[coordinates.moduleId]?.takeIf { choices.isNotEmpty() }
-            if (builtIn != null) {
-                val written = choices.map(::describeChoice)
-                if (written.sorted() != builtIn.declared.sorted()) {
-                    problems += "Declared licenses of '$coordinates'${describeUnresolvedMetadata(component)} are " +
-                        "${quote(written)}, but the plugin's built-in expression '${builtIn.expression}' was written " +
-                        "for ${quote(builtIn.declared)}: update the plugin, or name the license in overriddenLicenses"
-                    return
-                }
+            // an entry that offers nothing is no part of the list
+            val listed = component.licenses.orEmpty().filterNot(::offersNothing)
+            // every entry is one way the component may be used
+            val declaredOptions = listed.mapNotNull { licenseOption(it, coordinates) }
+            val written = listed.map(::describeChoice)
+            // the table covers lists of several licenses; one license, or none, resolves as for any other module
+            val builtIns = if (namesSeveralLicenses(declaredOptions)) {
+                BUILT_IN_EXPRESSIONS[coordinates.moduleId].orEmpty()
+            } else {
+                emptyList()
             }
-            // every entry is one way the component may be used; a built-in expression replaces the list as the only way
-            val options = builtIn?.let { listOf(expressionOption(it.expression)) } ?: choices.mapNotNull { choice ->
-                val license = choice.license
-                val expression = choice.expression
-                when {
-                    license != null -> convertLicense(license, coordinates).let {
-                        LicenseOption((it as? KnownLicense)?.let(::listOf), it.fullName, declaredLicense(license))
-                    }
-
-                    expression != null -> expressionOption(expression)
-                    else -> null
-                }
+            val builtIn = builtIns.firstOrNull { it.covers(written, declaredOptions) }
+            if (builtIns.isNotEmpty() && builtIn == null) {
+                problems += "Declared licenses of '$coordinates'${describeUnresolvedMetadata(component)} are " +
+                    "${quote(written)}, but ${describeBuiltIns(builtIns)}: $LIST_REMEDY"
+                return
             }
+            // a built-in expression replaces the list as the only way
+            val options = builtIn?.let { listOf(expressionOption(it.expression)) } ?: declaredOptions
             if (options.isEmpty()) {
                 // Apache-2.0 for a public HiveMQ module built as a project, which has no POM and so no license in the
                 // BOM; a published version of the same module declares its license
@@ -253,6 +314,13 @@ object LicenseResolver {
             if (chosenLicenses == null) {
                 problems += "License not on the approved list for '$coordinates'" +
                     "${describeUnresolvedMetadata(component)}: ${options.joinToString { it.name }}"
+                return
+            }
+            // a list of several licenses passes only as reviewed, as its POM may say in a comment that they all apply
+            if (builtIn == null && options.distinctBy(::licenseKey).size > 1) {
+                problems += "Declared licenses of '$coordinates'${describeUnresolvedMetadata(component)} are " +
+                    "${quote(written)}, a list the plugin reads as a choice but has no built-in expression for: " +
+                    LIST_REMEDY
                 return
             }
             val declared = SpdxExpression.expressionOf(options.map { it.declared })
@@ -286,6 +354,74 @@ object LicenseResolver {
     private fun declaredLicense(entry: DependencyReport.LicenseEntry): SpdxExpression.Node? =
         entry.id?.let { SpdxExpression.Node.Leaf(it) }
 
+    /** Whether a license entry offers nothing: no expression and no license id, name or URL that is not blank. */
+    private fun offersNothing(choice: DependencyReport.LicenseChoice): Boolean = choice.expression.isNullOrBlank() &&
+        choice.license?.run { id.isNullOrBlank() && name.isNullOrBlank() && url.isNullOrBlank() } != false
+
+    /**
+     * The entries of a license list in a fixed order and in lower case, as SPDX matches ids regardless of case and a
+     * name differing only in case names the same license.
+     */
+    private fun List<String>.normalized() = map { it.lowercase() }.sorted()
+
+    /** The way one entry of a license list allows use; null for an entry with neither a license nor an expression. */
+    private fun licenseOption(choice: DependencyReport.LicenseChoice, coordinates: Coordinates): LicenseOption? {
+        val license = choice.license
+        val expression = choice.expression
+        return when {
+            license != null -> convertLicense(license, coordinates).let {
+                LicenseOption((it as? KnownLicense)?.let(::listOf), it.fullName, declaredLicense(license))
+            }
+
+            expression != null -> expressionOption(expression)
+            else -> null
+        }
+    }
+
+    /**
+     * What tells two entries of a list apart: what was declared, as its order-free canonical key, else the approved
+     * licenses, else the name, so that one license given by id and by a name the plugin maps to it counts once.
+     */
+    private fun licenseKey(option: LicenseOption): String =
+        option.declared?.key()
+            ?: option.licenses?.joinToString(" AND ") { it.id.lowercase() }
+            ?: option.name.lowercase()
+
+    /**
+     * Whether the entries of a list allowing the [options] name several licenses: different ones, or one declared
+     * expression that combines several, also one with a license without an SPDX form.
+     */
+    private fun namesSeveralLicenses(options: List<LicenseOption>): Boolean =
+        options.distinctBy(::licenseKey).size > 1 || options.any { option ->
+            val declared = option.declared
+            // a tree with no canonical form still combines several, while "MIT OR mit" names one
+            declared != null && declared !is SpdxExpression.Node.Leaf &&
+                declared.canonical() !is SpdxExpression.Node.Leaf
+        }
+
+    /**
+     * Whether this built-in expression stands in for a list [written] as CycloneDX wrote it, whose entries allow the
+     * [options]: the entries it was written for in any order, or entries that, read as a choice, declare the expression
+     * themselves, as SPDX ids or as one expression.
+     */
+    private fun BuiltInExpression.covers(written: List<String>, options: List<LicenseOption>): Boolean {
+        if (declared.isNotEmpty() && written.normalized() == declared.normalized()) return true
+        val alternatives = options.map { it.declared ?: return false }
+        return SpdxExpression.sameExpression(SpdxExpression.Node.Or(alternatives), SpdxExpression(expression).tree)
+    }
+
+    /** What the [builtIns] of a module were written for, the lists they record and any list that declares one. */
+    private fun describeBuiltIns(builtIns: List<BuiltInExpression>): String {
+        val expressions = builtIns.joinToString(" or ") { "'${it.expression}'" }
+        val recorded = builtIns.filter { it.declared.isNotEmpty() }
+            .joinToString("") { "the list ${quote(it.declared)} or " }
+        val (subject, target) = when (builtIns.size) {
+            1 -> "expression $expressions was" to "it"
+            else -> "expressions $expressions were" to "one of them"
+        }
+        return "the plugin's built-in $subject written for ${recorded}a list that declares $target"
+    }
+
     /** The way a declared SPDX [expression] allows use: its licenses when approved, how it reads, and its tree. */
     private fun expressionOption(expression: String): LicenseOption = SpdxExpression(expression).let { parsed ->
         val result = parsed.evaluate()
@@ -296,6 +432,7 @@ object LicenseResolver {
     private fun describeChoice(choice: DependencyReport.LicenseChoice): String =
         choice.expression ?: choice.license?.run { id ?: name ?: url } ?: ""
 
+    /** The [items], each in single quotes, separated by commas. */
     private fun quote(items: List<String>) = items.joinToString { "'$it'" }
 
     // the file the licenses were read from and, when known, how this build obtained it; finding out the origin may

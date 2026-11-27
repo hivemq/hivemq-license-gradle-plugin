@@ -210,28 +210,12 @@ class LicenseResolverResolveLicensesTest {
     }
 
     @Test
-    fun `chooses preferred license when multiple are present`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "dual-license-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "license": { "id": "EPL-2.0" } },
-                    { "license": { "id": "Apache-2.0" } }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+    fun `chooses the preferred license when a reviewed module declares several`() {
+        val bom = writeModuleBom("org.eclipse.jetty", "jetty-util", idEntry("EPL-2.0"), idEntry("Apache-2.0"))
 
         val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
 
-        assertThat(result["com.example:dual-license-lib"]!!.licenses).containsExactly(KnownLicense.APACHE_2_0)
+        assertThat(result.getValue("org.eclipse.jetty:jetty-util").licenses).containsExactly(KnownLicense.APACHE_2_0)
     }
 
     @Test
@@ -1828,28 +1812,15 @@ class LicenseResolverResolveLicensesTest {
     }
 
     @Test
-    fun `treats a license entry and an expression entry as alternatives`() {
-        val bom = writeBom(
-            """
-            {
-              "components": [
-                {
-                  "group": "com.example",
-                  "name": "expr-lib",
-                  "version": "1.0.0",
-                  "licenses": [
-                    { "license": { "name": "Some Proprietary License" } },
-                    { "expression": "MIT AND ISC" }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent()
-        )
+    fun `treats a license entry and an expression entry of a reviewed module as alternatives`() {
+        val gpl = expressionEntry("GPL-2.0-only WITH Classpath-exception-2.0")
+        val bom = writeModuleBom("jakarta.annotation", "jakarta.annotation-api", idEntry("EPL-2.0"), gpl)
 
-        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+        val lib = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+            .getValue("jakarta.annotation:jakarta.annotation-api")
 
-        assertThat(result["com.example:expr-lib"]!!.licenses).containsExactly(KnownLicense.MIT, KnownLicense.ISC)
+        assertThat(lib.licenses).containsExactly(KnownLicense.EPL_2_0)
+        assertThat(lib.declaredExpression).isEqualTo("EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0")
     }
 
     @Test
@@ -2160,15 +2131,6 @@ class LicenseResolverResolveLicensesTest {
     }
 
     @Test
-    fun `declares a license entry and an expression entry together`() {
-        val lib = libWith(idEntry("EPL-2.0"), expressionEntry("MIT AND ISC"))
-
-        // MIT and ISC together rank above EPL-2.0 alone, as both come earlier in LICENSE_ORDER
-        assertThat(lib.licenses).containsExactly(KnownLicense.MIT, KnownLicense.ISC)
-        assertThat(lib.declaredExpression).isEqualTo("EPL-2.0 OR (MIT AND ISC)")
-    }
-
-    @Test
     fun `declares an expression entry in canonical form`() {
         val lib = libWith(expressionEntry("(CDDL-1.0 OR GPL-2.0-with-classpath-exception)"))
 
@@ -2197,15 +2159,6 @@ class LicenseResolverResolveLicensesTest {
             .getValue("javax.servlet:javax.servlet-api")
 
         assertThat(lib.licenses).containsExactly(KnownLicense.CDDL_1_1)
-        assertThat(lib.declaredExpression).isNull()
-    }
-
-    @Test
-    fun `declares no expression for a license given only by name`() {
-        val lib = libWith(idEntry("EPL-2.0"), idEntry("MIT"), nameEntry("GNU Lesser General Public License v2.1 only"))
-
-        // the name maps to LGPL-2.1-or-later, which grants more than "v2.1 only"; "EPL-2.0 OR MIT" would drop it
-        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
         assertThat(lib.declaredExpression).isNull()
     }
 
@@ -2242,23 +2195,6 @@ class LicenseResolverResolveLicensesTest {
     }
 
     @Test
-    fun `declares no expression for an entry with only a URL`() {
-        val lib = libWith(idEntry("MIT"), """{ "license": { "url": "https://www.apache.org/licenses/LICENSE-2.0" } }""")
-
-        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
-        assertThat(lib.declaredExpression).isNull()
-    }
-
-    @Test
-    fun `declares no expression for an id with a space`() {
-        // no SPDX id has one, so this is free text in the wrong field
-        val lib = libWith(idEntry("MIT"), idEntry("Apache 2.0"))
-
-        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
-        assertThat(lib.declaredExpression).isNull()
-    }
-
-    @Test
     fun `declares no expression for an override`() {
         val bom = writeEntriesBom(idEntry("EPL-2.0"), idEntry("GPL-2.0-with-classpath-exception"))
 
@@ -2266,22 +2202,6 @@ class LicenseResolverResolveLicensesTest {
             bom, defaultIgnoredPrefixes, defaultAllowedArtifacts,
             overriddenLicenses = mapOf("com.example:lib" to "MIT"),
         ).getValue("com.example:lib")
-
-        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
-        assertThat(lib.declaredExpression).isNull()
-    }
-
-    @Test
-    fun `declares no expression when a malformed entry sits next to an approved one`() {
-        val lib = libWith(idEntry("MIT"), expressionEntry("MIT OR )"))
-
-        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
-        assertThat(lib.declaredExpression).isNull()
-    }
-
-    @Test
-    fun `declares no expression when an entry is too complex to evaluate`() {
-        val lib = libWith(idEntry("MIT"), expressionEntry(tooManyAlternatives()))
 
         assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
         assertThat(lib.declaredExpression).isNull()
@@ -2296,18 +2216,13 @@ class LicenseResolverResolveLicensesTest {
     }
 
     @Test
-    fun `declares the alternatives around an entry that is neither a license nor an expression`() {
-        // such an entry offers nothing to choose, so it is no alternative
-        val lib = libWith(idEntry("EPL-2.0"), "{ }", idEntry("MIT"))
-
-        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
-        assertThat(lib.declaredExpression).isEqualTo("EPL-2.0 OR MIT")
-    }
-
-    @Test
-    fun `declares the alternatives of several license entries as one expression`() {
+    fun `declares the alternatives of a reviewed module's license entries as one expression`() {
         // the two license elements of the POM of jakarta.annotation-api, as CycloneDX writes them
-        val lib = libWith(idEntry("EPL-2.0"), idEntry("GPL-2.0-with-classpath-exception"))
+        val gpl = idEntry("GPL-2.0-with-classpath-exception")
+        val bom = writeModuleBom("jakarta.annotation", "jakarta.annotation-api", idEntry("EPL-2.0"), gpl)
+
+        val lib = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+            .getValue("jakarta.annotation:jakarta.annotation-api")
 
         assertThat(lib.licenses).containsExactly(KnownLicense.EPL_2_0)
         assertThat(lib.declaredExpression).isEqualTo("EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0")
@@ -2344,16 +2259,121 @@ class LicenseResolverResolveLicensesTest {
     }
 
     @Test
+    fun `fails when a module with a built-in expression declares an expression with a license without an SPDX id`() {
+        val choice = expressionEntry("Public Domain OR MIT")
+        val bom = writeModuleBom("net.logstash.logback", "logstash-logback-encoder", choice)
+
+        assertThatThrownBy { LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts) }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("are 'Public Domain OR MIT', but the plugin's built-in expression 'Apache-2.0 AND")
+    }
+
+    @Test
+    fun `fails when a module with a built-in expression declares the same licenses combined otherwise`() {
+        val choice = expressionEntry("Apache-2.0 OR MIT")
+        val bom = writeModuleBom("net.logstash.logback", "logstash-logback-encoder", choice)
+
+        assertThatThrownBy { LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts) }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining(
+                "Declared licenses of 'net.logstash.logback:logstash-logback-encoder:1.0.0' are 'Apache-2.0 OR MIT', " +
+                    "but the plugin's built-in expression 'Apache-2.0 AND MIT' was written for"
+            )
+    }
+
+    @Test
     fun `fails when the declared licenses of a module with a built-in expression differ from the recorded ones`() {
-        val bom = writeModuleBom("net.logstash.logback", "logstash-logback-encoder", idEntry("Apache-2.0"))
+        val bom = writeModuleBom(
+            "net.logstash.logback", "logstash-logback-encoder", idEntry("Apache-2.0"), idEntry("BSD-3-Clause"),
+        )
 
         assertThatThrownBy { LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts) }
             .isInstanceOf(IllegalStateException::class.java)
             .hasMessageContaining(
                 "Declared licenses of 'net.logstash.logback:logstash-logback-encoder:1.0.0' are 'Apache-2.0', " +
-                    "but the plugin's built-in expression 'Apache-2.0 AND MIT' was written for 'Apache-2.0', 'MIT': " +
-                    "update the plugin, or name the license in overriddenLicenses"
+                    "'BSD-3-Clause', but the plugin's built-in expression 'Apache-2.0 AND MIT' was written for the " +
+                    "list 'Apache-2.0', 'MIT' or a list that declares it: check the POM's <comments>, then add the " +
+                    "list to the plugin's built-in expressions, or name the license in overriddenLicenses until a " +
+                    "release has it"
             )
+    }
+
+    @Test
+    fun `fails when the declared licenses of a module with several built-in expressions declare none of them`() {
+        val bom = writeModuleBom("net.java.dev.jna", "jna", idEntry("EPL-2.0"), idEntry("Apache-2.0"))
+
+        assertThatThrownBy { LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts) }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining(
+                "Declared licenses of 'net.java.dev.jna:jna:1.0.0' are 'EPL-2.0', 'Apache-2.0', but the plugin's " +
+                    "built-in expressions 'LGPL-2.1-only OR Apache-2.0' or 'LGPL-2.1-or-later OR Apache-2.0' were " +
+                    "written for a list that declares one of them: " +
+                    "check the POM's <comments>, then add the list to the plugin's built-in expressions, or name " +
+                    "the license in overriddenLicenses until a release has it"
+            )
+    }
+
+    @Test
+    fun `fails when the declared licenses of a reviewed choice differ from its built-in expression`() {
+        val bom = writeModuleBom("org.eclipse.jetty", "jetty-util", idEntry("EPL-2.0"), idEntry("MIT"))
+
+        assertThatThrownBy { LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts) }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining(
+                "Declared licenses of 'org.eclipse.jetty:jetty-util:1.0.0' are 'EPL-2.0', 'MIT', but the plugin's " +
+                    "built-in expression 'EPL-2.0 OR Apache-2.0' was written for a list that declares it: " +
+                    "check the POM's <comments>, then add the list to the plugin's built-in expressions, or name " +
+                    "the license in overriddenLicenses until a release has it"
+            )
+    }
+
+    @Test
+    fun `ignores an entry that is neither a license nor an expression in a list with a built-in expression`() {
+        val bom = writeModuleBom(
+            "net.logstash.logback", "logstash-logback-encoder", idEntry("Apache-2.0"), idEntry("MIT"), "{ }",
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        val lib = result.getValue("net.logstash.logback:logstash-logback-encoder")
+        assertThat(lib.declaredExpression).isEqualTo("Apache-2.0 AND MIT")
+    }
+
+    @Test
+    fun `resolves a module whose declared expression says what its built-in expression says`() {
+        // the GPL entry as an SPDX expression, the list joined into one
+        val gpl = "EPL-2.0 OR (GPL-2.0-only WITH Classpath-exception-2.0)"
+        val bom = writeModuleBom("org.jboss.resteasy", "resteasy-tracing-api", expressionEntry(gpl))
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        val lib = result.getValue("org.jboss.resteasy:resteasy-tracing-api")
+        assertThat(lib.licenses).containsExactly(KnownLicense.EPL_2_0)
+        assertThat(lib.declaredExpression).isEqualTo("EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0")
+    }
+
+    @Test
+    fun `resolves a module whose declared ids say what its built-in expression says`() {
+        // the GPL entry as an SPDX id, in either order
+        val bom = writeModuleBom("org.rocksdb", "rocksdbjni", idEntry("GPL-2.0-only"), idEntry("Apache-2.0"))
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        val lib = result.getValue("org.rocksdb:rocksdbjni")
+        assertThat(lib.licenses).containsExactly(KnownLicense.APACHE_2_0)
+        assertThat(lib.declaredExpression).isEqualTo("Apache-2.0 OR GPL-2.0-only")
+    }
+
+    @Test
+    fun `resolves a module whose list declares one of several built-in expressions`() {
+        // the list of an older JNA version, before its LGPL entry became "or later"
+        val bom = writeModuleBom("net.java.dev.jna", "jna", idEntry("LGPL-2.1-only"), idEntry("Apache-2.0"))
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        val lib = result.getValue("net.java.dev.jna:jna")
+        assertThat(lib.licenses).containsExactly(KnownLicense.APACHE_2_0)
+        assertThat(lib.declaredExpression).isEqualTo("LGPL-2.1-only OR Apache-2.0")
     }
 
     @Test
@@ -2384,6 +2404,30 @@ class LicenseResolverResolveLicensesTest {
     }
 
     @Test
+    fun `resolves a module with a built-in expression that declares a single license as that license`() {
+        // the table speaks for lists of several licenses only
+        val bom = writeModuleBom("net.logstash.logback", "logstash-logback-encoder", idEntry("Apache-2.0"))
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        val lib = result.getValue("net.logstash.logback:logstash-logback-encoder")
+        assertThat(lib.licenses).containsExactly(KnownLicense.APACHE_2_0)
+        assertThat(lib.declaredExpression).isNull()
+    }
+
+    @Test
+    fun `resolves a module with a built-in expression whatever the case of its recorded entries`() {
+        val bom = writeModuleBom(
+            "net.logstash.logback", "logstash-logback-encoder", idEntry("apache-2.0"), idEntry("mit"),
+        )
+
+        val result = LicenseResolver.resolveLicenses(bom, defaultIgnoredPrefixes, defaultAllowedArtifacts)
+
+        assertThat(result.getValue("net.logstash.logback:logstash-logback-encoder").declaredExpression)
+            .isEqualTo("Apache-2.0 AND MIT")
+    }
+
+    @Test
     fun `resolves a module with a built-in expression whatever the order and URLs of its entries`() {
         val gpl = """{ "license": { "name": "GNU General Public License, version 2", "url": "https://gnu.org/gpl" } }"""
         val apache = """{ "license": { "id": "Apache-2.0", "url": "https://opensource.org/license/apache-2-0" } }"""
@@ -2393,6 +2437,95 @@ class LicenseResolverResolveLicensesTest {
 
         // neither OR nor AND depends on the order, and a URL CycloneDX writes differs between its versions
         assertThat(result.getValue("org.rocksdb:rocksdbjni").declaredExpression).isEqualTo("Apache-2.0 OR GPL-2.0-only")
+    }
+
+    // --- license lists without a built-in expression ---
+
+    @Test
+    fun `counts a license entry and an expression entry as several licenses`() {
+        assertThatThrownBy { libWith(idEntry("EPL-2.0"), expressionEntry("MIT AND ISC")) }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("Declared licenses of 'com.example:lib:1.0.0' are 'EPL-2.0', 'MIT AND ISC', a list")
+    }
+
+    @Test
+    fun `counts a license given only by name as a license of its own`() {
+        assertThatThrownBy { libWith(idEntry("MIT"), nameEntry("GNU Lesser General Public License v2.1 only")) }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("has no built-in expression for")
+    }
+
+    @Test
+    fun `counts an entry with only a URL as a license of its own`() {
+        val url = """{ "license": { "url": "https://www.apache.org/licenses/LICENSE-2.0" } }"""
+
+        assertThatThrownBy { libWith(idEntry("MIT"), url) }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("has no built-in expression for")
+    }
+
+    @Test
+    fun `counts an entry without an SPDX form next to an approved license as a license of its own`() {
+        val entries = listOf(expressionEntry("MIT OR )"), expressionEntry(tooManyAlternatives()), idEntry("Apache 2.0"))
+        for (entry in entries) {
+            assertThatThrownBy { libWith(idEntry("MIT"), entry) }
+                .describedAs(entry)
+                .isInstanceOf(IllegalStateException::class.java)
+                .hasMessageContaining("has no built-in expression for")
+        }
+    }
+
+    @Test
+    fun `counts an id and a name the plugin's patterns map to it as one license`() {
+        // the patterns read "v2.1 only" as or-later, so the name adds no license of its own
+        val lib = libWith(idEntry("LGPL-2.1-or-later"), nameEntry("GNU Lesser General Public License v2.1 only"))
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.LGPL_2_1_OR_LATER)
+    }
+
+    @Test
+    fun `counts one license given by id and by a name the plugin recognises once`() {
+        val lib = libWith(idEntry("Apache-2.0"), nameEntry("The Apache Software License, Version 2.0"))
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.APACHE_2_0)
+        assertThat(lib.declaredExpression).isNull()
+    }
+
+    @Test
+    fun `fails a module that declares several licenses without a built-in expression`() {
+        assertThatThrownBy { libWith(idEntry("EPL-2.0"), idEntry("Apache-2.0")) }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining(
+                "Declared licenses of 'com.example:lib:1.0.0' are 'EPL-2.0', 'Apache-2.0', a list the plugin reads " +
+                    "as a choice but has no built-in expression for: " +
+                    "check the POM's <comments>, then add the list to the plugin's built-in expressions, or name " +
+                    "the license in overriddenLicenses until a release has it"
+            )
+    }
+
+    @Test
+    fun `ignores an entry that names no license when counting licenses`() {
+        val nothing = listOf("{ }", """{ "license": { } }""", """{ "license": { "name": " " } }""", expressionEntry(""))
+        val lib = libWith(idEntry("MIT"), *nothing.toTypedArray())
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.MIT)
+    }
+
+    @Test
+    fun `reports a list without an approved license as not approved rather than as a choice to review`() {
+        assertThatThrownBy { libWith(nameEntry("Some Proprietary License"), expressionEntry("GPL-3.0-only")) }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessageContaining("License not on the approved list for 'com.example:lib:1.0.0'")
+            .hasMessageNotContaining("built-in expression")
+    }
+
+    @Test
+    fun `resolves a single expression that offers a choice without a built-in expression`() {
+        // the expression is declared as it stands, so the plugin claims no choice of its own
+        val lib = libWith(expressionEntry("EPL-2.0 OR Apache-2.0"))
+
+        assertThat(lib.licenses).containsExactly(KnownLicense.APACHE_2_0)
+        assertThat(lib.declaredExpression).isEqualTo("EPL-2.0 OR Apache-2.0")
     }
 
     // --- failure reporting ---

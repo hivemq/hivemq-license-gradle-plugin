@@ -520,9 +520,10 @@ class GenerateSbomIntegrationTest {
 
     @Test
     fun `writes one concluded expression for a dependency offering a choice of licenses`() {
-        // the two license elements of the POM of jakarta.annotation-api, which CycloneDX maps to an id each
+        // the two license elements of its POM, which CycloneDX maps to an id each, a choice the plugin has reviewed
         FixtureRepository.module(
-            projectDir.resolve("repo"), "dual-lib", "1.0.0", licenses = listOf("EPL 2.0", "GPL2 w/ CPE"),
+            projectDir.resolve("repo"), "jakarta.annotation-api", "1.0.0",
+            group = "jakarta.annotation", licenses = listOf("EPL 2.0", "GPL2 w/ CPE"),
         )
         setup(fixedTimestamp, externalDependencies = false)
         projectDir.resolve("build.gradle.kts").appendText(
@@ -531,14 +532,14 @@ class GenerateSbomIntegrationTest {
                 maven { url = uri("repo") }
             }
             dependencies {
-                implementation("com.example:dual-lib:1.0.0")
+                implementation("jakarta.annotation:jakarta.annotation-api:1.0.0")
             }
             """.trimIndent()
         )
 
         gradleRunner("generateSbom", "updateThirdPartyLicenses").build()
 
-        val dualLib = mapper.readTree(sbom())["components"].first { it["name"].asText() == "dual-lib" }
+        val dualLib = mapper.readTree(sbom())["components"].first { it["name"].asText() == "jakarta.annotation-api" }
         val expected = """[ { "expression": "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0", """ +
             """"acknowledgement": "concluded" } ]"""
         assertThat(dualLib["licenses"]).isEqualTo(mapper.readTree(expected))
@@ -546,7 +547,9 @@ class GenerateSbomIntegrationTest {
         assertThat(JsonParser().validate(sbom().readBytes(), schema).map { it.message }).isEmpty()
         // the report is our compliance record and keeps the alternative this plugin elected
         val report = projectDir.resolve("build/tmp/third-party-licenses/licenses").readText()
-        assertThat(report.lines().single { "com.example:dual-lib" in it }).contains("EPL-2.0").doesNotContain("GPL")
+        assertThat(report.lines().single { "jakarta.annotation:jakarta.annotation-api" in it })
+            .contains("EPL-2.0")
+            .doesNotContain("GPL")
     }
 
     // --- Defaults ---
