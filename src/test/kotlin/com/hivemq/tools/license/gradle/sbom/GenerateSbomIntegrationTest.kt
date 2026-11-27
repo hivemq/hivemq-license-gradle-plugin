@@ -863,11 +863,13 @@ class GenerateSbomIntegrationTest {
     // --- Timestamp defaults ---
 
     @Test
-    fun `a malformed SOURCE_DATE_EPOCH fails with a clear message`() {
+    fun `a SOURCE_DATE_EPOCH beyond the last instant Java represents fails with a clear message`() {
         setup(externalDependencies = false)
+        // a number, so a JDK that reads the variable in Properties.store accepts it, but one second past Instant.MAX
+        val beyond = "31556889864403200"
 
         val result = gradleRunner("generateSbom")
-            .withEnvironment(GitTestRepository.isolatedEnv(projectDir, mapOf("SOURCE_DATE_EPOCH" to "yesterday")))
+            .withEnvironment(GitTestRepository.isolatedEnv(projectDir, mapOf("SOURCE_DATE_EPOCH" to beyond)))
             .buildAndFail()
 
         assertThat(result.output).contains("SOURCE_DATE_EPOCH must be the number of seconds")

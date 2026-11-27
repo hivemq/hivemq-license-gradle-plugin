@@ -63,6 +63,22 @@ internal object SbomEnricher {
     private val minimumSpecVersion = requireNotNull(majorMinor(MINIMUM_SPEC_VERSION))
 
     /**
+     * The property written, with the value `true`, on every component the SBOM only identifies: one the host provides
+     * at runtime, whose file and dependencies the host's SBOM describes. A product merge recognises identified
+     * components by it alone. The name is in a namespace of the plugin's own, as CycloneDX registers only names under
+     * `cdx:`.
+     */
+    const val PROVIDED_BY_HOST = "hivemq:sbom:provided-by-host"
+
+    /** Whether [property] is the [PROVIDED_BY_HOST] label with the value `true`, the one form that counts. */
+    internal fun isHostLabel(property: JsonNode): Boolean =
+        property.get("name")?.asText() == PROVIDED_BY_HOST && property.get("value")?.asText() == "true"
+
+    /** Whether [component] carries the [PROVIDED_BY_HOST] label, see [isHostLabel]. */
+    internal fun carriesHostLabel(component: JsonNode): Boolean =
+        (component.get("properties") as? ArrayNode)?.any(::isHostLabel) == true
+
+    /**
      * Adds the fields to [root], as [BomJson.read] returns it, and returns it. Everything is checked first, so [root]
      * is unchanged when this throws.
      */
@@ -77,6 +93,8 @@ internal object SbomEnricher {
             // an identified component ships no file with this artifact, whatever the build resolved for its coordinates
             if (!isIdentified(component, details)) {
                 details.componentFileNames[coordinates]?.let { describeFile(component, it) }
+            } else {
+                component.arrayOrNew("properties")?.putProperty(PROVIDED_BY_HOST, "true")
             }
             addCreator(component, details)
             addSourceDistribution(component)
@@ -89,8 +107,11 @@ internal object SbomEnricher {
     private fun isIdentified(component: ObjectNode, details: SbomDetails) =
         BomFilter.refOf(component)?.let { it in details.identifiedComponents } == true
 
-    // the BOM task can be set to write an older spec that rejects these fields; a new major may rename or drop them
-    private fun requireSpecVersion(root: ObjectNode) {
+    /**
+     * Throws [SbomException] unless [root] declares CycloneDX [MINIMUM_SPEC_VERSION] or a later 1.x version: an older
+     * spec rejects the added fields, and a new major may rename or drop them.
+     */
+    internal fun requireSpecVersion(root: ObjectNode) {
         val declared = root.get("specVersion")
         val text = declared?.takeIf { it.isTextual }?.asText()
         val version = text?.let(::majorMinor)
@@ -113,10 +134,16 @@ internal object SbomEnricher {
         }
     }
 
-    // a non-email value is written as a URL, where a name silently invalidates the SBOM and only http(s) leads anywhere
-    private fun requireCreator(creator: String) {
+    /**
+     * Throws [SbomException] unless [creator] is an email address or an http(s) URL: a non-email value is written as a
+     * URL, where a name silently invalidates the SBOM and only http(s) leads anywhere.
+     */
+    internal fun requireCreator(creator: String) {
         if (emailAddressOf(creator) != null || isWebUrl(creator)) return
-        throw SbomException("hivemqLicense.sbomCreator must be an email address or an http(s) URL, but is '$creator'")
+        throw SbomException(
+            "The creator, hivemqLicense.sbomCreator or the creator of the task, must be an email address or an " +
+                "http(s) URL, but is '$creator'"
+        )
     }
 
     // the address in an email or mailto creator, else null; the check and the manufacturer share this one rule, so
@@ -130,8 +157,8 @@ internal object SbomEnricher {
         false
     }
 
-    // as numbers, so that 1.10 is later than 1.6
-    private fun majorMinor(version: String): Pair<BigInteger, BigInteger>? =
+    /** The major and minor number of [version], such as 1.6 or 1.6.1; null when it is not such a version. */
+    internal fun majorMinor(version: String): Pair<BigInteger, BigInteger>? =
         specVersion.matchEntire(version)?.destructured?.let { (major, minor) ->
             major.toBigInteger() to minor.toBigInteger()
         }
@@ -151,21 +178,22 @@ internal object SbomEnricher {
 
     private fun enrichMetadata(root: ObjectNode, details: SbomDetails) {
         val metadata = root.objectOrNew("metadata") ?: return
-        metadata.set<JsonNode>("manufacturer", manufacturer(details))
+        metadata.set<JsonNode>("manufacturer", manufacturer(details.creatorName, details.creator))
         val component = metadata.get("component") as? ObjectNode ?: return
-        component.set<JsonNode>("manufacturer", manufacturer(details))
+        component.set<JsonNode>("manufacturer", manufacturer(details.creatorName, details.creator))
         details.artifactFileName?.let { describeFile(component, it) }
     }
 
-    private fun manufacturer(details: SbomDetails): ObjectNode = mapper.createObjectNode().apply {
-        put("name", details.creatorName)
+    /** The manufacturer object: the email as a contact, or the URL as a url, the one rule [requireCreator] applies. */
+    internal fun manufacturer(creatorName: String, creator: String): ObjectNode = mapper.createObjectNode().apply {
+        put("name", creatorName)
         // the guideline wants an email address and accepts a URL when there is none; any value that is not an address
         // has passed requireCreator as an http(s) URL
-        val address = emailAddressOf(details.creator)
+        val address = emailAddressOf(creator)
         if (address != null) {
             putArray("contact").addObject().put("email", address)
         } else {
-            putArray("url").add(details.creator)
+            putArray("url").add(creator)
         }
     }
 
@@ -175,8 +203,11 @@ internal object SbomEnricher {
         version = component.get("version")?.asText().orEmpty(),
     )
 
-    // a jar holds code a runtime executes and metadata about its contents; a zip holds files, not code
-    private fun describeFile(component: ObjectNode, fileName: String) {
+    /**
+     * Writes [fileName] and, for a jar or a zip, its executable, archive and structured flags to the `properties` of
+     * [component]. Does nothing when `properties` is not an array.
+     */
+    internal fun describeFile(component: ObjectNode, fileName: String) {
         val properties = component.arrayOrNew("properties") ?: return
         properties.putProperty(FILENAME, fileName)
         when {
@@ -203,7 +234,7 @@ internal object SbomEnricher {
     private fun addCreator(component: ObjectNode, details: SbomDetails) {
         if (component.has("manufacturer")) return
         if (isProjectOfThisBuild(component)) {
-            component.set<JsonNode>("manufacturer", manufacturer(details))
+            component.set<JsonNode>("manufacturer", manufacturer(details.creatorName, details.creator))
             return
         }
         val references = component.get("externalReferences") as? ArrayNode ?: return
@@ -307,13 +338,17 @@ internal object SbomEnricher {
      */
     private fun planCompositions(root: ObjectNode, details: SbomDetails): List<Composition>? {
         val graph = graphRefs(root)
+        // a component without an entry may have unknown dependencies, so only one with an entry can be called complete
+        val stated = entryRefs(root)
         // an identified component, whose dependencies the host's SBOM describes, is incomplete here in any case
         val identifiedGap = IDENTIFIED_GAP.takeIf { graph.any { it in details.identifiedComponents } }
         val gaps = details.incompleteReasons + listOfNotNull(identifiedGap)
-        val compositions = root.get("compositions")
-        val writable = compositions == null || compositions is ArrayNode
+        val writable = canWriteCompositions(root)
         // with no gap there is nothing to hold against a BOM without a graph or with compositions of another type
-        if (gaps.isEmpty()) return if (graph.isEmpty() || !writable) null else listOf(Composition("complete", graph))
+        if (gaps.isEmpty()) {
+            val described = graph.filter { it in stated }
+            return if (described.isEmpty() || !writable) null else listOf(Composition("complete", described))
+        }
         val why = gaps.joinToString("; ")
         if (!writable) {
             throw SbomException(
@@ -321,13 +356,7 @@ internal object SbomEnricher {
                     "incomplete: $why"
             )
         }
-        if (details.incompleteReasons.isEmpty()) {
-            val (identifiedRefs, describedRefs) = graph.partition { it in details.identifiedComponents }
-            return listOfNotNull(
-                Composition("complete", describedRefs).takeIf { describedRefs.isNotEmpty() },
-                Composition("incomplete", identifiedRefs),
-            )
-        }
+        if (details.incompleteReasons.isEmpty()) return splitCompositions(graph, stated, details.identifiedComponents)
         // a reported gap is the artifact's, so it is stated for the top-level component, whether or not the graph has
         // an entry for it, and for every component in the graph
         val topLevel = topLevelRef(root) ?: throw SbomException(
@@ -337,21 +366,50 @@ internal object SbomEnricher {
         return listOf(Composition("incomplete", (graph + topLevel).distinct().sorted()))
     }
 
-    /** The text refs of the dependency graph, each once as the schema wants, sorted so the entries' order is moot. */
+    /**
+     * `incomplete` over the refs of [graph] in [open], and `complete` over the others that [stated] has an entry for;
+     * either is left out when it would list nothing.
+     */
+    private fun splitCompositions(graph: List<String>, stated: Set<String>, open: Set<String>): List<Composition> {
+        val (gap, others) = graph.partition { it in open }
+        val described = others.filter { it in stated }
+        return listOfNotNull(
+            Composition("complete", described).takeIf { described.isNotEmpty() },
+            Composition("incomplete", gap).takeIf { gap.isNotEmpty() },
+        )
+    }
+
+    /** The text `ref`s of the dependency entries: the components whose dependencies the graph states. */
+    private fun entryRefs(root: ObjectNode): Set<String> =
+        (root.get("dependencies") as? ArrayNode)
+            ?.mapNotNullTo(hashSetOf()) { it.get("ref")?.takeIf { ref -> ref.isTextual }?.asText() }
+            .orEmpty()
+
+    /**
+     * The text refs of the dependency graph, each entry's `ref` and `dependsOn` targets, since a BOM from another tool
+     * may target a component without an entry; each once as the schema wants, sorted so the entries' order is moot.
+     */
     private fun graphRefs(root: ObjectNode): List<String> {
         val dependencies = root.get("dependencies") as? ArrayNode ?: return emptyList()
         return dependencies
-            .mapNotNull { it.get("ref")?.takeIf { ref -> ref.isTextual }?.asText() }
+            .flatMap { entry ->
+                val targets = (entry.get("dependsOn") as? ArrayNode)?.filter { it.isTextual }?.map { it.asText() }
+                listOfNotNull(entry.get("ref")?.takeIf { ref -> ref.isTextual }?.asText()) + targets.orEmpty()
+            }
             .distinct()
             .sorted()
     }
+
+    // compositions of another type cannot take the plugin's statement; a missing list is written
+    private fun canWriteCompositions(root: ObjectNode): Boolean =
+        root.get("compositions").let { it == null || it is ArrayNode }
 
     private fun topLevelRef(root: ObjectNode): String? =
         BomFilter.nonEmptyRefOf(root.path("metadata").path("component"))
 
     /**
-     * Writes [compositions], then the BOM's own ones without the dependency refs [compositions] list;
-     * [planCompositions] returns compositions only when the BOM's own ones are absent or an array.
+     * Writes [compositions], then the BOM's own ones without the dependency refs [compositions] list. Expects the
+     * BOM's own ones to be absent or an array, which the callers check with [canWriteCompositions].
      */
     private fun writeCompositions(root: ObjectNode, compositions: List<Composition>) {
         val covered = compositions.flatMapTo(hashSetOf()) { it.refs }
@@ -375,6 +433,28 @@ internal object SbomEnricher {
         val rest = dependencies.filterNot { it.isTextual && it.asText() in covered }
         if (rest.size == dependencies.size()) return
         if (rest.isEmpty()) composition.remove("dependencies") else dependencies.removeAll().addAll(rest)
+    }
+
+    /**
+     * Writes the compositions over every `ref` of the `dependencies` of [root] and every `dependsOn` target, and over
+     * [undescribed], in the graph or not: one `incomplete` over all of them when [incompleteReasons] is not empty, else
+     * `incomplete` over [undescribed] and `complete` over the others that have an entry, as [enrich] states identified
+     * components. The BOM's own compositions stay as [writeCompositions] keeps them. Does nothing without a dependency
+     * ref, or when `compositions` is not an array.
+     */
+    internal fun declareCompleteness(
+        root: ObjectNode,
+        incompleteReasons: List<String>,
+        undescribed: Set<String> = emptySet(),
+    ) {
+        val graph = graphRefs(root)
+        if (graph.isEmpty() || !canWriteCompositions(root)) return
+        val refs = (graph + undescribed).distinct().sorted()
+        if (incompleteReasons.isNotEmpty()) {
+            writeCompositions(root, listOf(Composition("incomplete", refs)))
+            return
+        }
+        writeCompositions(root, splitCompositions(refs, entryRefs(root), undescribed))
     }
 
     private class Composition(val aggregate: String, val refs: List<String>)

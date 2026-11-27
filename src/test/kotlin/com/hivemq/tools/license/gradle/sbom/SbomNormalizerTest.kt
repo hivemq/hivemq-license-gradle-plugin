@@ -140,9 +140,9 @@ class SbomNormalizerTest {
         assertThatThrownBy { normalizeAt(Instant.ofEpochSecond(1_700_000_000_000L)) }
             .isInstanceOf(SbomException::class.java)
             .hasMessage(
-                "The SBOM timestamp +55840-11-08T22:13:20Z is not a valid date: set hivemqLicense.sbomTimestamp to a " +
-                    "date with a four-digit year, or fix the SOURCE_DATE_EPOCH environment variable, which holds " +
-                    "seconds since 1970-01-01, not milliseconds"
+                "The SBOM timestamp +55840-11-08T22:13:20Z is not a valid date: set hivemqLicense.sbomTimestamp, or " +
+                    "the timestamp of the task, to a date with a four-digit year, or fix the SOURCE_DATE_EPOCH " +
+                    "environment variable, which holds seconds since 1970-01-01, not milliseconds"
             )
     }
 
