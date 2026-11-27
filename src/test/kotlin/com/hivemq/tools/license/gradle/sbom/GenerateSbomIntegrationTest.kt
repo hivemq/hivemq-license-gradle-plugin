@@ -17,6 +17,7 @@ package com.hivemq.tools.license.gradle.sbom
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.hivemq.tools.license.gradle.FixtureRepository
+import com.hivemq.tools.license.gradle.FixtureRepository.PomLicense
 import org.assertj.core.api.Assertions.assertThat
 import org.cyclonedx.Version
 import org.cyclonedx.parsers.JsonParser
@@ -523,7 +524,7 @@ class GenerateSbomIntegrationTest {
         // the two license elements of its POM, which CycloneDX maps to an id each, a choice the plugin has reviewed
         FixtureRepository.module(
             projectDir.resolve("repo"), "jakarta.annotation-api", "1.0.0",
-            group = "jakarta.annotation", licenses = listOf("EPL 2.0", "GPL2 w/ CPE"),
+            group = "jakarta.annotation", licenses = listOf(PomLicense("EPL 2.0"), PomLicense("GPL2 w/ CPE")),
         )
         setup(fixedTimestamp, externalDependencies = false)
         projectDir.resolve("build.gradle.kts").appendText(

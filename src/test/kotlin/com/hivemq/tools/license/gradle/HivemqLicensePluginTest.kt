@@ -15,6 +15,7 @@
  */
 package com.hivemq.tools.license.gradle
 
+import com.hivemq.tools.license.gradle.FixtureRepository.PomLicense
 import org.assertj.core.api.Assertions.assertThat
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
@@ -154,7 +155,7 @@ class HivemqLicensePluginTest {
             }
             """.trimIndent()
         )
-        FixtureRepository.module(projectDir.resolve("repo"), "lib", "1.0", licenses = listOf("MIT License"))
+        FixtureRepository.module(projectDir.resolve("repo"), "lib", "1.0", licenses = listOf(PomLicense("MIT License")))
 
         gradleRunner("generateDependencyBom").build()
 

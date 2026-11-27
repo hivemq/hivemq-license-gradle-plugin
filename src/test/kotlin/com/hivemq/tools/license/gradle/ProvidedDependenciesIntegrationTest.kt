@@ -17,6 +17,7 @@ package com.hivemq.tools.license.gradle
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.hivemq.tools.license.gradle.FixtureRepository.PomLicense
 import com.hivemq.tools.license.gradle.sbom.GitTestRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.gradle.testkit.runner.GradleRunner
@@ -107,7 +108,8 @@ class ProvidedDependenciesIntegrationTest {
         group: String = "com.example",
         license: String? = null,
     ) = FixtureRepository.module(
-        projectDir.resolve("repo"), name, version, *dependencies, group = group, licenses = listOfNotNull(license),
+        projectDir.resolve("repo"), name, version, *dependencies, group = group,
+        licenses = listOfNotNull(license?.let { PomLicense(it) }),
     )
 
     private fun licenses(dir: File = projectDir) =
